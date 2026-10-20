@@ -624,7 +624,8 @@ function rpBuild(D){
   const sum={orders:D.orders.length,amount:D.orders.reduce((a,o)=>a+amt(o),0),premium:D.orders.filter(isPrem).length,affordable:D.orders.filter(o=>!isPrem(o)).length,
     leads:D.sales.reduce((a,r)=>a+(+r.leads||0),0),noAmt:D.orders.filter(o=>!amt(o)).length};
   const sales=all.filter(s=>s.sales||D.orders.some(o=>o.staffId===s.id)).map(s=>{const os=D.orders.filter(o=>o.staffId===s.id);
-    return{s,n:os.length,p:os.filter(isPrem).length,a:os.filter(o=>!isPrem(o)).length,amt:os.reduce((x,o)=>x+amt(o),0),leads:D.sales.filter(r=>r.staffId===s.id).reduce((a,r)=>a+(+r.leads||0),0)}})
+    const pp={};os.forEach(o=>{const c=prodCode(o)||'NOT WRITTEN';const r=pp[c]=pp[c]||{c,q:0,amt:0};r.q+=(+o.qty||1);r.amt+=amt(o)});
+    return{s,os:os.slice().sort((a,b)=>(a.date+(a.createdAt||'')).localeCompare(b.date+(b.createdAt||''))),prods:Object.values(pp).sort((a,b)=>b.q-a.q),n:os.length,p:os.filter(isPrem).length,a:os.filter(o=>!isPrem(o)).length,amt:os.reduce((x,o)=>x+amt(o),0),leads:D.sales.filter(r=>r.staffId===s.id).reduce((a,r)=>a+(+r.leads||0),0)}})
     .filter(r=>r.n||r.leads||r.s.active!==false);
   /* days a person came (IN or WFH) but saved no work — so you can see who skipped filling */
   const workDays=D.days.filter(ds=>ds<todayStr&&new Date(ds+'T12:00:00').getDay()!==0);
@@ -666,6 +667,7 @@ function viewReports(){
   const tbl=(cols,rows,foot)=>el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...cols.map(c=>el('th',{text:c})))),
     el('tbody',{},...rows.map(r=>el('tr',{},...r.map((c,i)=>i?el('td',{class:typeof c==='number'?'mono':'',text:String(c)}):el('th',{text:String(c)}))))),
     foot?el('tfoot',{},el('tr',{},...foot.map((c,i)=>i?el('td',{class:'mono',text:String(c)}):el('th',{text:String(c)})))):null));
+  const amt0=o=>+o.amount||0;
   const multi=R.days.length>1;
   const workPanels=R.work.map(w=>{const shown=w.totals.filter(x=>x.total);
     const dayCols=w.list.filter(t=>t.kind!=='text');
@@ -676,7 +678,10 @@ function viewReports(){
         w.dates.map(ds=>[dm(ds)+' '+DAYS[new Date(ds+'T12:00:00').getDay()].slice(0,3),...dayCols.map(t=>{const x=w.mine.find(m=>m.date===ds&&m.taskId===t.id);return x?fmtWork(t,x.value):''})]))):null,
       w.missing.length?el('p',{class:'hint',style:'color:var(--accent)',text:'Came but did not fill work on: '+w.missing.map(dm).join(', ')}):null)});
   const salesP=el('div',{class:'panel'},el('h3',{text:'Sales staff'}),R.sales.length?tbl(['Name','Leads','Premium','Affordable','Orders','Sales'],
-    R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rs(r.amt)]),['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rs(R.sum.amount)]):el('div',{class:'empty',text:'No sales staff.'}));
+    R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rs(r.amt)]),['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rs(R.sum.amount)]):el('div',{class:'empty',text:'No sales staff.'}),
+    ...R.sales.filter(r=>r.n).map(r=>el('details',{},el('summary',{text:r.s.name+' · '+r.n+' orders · '+rs(r.amt)}),
+      el('p',{class:'hint',text:'Products: '+r.prods.map(x=>(CODE_NAMES[x.c]||x.c).toLowerCase()+' '+x.q).join(', ')}),
+      tbl(['Date','No.','Customer','Phone','District','Product','Type','Amount'],r.os.map(o=>[dm(o.date),o.orderNo||'',o.customer||'—',o.phone||'',o.district||'',o.product||'—',o.type==='affordable'?'Affordable':'Premium',amt0(o)?rs(amt0(o)):'—'])))));
   const prodP=el('div',{class:'panel'},el('h3',{text:'Products sold'}),R.products.length?tbl(['Product','Premium','Affordable','Total','Sales'],
     R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt?rs(r.amt):'—'])):el('div',{class:'empty',text:'No orders with a product in this period.'}));
   const attP=el('div',{class:'panel'},el('h3',{text:'Attendance'}),tbl(['Name','Came','WFH','Leave','Late','Left early','No OUT'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut])));
@@ -712,6 +717,9 @@ function rpPdf(R){
     if(multi&&w.dates.length&&dayCols.length){const n=dayCols.length;table(['Date',...dayCols.map(t=>t.name)],w.dates.map(ds=>[dm(ds),...dayCols.map(t=>{const x=w.mine.find(m=>m.date===ds&&m.taskId===t.id);return x?(t.kind==='yesno'?(x.value==='TRUE'?'Done':'Not done'):(t.kind==='colours'||t.kind==='items')?colTotal(x.value):x.value):''})]),[.1,...dayCols.map(()=>.9/n)])}
     if(w.missing.length)note('Came but did not fill work on: '+w.missing.map(dm).join(', '),true)});
   title('Sales staff');table(['Name','Leads','Premium','Affordable','Orders','Sales'],R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rsPlain(r.amt)]),[.26,.12,.14,.16,.12,.2],['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rsPlain(R.sum.amount)]);
+  R.sales.filter(r=>r.n).forEach(r=>{title(r.s.name+'  |  '+r.n+' orders  |  '+rsPlain(r.amt));
+    table(['Product','Pieces','Sales'],r.prods.map(x=>[CODE_NAMES[x.c]||x.c,x.q,x.amt?rsPlain(x.amt):'-']),[.5,.2,.3]);
+    table(['Date','No.','Customer','District','Product','Type','Amount'],r.os.map(o=>[dm(o.date),o.orderNo||'',o.customer||'-',o.district||'',o.product||'-',o.type==='affordable'?'Affordable':'Premium',+o.amount?rsPlain(+o.amount):'-']),[.09,.11,.2,.17,.2,.11,.12])});
   if(R.products.length){title('Products sold');table(['Product','Premium','Affordable','Total','Sales'],R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt?rsPlain(r.amt):'-']),[.36,.14,.16,.14,.2])}
   title('Attendance');table(['Name','Came','WFH','Leave','Late','Left early','No OUT'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut]),[.28,.12,.12,.12,.12,.12,.12]);
   const pages=doc.getNumberOfPages();for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(140);doc.text('Page '+i+' of '+pages,W-M,H-18,{align:'right'})}
@@ -724,6 +732,8 @@ function rpXlsx(R){
   const wt=[['STAFF','CATEGORY','WORK','TOTAL','DETAILS']];R.work.forEach(w=>w.totals.filter(x=>x.total).forEach(x=>wt.push([w.s.name,catOf(w.s),x.t.name,x.total,workDetail(x)])));add('WORK TOTALS',wt);
   const wd=[['DATE','STAFF','WORK','VALUE']];R.work.forEach(w=>w.mine.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(m=>{const t=w.list.find(x=>x.id===m.taskId)||{name:m.taskId,kind:'count'};wd.push([m.date,w.s.name,t.name,pdfTxt(fmtWork(t,m.value))])}));add('WORK DAY BY DAY',wd);
   add('SALES',[['NAME','LEADS','PREMIUM','AFFORDABLE','ORDERS','SALES'],...R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,r.amt])]);
+  add('ORDERS BY STAFF',[['STAFF','DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','TYPE','QTY','AMOUNT','DISPATCHED'],...R.sales.flatMap(r=>r.os.map(o=>[r.s.name,o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',o.type==='affordable'?'AFFORDABLE':'PREMIUM',+o.qty||1,+o.amount||0,o.dispatched==='TRUE'?'YES':'NO']))]);
+  add('PRODUCTS BY STAFF',[['STAFF','PRODUCT','PIECES','SALES'],...R.sales.flatMap(r=>r.prods.map(x=>[r.s.name,CODE_NAMES[x.c]||x.c,x.q,x.amt]))]);
   add('PRODUCTS',[['PRODUCT','PREMIUM','AFFORDABLE','TOTAL','SALES'],...R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt])]);
   add('ATTENDANCE',[['NAME','CAME','WFH','LEAVE','LATE','LEFT EARLY','NO OUT'],...R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut])]);
   saveFile('COUPLO_REPORT_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
