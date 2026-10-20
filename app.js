@@ -170,7 +170,7 @@ function reasonSheet(s,kind,time,inTime,send){
 }
 
 /* ---------- admin ---------- */
-let adminMonth=null, adminView='register', salesDate=null, staff=[], adminRecs={}, adminSales={}, adminPay={}, drafts={}, todayStr=ymd(new Date());
+let adminMonth=null, adminView='reports', salesDate=null, staff=[], adminRecs={}, adminSales={}, adminPay={}, drafts={}, todayStr=ymd(new Date());
 function askAdminPin(){
   call('adminCheck',{adminPin:''}).then(j=>{
     if(j.needSetup){let first=null;
@@ -192,7 +192,7 @@ async function loadMonth(m){
     adminSales={};const sx=k=>adminSales[k]=adminSales[k]||{leads:0,premium:0,affordable:0,amount:0};
     j.sales.forEach(r=>{sx(r.date+'__'+r.staffId).leads=+r.leads||0});
     adminOrders=j.orders||[];adminOrders.forEach(o=>{const x=sx(o.date+'__'+o.staffId);if(o.type==='affordable')x.affordable++;else x.premium++;x.amount+=(+o.amount||0)});
-    adminPay={};j.pay.forEach(r=>adminPay[r.staffId]={advance:+r.advance||0,extra:+r.extra||0,note:r.note||''});
+    rpCache[m]=j;adminPay={};j.pay.forEach(r=>adminPay[r.staffId]={advance:+r.advance||0,extra:+r.extra||0,note:r.note||''});
     renderAdmin()}
   catch(e){$('#admin').replaceChildren(el('div',{class:'empty',text:'Could not load: '+e.message}))}
 }
@@ -232,7 +232,7 @@ function calcPay(m,s){
   return{...info,nd,paid,salary,perDay,earned,adv,extra,net:earned+extra-adv,note:p.note||'',future:dates.some(d=>ymd(d)>td)};
 }
 function adminNav(){
-  const views=[['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+  const views=[['reports','Reports'],['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
   return el('nav',{class:'tabs',role:'tablist'},...views.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(adminView===v),text:t,onclick:()=>{adminView=v;renderAdmin()}})));
 }
 function monthPicker(){
@@ -242,7 +242,8 @@ function monthPicker(){
 function renderAdmin(){
   if(!adminOpen)return;
   const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
-  if(adminView==='register')parts.push(...viewRegister());
+  if(adminView==='reports')parts.push(...viewReports());
+  else if(adminView==='register')parts.push(...viewRegister());
   else if(adminView==='orders')parts.push(...viewOrders());
   else if(adminView==='products')parts.push(...viewProducts());
   else if(adminView==='work')parts.push(...viewWork());
@@ -593,6 +594,141 @@ function editTask(t){
     el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}),del,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})));
 }
 
+/* ---------- admin: reports (dashboard) — any period: production work, sales, products, attendance; PDF + Excel ---------- */
+let rp={preset:'today',from:'',to:''}, rpCache={}, rpLoading=false;
+const addDays=(ds,n)=>{const d=new Date(ds+'T12:00:00');d.setDate(d.getDate()+n);return ymd(d)};
+const dm=ds=>ds.slice(8)+'/'+ds.slice(5,7);
+function rpRange(){const td=todayStr;
+  if(rp.preset==='today')return[td,td];
+  if(rp.preset==='yesterday'){const y=addDays(td,-1);return[y,y]}
+  if(rp.preset==='week')return[addDays(td,-6),td];
+  if(rp.preset==='month')return[td.slice(0,7)+'-01',td];
+  if(rp.preset==='lastmonth'){const d=new Date(td.slice(0,7)+'-01T12:00:00');d.setMonth(d.getMonth()-1);const m=ymOf(d);return[m+'-01',ymd(monthDates(m).slice(-1)[0])]}
+  let f=rp.from||td,t=rp.to||td;if(f>t)[f,t]=[t,f];return[f,t]}
+const rpLabel=(f,t)=>f===t?dm(f)+'/'+f.slice(0,4):dm(f)+'/'+f.slice(0,4)+' to '+dm(t)+'/'+t.slice(0,4);
+function rangeDays(f,t){const out=[];for(let d=f;d<=t;d=addDays(d,1))out.push(d);return out}
+function rpMonths(f,t){const out=[];let m=f.slice(0,7);while(m<=t.slice(0,7)&&out.length<14){out.push(m);const d=new Date(m+'-01T12:00:00');d.setMonth(d.getMonth()+1);m=ymOf(d)}return out}
+async function rpLoad(months){rpLoading=true;
+  try{await Promise.all(months.filter(m=>!rpCache[m]).map(async m=>{rpCache[m]=await call('month',{adminPin,month:m})}))}
+  catch(e){toast('Could not load: '+e.message)}
+  rpLoading=false;renderAdmin()}
+function rpData(){
+  const[f,t]=rpRange();const months=rpMonths(f,t);
+  if(months.length>12)return{f,t,tooLong:true};
+  const miss=months.filter(m=>!rpCache[m]);if(miss.length){if(!rpLoading)rpLoad(miss);return{f,t,loading:true}}
+  const inR=x=>x.date>=f&&x.date<=t, pick=k=>months.flatMap(m=>rpCache[m][k]||[]).filter(inR);
+  return{f,t,days:rangeDays(f,t),work:pick('work'),orders:pick('orders'),att:pick('att'),sales:pick('sales')};
+}
+function rpBuild(D){
+  const all=[...staff].sort(byOrder), amt=o=>+o.amount||0, isPrem=o=>o.type!=='affordable';
+  const sum={orders:D.orders.length,amount:D.orders.reduce((a,o)=>a+amt(o),0),premium:D.orders.filter(isPrem).length,affordable:D.orders.filter(o=>!isPrem(o)).length,
+    leads:D.sales.reduce((a,r)=>a+(+r.leads||0),0),noAmt:D.orders.filter(o=>!amt(o)).length};
+  const sales=all.filter(s=>s.sales||D.orders.some(o=>o.staffId===s.id)).map(s=>{const os=D.orders.filter(o=>o.staffId===s.id);
+    return{s,n:os.length,p:os.filter(isPrem).length,a:os.filter(o=>!isPrem(o)).length,amt:os.reduce((x,o)=>x+amt(o),0),leads:D.sales.filter(r=>r.staffId===s.id).reduce((a,r)=>a+(+r.leads||0),0)}})
+    .filter(r=>r.n||r.leads||r.s.active!==false);
+  /* days a person came (IN or WFH) but saved no work — so you can see who skipped filling */
+  const workDays=D.days.filter(ds=>ds<todayStr&&new Date(ds+'T12:00:00').getDay()!==0);
+  const work=all.filter(s=>tasksFor(s).length||D.work.some(w=>w.staffId===s.id)).map(s=>{
+    const mine=D.work.filter(w=>w.staffId===s.id&&w.value!=='');const own=tasksFor(s);
+    const list=own.concat(tasks.filter(t=>!own.includes(t)&&mine.some(w=>w.taskId===t.id)));
+    const dates=[...new Set(mine.map(w=>w.date))].sort();
+    const totals=list.map(t=>{const ws=mine.filter(w=>w.taskId===t.id);let parts=null,notes=null;
+      if(t.kind==='colours'||t.kind==='items'){const g={};ws.forEach(w=>Object.entries(colParse(w.value)).forEach(([c,q])=>g[c]=(g[c]||0)+(+q||0)));parts=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>[optLabel(t,c),q])}
+      if(t.kind==='text')notes=ws.filter(w=>w.value).sort((a,b)=>a.date.localeCompare(b.date)).map(w=>[w.date,w.value]);
+      return{t,total:t.kind==='text'?(notes.length?(D.days.length>1?notes.length+' day'+(notes.length>1?'s':''):'✓'):''):workTotal(t,ws),parts,notes}});
+    const missing=workDays.filter(ds=>{const a=D.att.find(r=>r.staffId===s.id&&r.date===ds);return a&&(a.in||a.status==='wfh')&&a.status!=='leave'&&!dates.includes(ds)});
+    return{s,list,dates,mine,totals,missing}}).filter(r=>r.s.active!==false||r.mine.length);
+  const pg={};D.orders.forEach(o=>{const c=prodCode(o);if(!c)return;const r=pg[c]=pg[c]||{c,p:0,a:0,q:0,amt:0};const q=+o.qty||1;isPrem(o)?r.p+=q:r.a+=q;r.q+=q;r.amt+=amt(o)});
+  const products=Object.values(pg).sort((a,b)=>b.q-a.q);
+  const att=all.filter(s=>s.active!==false||D.att.some(r=>r.staffId===s.id)).map(s=>{const l=D.att.filter(r=>r.staffId===s.id);
+    return{s,present:l.filter(r=>r.in&&r.status!=='leave'&&r.status!=='wfh').length,wfh:l.filter(r=>r.status==='wfh').length,leave:l.filter(r=>r.status==='leave').length,
+      late:l.filter(r=>r.lateReason).length,early:l.filter(r=>r.earlyReason).length,noOut:l.filter(r=>r.in&&!r.out&&r.date<todayStr).length}});
+  return{...D,sum,sales,work,products,att};
+}
+const workDetail=x=>x.parts?x.parts.map(([c,q])=>c.toLowerCase()+' '+q).join(', '):x.notes?x.notes.map(([d,v])=>dm(d)+': '+v).join(' · '):'';
+function viewReports(){
+  const D=rpData();
+  const presets=[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['custom','Pick dates']];
+  const ps=el('select',{id:'rp-p','aria-label':'Period',onchange:e=>{rp.preset=e.target.value;if(rp.preset==='custom'&&!rp.from){rp.from=D.f;rp.to=D.t}renderAdmin()}},...presets.map(([v,t])=>el('option',{value:v,text:t,selected:rp.preset===v})));
+  const ready=!D.loading&&!D.tooLong, R=ready?rpBuild(D):null;
+  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Report · '+rpLabel(D.f,D.t)}),el('div',{class:'row'},ps,
+      el('button',{class:'btn',type:'button',text:'Reload',onclick:()=>{rpMonths(D.f,D.t).forEach(m=>delete rpCache[m]);renderAdmin()}}))),
+    rp.preset==='custom'?el('div',{class:'form2'},
+      el('label',{class:'f',for:'rp-f'},'From',el('input',{id:'rp-f',type:'date',value:rp.from,max:todayStr,onchange:e=>{rp.from=e.target.value;renderAdmin()}})),
+      el('label',{class:'f',for:'rp-t'},'To',el('input',{id:'rp-t',type:'date',value:rp.to,max:todayStr,onchange:e=>{rp.to=e.target.value;renderAdmin()}}))):null,
+    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Download PDF',disabled:!ready,onclick:()=>rpPdf(R)}),
+      el('button',{class:'btn',type:'button',text:'Download Excel',disabled:!ready,onclick:()=>rpXlsx(R)})));
+  if(D.tooLong)return[head,el('div',{class:'empty',text:'Pick up to 12 months at a time.'})];
+  if(!ready)return[head,el('div',{class:'empty',text:'Loading the report…'})];
+  const stat=(v,l)=>el('div',{},el('b',{class:'mono',text:String(v)}),el('span',{text:l}));
+  const summary=el('div',{class:'panel'},el('h3',{text:'Summary'}),el('div',{class:'stats'},stat(R.sum.orders,'Orders'),stat(rs(R.sum.amount),'Sales'),stat(R.sum.premium,'Premium'),stat(R.sum.affordable,'Affordable'),stat(R.sum.leads,'Leads')),
+    R.sum.noAmt?el('p',{class:'hint',text:R.sum.noAmt+' orders have no amount written, so sales ₹ is lower than real.'}):null);
+  const tbl=(cols,rows,foot)=>el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...cols.map(c=>el('th',{text:c})))),
+    el('tbody',{},...rows.map(r=>el('tr',{},...r.map((c,i)=>i?el('td',{class:typeof c==='number'?'mono':'',text:String(c)}):el('th',{text:String(c)}))))),
+    foot?el('tfoot',{},el('tr',{},...foot.map((c,i)=>i?el('td',{class:'mono',text:String(c)}):el('th',{text:String(c)})))):null));
+  const multi=R.days.length>1;
+  const workPanels=R.work.map(w=>{const shown=w.totals.filter(x=>x.total);
+    const dayCols=w.list.filter(t=>t.kind!=='text');
+    return el('div',{class:'panel'},el('h3',{text:w.s.name+' · '+catOf(w.s)}),
+      el('p',{class:'hint',text:w.dates.length?(multi?'Work saved on '+w.dates.length+' day'+(w.dates.length>1?'s':''):'Work saved'):'No work saved in this period.'}),
+      shown.length?tbl(['Work',multi?'Total':'Done','Details'],shown.map(x=>[x.t.name,x.total,workDetail(x)])):null,
+      multi&&w.dates.length&&dayCols.length?el('details',{},el('summary',{text:'Day by day'}),tbl(['Date',...dayCols.map(t=>t.name)],
+        w.dates.map(ds=>[dm(ds)+' '+DAYS[new Date(ds+'T12:00:00').getDay()].slice(0,3),...dayCols.map(t=>{const x=w.mine.find(m=>m.date===ds&&m.taskId===t.id);return x?fmtWork(t,x.value):''})]))):null,
+      w.missing.length?el('p',{class:'hint',style:'color:var(--accent)',text:'Came but did not fill work on: '+w.missing.map(dm).join(', ')}):null)});
+  const salesP=el('div',{class:'panel'},el('h3',{text:'Sales staff'}),R.sales.length?tbl(['Name','Leads','Premium','Affordable','Orders','Sales'],
+    R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rs(r.amt)]),['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rs(R.sum.amount)]):el('div',{class:'empty',text:'No sales staff.'}));
+  const prodP=el('div',{class:'panel'},el('h3',{text:'Products sold'}),R.products.length?tbl(['Product','Premium','Affordable','Total','Sales'],
+    R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt?rs(r.amt):'—'])):el('div',{class:'empty',text:'No orders with a product in this period.'}));
+  const attP=el('div',{class:'panel'},el('h3',{text:'Attendance'}),tbl(['Name','Came','WFH','Leave','Late','Left early','No OUT'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut])));
+  return[head,summary,el('h2',{class:'sect',text:'Production & work'}),...workPanels,salesP,prodP,attP];
+}
+const pdfTxt=v=>String(v==null?'':v).replace(/₹/g,'Rs. ').replace(/[✓✗]/g,'').replace(/[–—]/g,'-').replace(/[^\x20-\x7E\xA0-\xFF\n]/g,'').trim();
+function rpPdf(R){
+  const J=window.jspdf&&window.jspdf.jsPDF;if(!J){toast('PDF tool did not load. Check the internet and reload.');return}
+  const doc=new J({unit:'pt',format:'a4'});const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=32,TW=W-2*M;let y=0;
+  const header=()=>{doc.setFillColor(81,31,82);doc.rect(0,0,W,62,'F');doc.setTextColor(255);doc.setFont('helvetica','bold');doc.setFontSize(15);doc.text('COUPLO DESIGN STUDIO',M,29);
+    doc.setFont('helvetica','normal');doc.setFontSize(9.5);doc.text('Work & sales report  |  '+rpLabel(R.f,R.t),M,46);doc.setTextColor(30);y=86};
+  const newPage=()=>{doc.addPage();header()};
+  const title=t=>{if(y>100)y+=8;if(y+46>H-40)newPage();doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(81,31,82);doc.text(pdfTxt(t),M,y);doc.setTextColor(30);y+=14};
+  const note=(t,red)=>{doc.setFont('helvetica','normal');doc.setFontSize(8.5);const ls=doc.splitTextToSize(pdfTxt(t),TW);if(y+ls.length*11>H-40)newPage();
+    if(red)doc.setTextColor(170,30,60);doc.text(ls,M,y+4);doc.setTextColor(30);y+=ls.length*11+6};
+  const table=(cols,rows,widths,foot)=>{const ws=widths||cols.map(()=>1/cols.length);const xs=[];let x=M;ws.forEach(w=>{xs.push(x);x+=w*TW});
+    const row=(cells,bold,fill)=>{doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(8.5);
+      const lines=cells.map((c,i)=>doc.splitTextToSize(pdfTxt(c),ws[i]*TW-8));const h=Math.max(1,...lines.map(l=>l.length))*10.5+7;
+      if(y+h>H-40){newPage();if(!bold)row(cols,true,[243,235,243]);doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(8.5)}
+      if(fill){doc.setFillColor(...fill);doc.rect(M,y,TW,h,'F')}
+      lines.forEach((l,i)=>doc.text(l,xs[i]+4,y+11.5));doc.setDrawColor(222);doc.line(M,y+h,M+TW,y+h);y+=h};
+    if(y+40>H-40)newPage();row(cols,true,[243,235,243]);rows.forEach(r=>row(r,false));if(foot)row(foot,true,[248,244,248]);y+=14};
+  header();
+  title('Summary');table(['Orders','Premium','Affordable','Sales','Leads'],[[R.sum.orders,R.sum.premium,R.sum.affordable,rsPlain(R.sum.amount),R.sum.leads]]);
+  if(R.sum.noAmt)note(R.sum.noAmt+' orders have no amount written, so sales is lower than real.');
+  const multi=R.days.length>1;
+  title('Production & work');y+=2;
+  R.work.forEach(w=>{title(w.s.name+'  |  '+catOf(w.s)+(multi?'  |  work saved on '+w.dates.length+' day(s)':''));
+    const shown=w.totals.filter(x=>x.total);
+    if(!shown.length)note('No work saved in this period.');
+    else table(['Work',multi?'Total':'Done','Details'],shown.map(x=>[x.t.name,x.total,workDetail(x)]),[.3,.14,.56]);
+    const dayCols=w.list.filter(t=>t.kind!=='text');
+    if(multi&&w.dates.length&&dayCols.length){const n=dayCols.length;table(['Date',...dayCols.map(t=>t.name)],w.dates.map(ds=>[dm(ds),...dayCols.map(t=>{const x=w.mine.find(m=>m.date===ds&&m.taskId===t.id);return x?(t.kind==='yesno'?(x.value==='TRUE'?'Done':'Not done'):(t.kind==='colours'||t.kind==='items')?colTotal(x.value):x.value):''})]),[.1,...dayCols.map(()=>.9/n)])}
+    if(w.missing.length)note('Came but did not fill work on: '+w.missing.map(dm).join(', '),true)});
+  title('Sales staff');table(['Name','Leads','Premium','Affordable','Orders','Sales'],R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rsPlain(r.amt)]),[.26,.12,.14,.16,.12,.2],['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rsPlain(R.sum.amount)]);
+  if(R.products.length){title('Products sold');table(['Product','Premium','Affordable','Total','Sales'],R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt?rsPlain(r.amt):'-']),[.36,.14,.16,.14,.2])}
+  title('Attendance');table(['Name','Came','WFH','Leave','Late','Left early','No OUT'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut]),[.28,.12,.12,.12,.12,.12,.12]);
+  const pages=doc.getNumberOfPages();for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(140);doc.text('Page '+i+' of '+pages,W-M,H-18,{align:'right'})}
+  saveFile('COUPLO_REPORT_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.pdf',doc.output('arraybuffer'),'application/pdf');
+}
+function rpXlsx(R){
+  if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
+  const wb=XLSX.utils.book_new(),add=(name,rows,w)=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=(w||rows[1]||rows[0]).map((_,i)=>({wch:i?14:22}));XLSX.utils.book_append_sheet(wb,ws,name)};
+  add('SUMMARY',[['COUPLO REPORT '+rpLabel(R.f,R.t)],['ORDERS','PREMIUM','AFFORDABLE','SALES','LEADS'],[R.sum.orders,R.sum.premium,R.sum.affordable,R.sum.amount,R.sum.leads]]);
+  const wt=[['STAFF','CATEGORY','WORK','TOTAL','DETAILS']];R.work.forEach(w=>w.totals.filter(x=>x.total).forEach(x=>wt.push([w.s.name,catOf(w.s),x.t.name,x.total,workDetail(x)])));add('WORK TOTALS',wt);
+  const wd=[['DATE','STAFF','WORK','VALUE']];R.work.forEach(w=>w.mine.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(m=>{const t=w.list.find(x=>x.id===m.taskId)||{name:m.taskId,kind:'count'};wd.push([m.date,w.s.name,t.name,pdfTxt(fmtWork(t,m.value))])}));add('WORK DAY BY DAY',wd);
+  add('SALES',[['NAME','LEADS','PREMIUM','AFFORDABLE','ORDERS','SALES'],...R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,r.amt])]);
+  add('PRODUCTS',[['PRODUCT','PREMIUM','AFFORDABLE','TOTAL','SALES'],...R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt])]);
+  add('ATTENDANCE',[['NAME','CAME','WFH','LEAVE','LATE','LEFT EARLY','NO OUT'],...R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut])]);
+  saveFile('COUPLO_REPORT_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
+}
+
 /* ---------- admin: product list ---------- */
 function viewProducts(){
   const cnt={};adminOrders.forEach(o=>{const k=o.type+'|'+pkey(o.product);cnt[k]=(cnt[k]||0)+1});
@@ -756,9 +892,15 @@ function adminOrderSheet(o){
 }
 
 /* ---------- downloads ---------- */
-function saveFile(filename,data,type){
-  const url=URL.createObjectURL(new Blob([data],{type}));
-  const a=el('a',{href:url,download:filename});document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);
+/* phones (and the home-screen app) often ignore a plain download link, so there the file goes to the share sheet
+   (Save to Files / Drive / WhatsApp); computers download it directly */
+async function saveFile(filename,data,type){
+  const blob=new Blob([data],{type});
+  const phone=window.matchMedia&&matchMedia('(pointer:coarse)').matches;
+  if(phone&&navigator.canShare){try{const f=new File([blob],filename,{type});if(navigator.canShare({files:[f]})){await navigator.share({files:[f],title:filename});return}}catch(e){if(e&&e.name==='AbortError')return}}
+  const url=URL.createObjectURL(blob);
+  const a=el('a',{href:url,download:filename,target:'_blank',rel:'noopener'});document.body.append(a);a.click();a.remove();
+  toast('Downloaded '+filename);setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 const XLSXT='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 function exportXlsx(m){
