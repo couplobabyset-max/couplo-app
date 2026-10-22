@@ -819,14 +819,19 @@ function myOrdersView(edit,d){
   const sum=a=>a.reduce((t,o)=>t+(+o.amount||0),0);
   const thisMonth=d.month===ymOf(new Date());
   const info=el('p',{class:'hint',text:'Today: '+today.length+' orders · '+rs(sum(today))+'  ·  '+MON[+d.month.slice(5)-1]+': '+myOrders.length+' orders · '+rs(sum(myOrders))});
-  const minD=ymd(new Date(Date.now()-3*864e5));
+  /* order date: today, yesterday, or up to 3 days back — a simple dropdown so it works the same on every phone */
+  const backDays=[0,1,2,3].map(i=>addDays(td,-i)), minD=backDays[3];
   const lockD=!!(edit&&edit.date<minD);
-  const odt=el('input',{id:'o-sdt',type:'date',min:minD,max:td,value:edit?edit.date:td});if(lockD)odt.disabled=true;
-  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date',odt),el('p',{class:'hint',text:'Today or the last 3 days only. For older dates, ask HR.'})):null;
+  const dLabel=(ds,i)=>(i===0?'Today':i===1?'Yesterday':i+' days ago')+' · '+ds.slice(8)+'/'+ds.slice(5,7);
+  const odt=el('select',{id:'o-sdt','aria-label':'Order date'},...(lockD?[el('option',{value:edit.date,text:edit.date.slice(8)+'/'+edit.date.slice(5,7)})]:backDays.map((ds,i)=>el('option',{value:ds,selected:ds===(edit?edit.date:td),text:dLabel(ds,i)}))));
+  if(lockD)odt.disabled=true;
+  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date (which day did the customer order?)',odt),el('p',{class:'hint',text:'Forgot to enter yesterday\'s order? Pick Yesterday here before saving. Older than 3 days — ask HR.'})):null;
   const form=thisMonth?orderForm(edit,async data=>{
-    data.date=lockD?edit.date:(odt.value||td);
-    if(data.id){await call('editOrder',{staffId:me.id,pin:me.pin,order:data});toast('Order updated')}
-    else{const j=await call('addOrder',{staffId:me.id,pin:me.pin,order:data});toast('Saved · '+j.order.orderNo)}
+    const want=lockD?edit.date:(odt.value||td);data.date=want;
+    let j;
+    if(data.id){j=await call('editOrder',{staffId:me.id,pin:me.pin,order:data});toast('Order updated')}
+    else{j=await call('addOrder',{staffId:me.id,pin:me.pin,order:data});toast('Saved · '+j.order.orderNo+(want!==td?' · '+want.slice(8)+'/'+want.slice(5,7):''))}
+    if(j&&j.order&&j.order.date!==want)toast('Saved with date '+j.order.date+' — the sheet script (Code.gs) needs the new version. Tell Murshid.');
     ordersHome()},myOrders.map(o=>o.product)):null;
   const list=el('div',{class:'panel'},el('h3',{text:'My orders'}),myOrders.length?el('div',{class:'scroll'},el('table',{},
     el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Sent',''].map(t=>el('th',{text:t})))),
