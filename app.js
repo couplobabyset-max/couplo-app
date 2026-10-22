@@ -819,7 +819,12 @@ function myOrdersView(edit,d){
   const sum=a=>a.reduce((t,o)=>t+(+o.amount||0),0);
   const thisMonth=d.month===ymOf(new Date());
   const info=el('p',{class:'hint',text:'Today: '+today.length+' orders · '+rs(sum(today))+'  ·  '+MON[+d.month.slice(5)-1]+': '+myOrders.length+' orders · '+rs(sum(myOrders))});
+  const minD=ymd(new Date(Date.now()-3*864e5));
+  const lockD=!!(edit&&edit.date<minD);
+  const odt=el('input',{id:'o-sdt',type:'date',min:minD,max:td,value:edit?edit.date:td});if(lockD)odt.disabled=true;
+  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date',odt),el('p',{class:'hint',text:'Today or the last 3 days only. For older dates, ask HR.'})):null;
   const form=thisMonth?orderForm(edit,async data=>{
+    data.date=lockD?edit.date:(odt.value||td);
     if(data.id){await call('editOrder',{staffId:me.id,pin:me.pin,order:data});toast('Order updated')}
     else{const j=await call('addOrder',{staffId:me.id,pin:me.pin,order:data});toast('Saved · '+j.order.orderNo)}
     ordersHome()},myOrders.map(o=>o.product)):null;
@@ -827,7 +832,7 @@ function myOrdersView(edit,d){
     el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Sent',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...myOrders.map(o=>el('tr',{},el('td',{class:'mono',text:o.date.slice(8)+'/'+o.date.slice(5,7)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:(o.customer||'—')+(o.phone?' · '+o.phone:'')}),el('td',{text:o.district}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{class:'mono',text:o.amount?rs(o.amount):'—'}),el('td',{text:o.dispatched==='TRUE'?'✓':''}),
       el('td',{},thisMonth?el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>{ordersHome(o);window.scrollTo(0,0)}}):null)))))):el('div',{class:'empty',text:'No orders in this month.'}));
-  return[info,form,list];
+  return[info,dateBox,form,list];
 }
 
 /* ---------- admin: orders & reports ---------- */

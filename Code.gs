@@ -382,18 +382,23 @@ function handle_(b) {
         return { ok: true, today: n.date, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id && o.date.indexOf(month) === 0; }) };
       var o = cleanOrder_(b.order);
       if (!o.phone && !o.customer) return { ok: false, error: 'Enter customer name or phone' };
+      // staff may pick today or the last 3 days as the order date; anything else falls back to today
+      var oldestOd = Utilities.formatDate(new Date(new Date().getTime() - 3 * 864e5), TZ, 'yyyy-MM-dd');
+      var pickD = String(b.order.date || '');
+      var okD = /^\d{4}-\d{2}-\d{2}$/.test(pickD) && pickD <= n.date && pickD >= oldestOd;
       if (b.action === 'addOrder') {
-        var mine = rows_('Orders').filter(function (x) { return x.staffId === me.id && x.date === n.date; }).length;
+        var od = okD ? pickD : n.date;
+        var mine = rows_('Orders').filter(function (x) { return x.staffId === me.id && x.date === od; }).length;
         o.id = 'o' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
-        o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || (me.name.charAt(0) + (o.type === 'affordable' ? 'A' : 'P') + n.date.slice(5, 7) + n.date.slice(8, 10) + '-' + (mine + 1));
-        o.date = n.date; o.staffId = me.id; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = n.date + ' ' + n.time;
+        o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || (me.name.charAt(0) + (o.type === 'affordable' ? 'A' : 'P') + od.slice(5, 7) + od.slice(8, 10) + '-' + (mine + 1));
+        o.date = od; o.staffId = me.id; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = n.date + ' ' + n.time;
         upsert_('Orders', o);
         return { ok: true, order: o };
       }
       var old = rows_('Orders').filter(function (x) { return x.id === b.order.id; })[0];
       if (!old || old.staffId !== me.id) return { ok: false, error: 'Order not found' };
       if (old.date.indexOf(month) !== 0) return { ok: false, error: 'Only this month\'s orders can be changed' };
-      o.id = old.id; o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || old.orderNo; o.date = old.date; o.staffId = old.staffId; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = old.createdAt;
+      o.id = old.id; o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || old.orderNo; o.date = okD ? pickD : old.date; o.staffId = old.staffId; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = old.createdAt;
       upsert_('Orders', o);
       return { ok: true, order: o };
     }
