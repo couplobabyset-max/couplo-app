@@ -241,7 +241,7 @@ function monthPicker(){
 }
 function renderAdmin(){
   if(!adminOpen)return;
-  const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
+  const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
   if(adminView==='dash')parts.push(...viewDashboard());
   else if(adminView==='reports')parts.push(...viewReports());
   else if(adminView==='register')parts.push(...viewRegister());
@@ -599,13 +599,15 @@ function editTask(t){
 let rp={preset:'today',from:'',to:''}, rpCache={}, rpLoading=false;
 const addDays=(ds,n)=>{const d=new Date(ds+'T12:00:00');d.setDate(d.getDate()+n);return ymd(d)};
 const dm=ds=>ds.slice(8)+'/'+ds.slice(5,7);
-function rpRange(){const td=todayStr;
-  if(rp.preset==='today')return[td,td];
-  if(rp.preset==='yesterday'){const y=addDays(td,-1);return[y,y]}
-  if(rp.preset==='week')return[addDays(td,-6),td];
-  if(rp.preset==='month')return[td.slice(0,7)+'-01',td];
-  if(rp.preset==='lastmonth'){const d=new Date(td.slice(0,7)+'-01T12:00:00');d.setMonth(d.getMonth()-1);const m=ymOf(d);return[m+'-01',ymd(monthDates(m).slice(-1)[0])]}
-  let f=rp.from||td,t=rp.to||td;if(f>t)[f,t]=[t,f];return[f,t]}
+function rpRange(st){st=st||rp;const td=todayStr;
+  if(st.preset==='today')return[td,td];
+  if(st.preset==='yesterday'){const y=addDays(td,-1);return[y,y]}
+  if(st.preset==='week')return[addDays(td,-6),td];
+  if(st.preset==='month')return[td.slice(0,7)+'-01',td];
+  if(st.preset==='lastmonth'){const d=new Date(td.slice(0,7)+'-01T12:00:00');d.setMonth(d.getMonth()-1);const m=ymOf(d);return[m+'-01',ymd(monthDates(m).slice(-1)[0])]}
+  if(st.preset==='year')return[td.slice(0,4)+'-01-01',td];
+  if(st.preset==='lastyear'){const y=+td.slice(0,4)-1;return[y+'-01-01',y+'-12-31']}
+  let f=st.from||td,t=st.to||td;if(f>t)[f,t]=[t,f];return[f,t]}
 const rpLabel=(f,t)=>f===t?dm(f)+'/'+f.slice(0,4):dm(f)+'/'+f.slice(0,4)+' to '+dm(t)+'/'+t.slice(0,4);
 function rangeDays(f,t){const out=[];for(let d=f;d<=t;d=addDays(d,1))out.push(d);return out}
 function rpMonths(f,t){const out=[];let m=f.slice(0,7);while(m<=t.slice(0,7)&&out.length<14){out.push(m);const d=new Date(m+'-01T12:00:00');d.setMonth(d.getMonth()+1);m=ymOf(d)}return out}
@@ -613,8 +615,8 @@ async function rpLoad(months){rpLoading=true;
   try{await Promise.all(months.filter(m=>!rpCache[m]).map(async m=>{rpCache[m]=await call('month',{adminPin,month:m})}))}
   catch(e){toast('Could not load: '+e.message)}
   rpLoading=false;renderAdmin()}
-function rpData(){
-  const[f,t]=rpRange();const months=rpMonths(f,t);
+function rpData(st){
+  const[f,t]=rpRange(st);const months=rpMonths(f,t);
   if(months.length>12)return{f,t,tooLong:true};
   const miss=months.filter(m=>!rpCache[m]);if(miss.length){if(!rpLoading)rpLoad(miss);return{f,t,loading:true}}
   const inR=x=>x.date>=f&&x.date<=t, pick=k=>months.flatMap(m=>rpCache[m][k]||[]).filter(inR);
@@ -740,131 +742,182 @@ function rpXlsx(R){
   saveFile('COUPLO_REPORT_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
 }
 
-/* ---------- admin: dashboard (charts + week table like the MONTH-ODERS sheet) ---------- */
+/* ---------- admin: dashboard (filters: today / dates / month / year) ---------- */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const WEEKS=[[1,7,'1st week'],[8,14,'2nd week'],[15,21,'3rd week'],[22,31,'4th week']];
 const wkOf=ds=>{const d=+ds.slice(8);return d<=7?0:d<=14?1:d<=21?2:3};
+let dsh={preset:'month',from:'',to:''};
 function svgBox(html,label){const d=el('div',{class:'chart',role:'img','aria-label':label});d.innerHTML=html;return d}
 function niceMax(v){if(v<=5)return 5;const p=Math.pow(10,Math.floor(Math.log10(v))),n=v/p;return(n<=1?1:n<=2?2:n<=5?5:10)*p}
-/* stacked premium/affordable columns, one per day */
-function dailyChart(days,byDay){
-  const n=days.length,cw=26,L=30,T=12,ch=150,W=L+n*cw+6,H=T+ch+26;
-  const mx=niceMax(Math.max(1,...days.map(ds=>(byDay[ds]||{p:0,a:0}).p+(byDay[ds]||{a:0}).a)));
+/* stacked columns: cols = [{k,label,p,a,sun,tip}] (a may be 0 for single-colour charts) */
+function colChart(cols,one){
+  const n=cols.length,cw=n>16?26:40,L=30,T=14,ch=150,W=L+n*cw+6,H=T+ch+26;
+  const mx=niceMax(Math.max(1,...cols.map(c=>c.p+c.a)));
   let s='';for(let i=0;i<=4;i++){const v=mx*i/4,y=T+ch-ch*i/4;s+=`<line x1="${L}" x2="${W-4}" y1="${y}" y2="${y}" class="gl"/><text x="${L-5}" y="${y+3.5}" text-anchor="end" class="ax">${Math.round(v)}</text>`}
-  days.forEach((ds,i)=>{const x=L+i*cw+4,w=cw-8,b=byDay[ds]||{p:0,a:0},hp=ch*b.p/mx,ha=ch*b.a/mx,dt=new Date(ds+'T12:00:00'),sun=dt.getDay()===0;
-    const tip=`${ds.slice(8)} ${MON[dt.getMonth()]}: ${b.p} premium, ${b.a} affordable`;
-    s+=`<g><title>${tip}</title>`;
-    if(b.a)s+=`<rect x="${x}" y="${T+ch-ha}" width="${w}" height="${ha}" class="c-aff" rx="2"/>`;
-    if(b.p)s+=`<rect x="${x}" y="${T+ch-ha-hp}" width="${w}" height="${hp}" class="c-prem" rx="2"/>`;
-    if(b.p+b.a)s+=`<text x="${x+w/2}" y="${T+ch-ha-hp-3}" text-anchor="middle" class="vl">${b.p+b.a}</text>`;
-    s+=`<text x="${x+w/2}" y="${T+ch+14}" text-anchor="middle" class="ax${sun?' sun':''}">${+ds.slice(8)}</text></g>`});
-  return svgBox(`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${s}</svg>`,'Orders per day')}
-/* horizontal bars: rows of [label, premium, affordable] or [label, value] */
+  cols.forEach((c,i)=>{const x=L+i*cw+4,w=cw-8,hp=ch*c.p/mx,ha=ch*c.a/mx;
+    s+=`<g><title>${esc(c.tip)}</title>`;
+    if(c.a)s+=`<rect x="${x}" y="${T+ch-ha}" width="${w}" height="${ha}" class="c-aff" rx="2"/>`;
+    if(c.p)s+=`<rect x="${x}" y="${T+ch-ha-hp}" width="${w}" height="${hp}" class="${one?'c-one':'c-prem'}" rx="2"/>`;
+    if(c.p+c.a)s+=`<text x="${x+w/2}" y="${T+ch-ha-hp-3}" text-anchor="middle" class="vl">${c.p+c.a}</text>`;
+    s+=`<text x="${x+w/2}" y="${T+ch+14}" text-anchor="middle" class="ax${c.sun?' sun':''}">${esc(c.label)}</text></g>`});
+  return svgBox(`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${s}</svg>`,'Column chart')}
+/* horizontal bars: rows of [label, premium, affordable] (stacked) or [label, value] */
 function hBars(rows,stacked){
-  if(!rows.length)return el('div',{class:'empty',text:'Nothing yet.'});
+  if(!rows.length)return el('div',{class:'empty',text:'Nothing in this period.'});
   const LW=stacked?96:190,BW=stacked?280:240,RH=30,W=LW+BW+56,H=rows.length*RH+4;
   const mx=Math.max(1,...rows.map(r=>stacked?r[1]+r[2]:r[1]));let s='';
-  rows.forEach((r,i)=>{const y=i*RH+4,tot=stacked?r[1]+r[2]:r[1],wp=BW*(stacked?r[1]:r[1])/mx,wa=stacked?BW*r[2]/mx:0;
+  rows.forEach((r,i)=>{const y=i*RH+4,tot=stacked?r[1]+r[2]:r[1],wp=BW*r[1]/mx,wa=stacked?BW*r[2]/mx:0;
     s+=`<g><title>${esc(r[0])}: ${stacked?r[1]+' premium, '+r[2]+' affordable':tot}</title><text x="${LW-8}" y="${y+15}" text-anchor="end" class="lb">${esc(String(r[0]).slice(0,stacked?12:24))}</text>`;
     if(wp)s+=`<rect x="${LW}" y="${y+3}" width="${wp}" height="18" class="${stacked?'c-prem':'c-one'}" rx="3"/>`;
     if(wa)s+=`<rect x="${LW+wp}" y="${y+3}" width="${wa}" height="18" class="c-aff" rx="3"/>`;
     s+=`<text x="${LW+wp+wa+6}" y="${y+16}" class="vl">${tot}</text></g>`});
   return svgBox(`<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px">${s}</svg>`,'Bar chart')}
-const legend=()=>el('div',{class:'legend'},el('span',{},el('i',{class:'sw c-prem'}),'Premium'),el('span',{},el('i',{class:'sw c-aff'}),'Affordable'));
-function dashData(m){
-  const days=monthDates(m).map(ymd), os=(m===adminMonth?adminOrders:((rpCache[m]||{}).orders||[]));
+const legend=(a,b)=>el('div',{class:'legend'},el('span',{},el('i',{class:'sw c-prem'}),a||'Premium'),el('span',{},el('i',{class:'sw c-aff'}),b||'Affordable'));
+const orderNos=v=>String(v||'').split(/[,\n]+/).map(x=>x.trim()).filter(Boolean);
+const monLabel=m=>MON[+m.slice(5)-1]+' '+m.slice(2,4);
+function dashData(R){
+  const os=R.orders, days=R.days, oneMonth=R.f.slice(0,7)===R.t.slice(0,7), byMonth=days.length>62;
   const people=[...staff].filter(s=>s.sales||os.some(o=>o.staffId===s.id)).sort(byOrder);
-  const isP=o=>o.type!=='affordable', amt=o=>+o.amount||0;
-  const byDay={},grid={},wk={};
+  const isP=o=>o.type!=='affordable', amt=o=>+o.amount||0, sent=o=>o.dispatched==='TRUE'||o.dispatched===true;
+  /* buckets: weeks inside one month, months for longer ranges */
+  const bucketKeys=oneMonth?WEEKS.map((_,i)=>i):rpMonths(R.f,R.t);
+  const bOf=ds=>oneMonth?wkOf(ds):ds.slice(0,7);
+  const mLen=monthDates(R.f.slice(0,7)).length, bLabel=k=>oneMonth?WEEKS[k][2]+' ('+WEEKS[k][0]+'–'+Math.min(WEEKS[k][1],mLen)+')':monLabel(k);
+  const byDay={},grid={},bk={};
   os.forEach(o=>{const d=byDay[o.date]=byDay[o.date]||{p:0,a:0};isP(o)?d.p++:d.a++;
     const g=grid[o.staffId+'|'+o.date]=grid[o.staffId+'|'+o.date]||{p:0,a:0};isP(o)?g.p++:g.a++;
-    const w=wk[o.staffId+'|'+wkOf(o.date)]=wk[o.staffId+'|'+wkOf(o.date)]||{p:0,a:0};isP(o)?w.p++:w.a++});
-  const per=people.map(s=>{const mine=os.filter(o=>o.staffId===s.id);return{s,p:mine.filter(isP).length,a:mine.filter(o=>!isP(o)).length,amt:mine.reduce((x,o)=>x+amt(o),0)}});
-  return{m,days,os,people,byDay,grid,wk,per,isP,amt,
-    total:os.length,p:os.filter(isP).length,a:os.filter(o=>!isP(o)).length,sales:os.reduce((x,o)=>x+amt(o),0)};
+    const k=o.staffId+'|'+bOf(o.date),w=bk[k]=bk[k]||{p:0,a:0};isP(o)?w.p++:w.a++});
+  const per=people.map(s=>{const mine=os.filter(o=>o.staffId===s.id);return{s,p:mine.filter(isP).length,a:mine.filter(o=>!isP(o)).length,amt:mine.reduce((x,o)=>x+amt(o),0),sent:mine.filter(sent).length,leads:R.sales.filter(r=>r.staffId===s.id).reduce((t,r)=>t+(+r.leads||0),0)}});
+  /* printing — from Jaseera's daily work */
+  const W=R.work.filter(w=>w.value!==''&&w.value!=null), wOf=id=>W.filter(w=>w.taskId===id);
+  const pItems={},pDay={};wOf('printed-items').forEach(w=>Object.entries(colParse(w.value)).forEach(([c,q])=>{q=+q||0;pItems[c]=(pItems[c]||0)+q;pDay[w.date]=(pDay[w.date]||0)+q}));
+  const pOrders=wOf('printed-orders').reduce((t,w)=>t+orderNos(w.value).length,0);
+  const reprints=wOf('reprint').flatMap(w=>orderNos(w.value).map(no=>({date:w.date,no})));
+  const num=id=>wOf(id).reduce((t,w)=>t+(+w.value||0),0);
+  const bal=wOf('balance-printing').sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const remarks=wOf('print-remarks').sort((a,b)=>a.date.localeCompare(b.date));
+  const print={items:Object.entries(pItems).sort((a,b)=>b[1]-a[1]),pieces:Object.values(pItems).reduce((a,b)=>a+b,0),pDay,orders:pOrders,reprints,
+    received:num('orders-received'),washing:num('washing'),damage:num('damage'),bal,remarks,any:W.some(w=>['printed-items','printed-orders','reprint','damage','washing','orders-received','balance-printing'].includes(w.taskId))};
+  return{...R,os,people,byDay,grid,bk,bucketKeys,bLabel,oneMonth,byMonth,per,isP,amt,sent,print,
+    total:os.length,p:os.filter(isP).length,a:os.filter(o=>!isP(o)).length,sales:os.reduce((x,o)=>x+amt(o),0),
+    dispatched:os.filter(sent).length,leads:R.sales.reduce((t,r)=>t+(+r.leads||0),0)};
 }
 function viewDashboard(){
-  const m=adminMonth, D=dashData(m), td=todayStr;
-  const [y,mo]=m.split('-').map(Number), mName=MON[mo-1]+' '+y;
-  const pm=(()=>{const d=new Date(y,mo-2,1);return ymOf(d)})();
-  if(!rpCache[pm]&&!rpLoading)rpLoad([pm]);
-  const prev=rpCache[pm]?(rpCache[pm].orders||[]).length:null;
-  const elapsed=D.days.filter(ds=>ds<=td).length||D.days.length;
-  const best=D.days.reduce((b,ds)=>{const x=D.byDay[ds];const n=x?x.p+x.a:0;return n>b.n?{ds,n}:b},{ds:null,n:0});
-  const leads=D.days.reduce((t,ds)=>t+D.people.reduce((u,s)=>u+((adminSales[ds+'__'+s.id]||{}).leads||0),0),0);
-  const stat=(v,l,sub)=>el('div',{class:'kpi'},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
-  const diff=prev==null?'':prev===0?'':(D.total>=prev?'▲ ':'▼ ')+Math.abs(Math.round((D.total-prev)/prev*100))+'% vs '+MON[(mo+10)%12];
+  const R0=rpData(dsh);
+  const presets=[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['lastyear','Last year'],['custom','Pick dates']];
+  const ps=el('select',{id:'ds-p','aria-label':'Period',onchange:e=>{dsh.preset=e.target.value;if(dsh.preset==='custom'&&!dsh.from){dsh.from=R0.f;dsh.to=R0.t}renderAdmin()}},...presets.map(([v,t])=>el('option',{value:v,text:t,selected:dsh.preset===v})));
+  const ready=!R0.loading&&!R0.tooLong, D=ready?dashData(R0):null;
+  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Dashboard · '+rpLabel(R0.f,R0.t)}),el('div',{class:'row'},ps,
+      el('button',{class:'btn',type:'button',text:'Reload',onclick:()=>{rpMonths(R0.f,R0.t).forEach(m=>delete rpCache[m]);renderAdmin()}}))),
+    dsh.preset==='custom'?el('div',{class:'form2'},
+      el('label',{class:'f',for:'ds-f'},'From',el('input',{id:'ds-f',type:'date',value:dsh.from,max:todayStr,onchange:e=>{dsh.from=e.target.value;renderAdmin()}})),
+      el('label',{class:'f',for:'ds-t'},'To',el('input',{id:'ds-t',type:'date',value:dsh.to,max:todayStr,onchange:e=>{dsh.to=e.target.value;renderAdmin()}}))):null,
+    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Download Excel',disabled:!ready,onclick:()=>dashXlsx(D)})));
+  if(R0.tooLong)return[head,el('div',{class:'empty',text:'Pick up to 12 months at a time.'})];
+  if(!ready)return[head,el('div',{class:'empty',text:'Loading…'})];
+  const pc=(a,b)=>b?Math.round(a/b*100)+'%':'';
+  const stat=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+  const elapsed=D.days.filter(ds=>ds<=todayStr).length||1;
   const kpis=el('div',{class:'kpis'},
-    stat(D.total,'Orders',diff),stat(rs(D.sales),'Sales',D.total?'avg '+rs(D.sales/D.total)+' / order':''),
-    stat(D.p,'Premium',D.total?Math.round(D.p/D.total*100)+'%':''),stat(D.a,'Affordable',D.total?Math.round(D.a/D.total*100)+'%':''),
-    stat((D.total/elapsed).toFixed(1),'Per day',elapsed+' days'),
-    stat(best.n||'—','Best day',best.ds?(+best.ds.slice(8))+' '+MON[mo-1]:''),
-    leads?stat(Math.round(D.total/leads*100)+'%','Conversion',leads+' leads'):null);
-  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Dashboard · '+mName}),
-    el('button',{class:'btn primary',type:'button',text:'Download Excel (sheet format)',onclick:()=>dashXlsx(D)})),kpis,
+    stat(D.total,'Orders placed',D.days.length>1?(D.total/elapsed).toFixed(1)+' per day':''),
+    stat(rs(D.sales),'Sales',D.total?'avg '+rs(D.sales/D.total)+' / order':''),
+    stat(D.p,'Premium',pc(D.p,D.total)),stat(D.a,'Affordable',pc(D.a,D.total)),
+    stat(D.dispatched,'Dispatched',pc(D.dispatched,D.total)+' of orders'),
+    stat(D.total-D.dispatched,'Not dispatched','waiting',D.total-D.dispatched?'warnk':''),
+    stat(D.print.pieces,'Printed pieces',D.print.orders?D.print.orders+' order nos':''),
+    stat(D.print.reprints.length,'Reprints',D.print.damage?D.print.damage+' damage':'',D.print.reprints.length?'warnk':''),
+    D.leads?stat(pc(D.total,D.leads),'Conversion',D.leads+' leads'):null);
+  const head2=el('div',{class:'panel'},kpis,
     D.os.some(o=>!+o.amount)?el('p',{class:'hint',text:D.os.filter(o=>!+o.amount).length+' orders have no amount written, so sales ₹ is lower than real.'}):null);
-  if(!D.total)return[head,el('div',{class:'empty',text:'No orders entered for '+mName+' yet.'})];
-  /* week table — same layout as the MONTH-ODERS sheet */
-  const wcols=[...WEEKS.map(w=>w[2]+' ('+w[0]+'–'+Math.min(w[1],D.days.length)+')'),'Month end'];
-  const sub=['P','A','Total'];
-  const wrow=(name,get)=>{const cells=[];let mp=0,ma=0;
-    WEEKS.forEach((_,i)=>{const x=get(i);mp+=x.p;ma+=x.a;cells.push(x.p,x.a,x.p+x.a)});cells.push(mp,ma,mp+ma);
-    return el('tr',{},el('th',{text:name}),...cells.map((v,i)=>el('td',{class:'mono'+(i%3===2?' wt':'')+(i>=12?' me':''),text:v?String(v):'0'})))};
-  const weekTbl=el('div',{class:'scroll'},el('table',{class:'wk'},
-    el('thead',{},el('tr',{},el('th',{rowspan:'2',text:'Staff'}),...wcols.map((c,i)=>el('th',{colspan:'3',class:'wh w'+i,text:c}))),
-      el('tr',{},...wcols.flatMap((_,i)=>sub.map(s=>el('th',{class:'w'+i,text:s}))))),
-    el('tbody',{},...D.people.map(s=>wrow(s.name,i=>D.wk[s.id+'|'+i]||{p:0,a:0}))),
-    el('tfoot',{},wrow('Total',i=>D.people.reduce((t,s)=>{const x=D.wk[s.id+'|'+i]||{p:0,a:0};return{p:t.p+x.p,a:t.a+x.a}},{p:0,a:0})))));
-  const weekP=el('div',{class:'panel'},el('h3',{text:'Week by week'}),el('p',{class:'hint',text:'P = Premium, A = Affordable. Same as the monthly order sheet.'}),weekTbl,
-    hBars(WEEKS.map((w,i)=>[w[2],...['p','a'].map(k=>D.people.reduce((t,s)=>t+((D.wk[s.id+'|'+i]||{})[k]||0),0))]),true));
-  const staffP=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Staff-wise orders'}),legend()),
-    hBars(D.per.map(r=>[r.s.name,r.p,r.a]),true),
-    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Staff','Premium','Affordable','Orders','Share','Sales'].map(t=>el('th',{text:t})))),
-      el('tbody',{},...D.per.map(r=>el('tr',{},el('th',{text:r.s.name}),...[r.p,r.a,r.p+r.a].map(v=>el('td',{class:'mono',text:String(v)})),
-        el('td',{class:'mono',text:Math.round((r.p+r.a)/D.total*100)+'%'}),el('td',{class:'mono',text:rs(r.amt)})))))));
-  const dayP=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Orders per day'}),legend()),
-    el('div',{class:'scroll chartscroll'},dailyChart(D.days,D.byDay)));
-  /* day grid: dates down, staff across (P · A) */
-  const gridP=el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('details',{},el('summary',{text:'Show every day (P · A for each staff)'}),
-    el('div',{class:'scroll'},el('table',{},
-      el('thead',{},el('tr',{},el('th',{text:'Date'}),...D.people.map(s=>el('th',{text:s.name})),el('th',{text:'Total'}))),
-      el('tbody',{},...D.days.filter(ds=>ds<=td||D.byDay[ds]).map(ds=>{const dt=new Date(ds+'T12:00:00'),b=D.byDay[ds]||{p:0,a:0};
-        return el('tr',{class:dt.getDay()===0?'sun':''},el('th',{},el('span',{class:'mono',text:ds.slice(8)}),' '+DAYS[dt.getDay()].slice(0,3)),
-          ...D.people.map(s=>{const g=D.grid[s.id+'|'+ds];return el('td',{class:'mono'+(g?'':' c-hrs'),text:g?g.p+' · '+g.a:'—'})}),
-          el('td',{class:'mono',text:(b.p+b.a)?String(b.p+b.a):'—'}))}))))));
-  const cnt=(key)=>{const g={};D.os.forEach(o=>{const k=key(o);if(k)g[k]=(g[k]||0)+(+o.qty||1)});return Object.entries(g).sort((a,b)=>b[1]-a[1]).slice(0,8)};
-  const prodP=el('div',{class:'panel'},el('h3',{text:'Top products'}),hBars(cnt(o=>{const c=prodCode(o);return c?(CODE_NAMES[c]||c):''}),false));
+  /* sales staff */
+  const staffP=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Orders placed by each sales person'}),legend()),
+    D.total?hBars(D.per.map(r=>[r.s.name,r.p,r.a]),true):el('div',{class:'empty',text:'No orders in this period.'}),
+    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Staff','Leads','Premium','Affordable','Orders','Share','Dispatched','Sales'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...D.per.map(r=>el('tr',{},el('th',{text:r.s.name}),...[r.leads||'—',r.p,r.a,r.p+r.a].map(v=>el('td',{class:'mono',text:String(v)})),
+        el('td',{class:'mono',text:pc(r.p+r.a,D.total)||'—'}),el('td',{class:'mono',text:r.sent+' / '+(r.p+r.a)}),el('td',{class:'mono',text:rs(r.amt)})))),
+      el('tfoot',{},el('tr',{},el('th',{text:'Total'}),...[D.leads||'—',D.p,D.a,D.total,'100%',D.dispatched+' / '+D.total,rs(D.sales)].map(v=>el('td',{class:'mono',text:String(v)})))))));
+  /* week-by-week (one month) or month-by-month (longer) — same layout as the order sheet */
+  const ks=D.bucketKeys, sub=['P','A','Total'];
+  const brow=(name,get)=>{const cells=[];let mp=0,ma=0;ks.forEach(k=>{const x=get(k);mp+=x.p;ma+=x.a;cells.push(x.p,x.a,x.p+x.a)});cells.push(mp,ma,mp+ma);
+    return el('tr',{},el('th',{text:name}),...cells.map((v,i)=>el('td',{class:'mono'+(i%3===2?' wt':'')+(i>=ks.length*3?' me':''),text:String(v)})))};
+  const sumK=k=>D.people.reduce((t,s)=>{const x=D.bk[s.id+'|'+k]||{p:0,a:0};return{p:t.p+x.p,a:t.a+x.a}},{p:0,a:0});
+  const bucketP=D.days.length>7?el('div',{class:'panel'},el('h3',{text:D.oneMonth?'Week by week':'Month by month'}),
+    el('p',{class:'hint',text:'P = Premium, A = Affordable — same as the monthly order sheet.'}),
+    el('div',{class:'scroll'},el('table',{class:'wk'},
+      el('thead',{},el('tr',{},el('th',{rowspan:'2',text:'Staff'}),...ks.map(k=>el('th',{colspan:'3',class:'wh',text:D.bLabel(k)})),el('th',{colspan:'3',class:'wh me-h',text:'Total'})),
+        el('tr',{},...[...ks,'t'].flatMap((k,i)=>sub.map(s=>el('th',{class:i===ks.length?'me-h':'',text:s}))))),
+      el('tbody',{},...D.people.map(s=>brow(s.name,k=>D.bk[s.id+'|'+k]||{p:0,a:0}))),
+      el('tfoot',{},brow('Total',sumK)))),
+    hBars(ks.map(k=>{const x=sumK(k);return[D.oneMonth?WEEKS[k][2]:monLabel(k),x.p,x.a]}),true)):null;
+  /* orders over time */
+  const cols=D.byMonth?rpMonths(D.f,D.t).map(m=>{const x=D.os.filter(o=>o.date.slice(0,7)===m);const p=x.filter(D.isP).length;return{label:MON[+m.slice(5)-1],p,a:x.length-p,tip:monLabel(m)+': '+p+' premium, '+(x.length-p)+' affordable'}})
+    :D.days.map(ds=>{const b=D.byDay[ds]||{p:0,a:0},dt=new Date(ds+'T12:00:00');return{label:String(+ds.slice(8)),p:b.p,a:b.a,sun:dt.getDay()===0,tip:dm(ds)+': '+b.p+' premium, '+b.a+' affordable'}});
+  const timeP=D.days.length>1?el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:D.byMonth?'Orders per month':'Orders per day'}),legend()),el('div',{class:'scroll chartscroll'},colChart(cols))):null;
+  /* dispatch */
+  const pend=D.os.filter(o=>!D.sent(o)).sort((a,b)=>a.date.localeCompare(b.date));
+  const nm=id=>(staff.find(s=>s.id===id)||{name:id}).name;
+  const dispP=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Dispatch'}),legend('Dispatched','Not dispatched')),
+    D.total?hBars(D.per.filter(r=>r.p+r.a).map(r=>[r.s.name,r.sent,r.p+r.a-r.sent]),true):el('div',{class:'empty',text:'No orders in this period.'}),
+    pend.length?el('details',{},el('summary',{text:'Not dispatched yet ('+pend.length+') — tick when sent'}),el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},...['Sent','Date','No.','Customer','Staff','Product','District'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...pend.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched '+(o.orderNo||'')});
+        cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE';toast(cb.checked?'Marked dispatched':'Marked not sent')}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
+        return el('tr',{},el('td',{},cb),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}))}))))):
+      (D.total?el('p',{class:'hint',text:'All orders in this period are dispatched.'}):null));
+  /* printing (Jaseera's daily work) */
+  const P=D.print;
+  const printP=el('div',{class:'panel'},el('h3',{text:'Printing'}),
+    P.any?el('div',{class:'kpis'},stat(P.pieces,'Pieces printed'),stat(P.orders,'Order nos printed'),stat(P.received,'Orders received'),stat(P.reprints.length,'Reprints','',P.reprints.length?'warnk':''),stat(P.damage,'Damage'),stat(P.washing,'Washing'),
+      P.bal?stat(+P.bal.value||0,'Balance to print','on '+dm(P.bal.date)):null):el('div',{class:'empty',text:'No printing work saved in this period.'}),
+    P.items.length?el('h3',{class:'sub',text:'Printed by product'}):null,P.items.length?hBars(P.items.map(([c,q])=>[CODE_NAMES[c]||c,q]),false):null,
+    D.days.length>1&&Object.keys(P.pDay).length&&!D.byMonth?el('div',{class:'scroll chartscroll'},colChart(D.days.map(ds=>({label:String(+ds.slice(8)),p:P.pDay[ds]||0,a:0,sun:new Date(ds+'T12:00:00').getDay()===0,tip:dm(ds)+': '+(P.pDay[ds]||0)+' printed'})),true)):null,
+    P.reprints.length?el('details',{},el('summary',{text:'Reprint order numbers ('+P.reprints.length+')'}),el('p',{class:'hint',text:P.reprints.map(r=>dm(r.date)+' '+r.no).join(' · ')})):null,
+    P.remarks.length?el('details',{},el('summary',{text:'Printing remarks ('+P.remarks.length+')'}),el('p',{class:'hint',text:P.remarks.map(r=>dm(r.date)+': '+r.value).join(' · ')})):null);
+  const cnt=key=>{const g={};D.os.forEach(o=>{const k=key(o);if(k)g[k]=(g[k]||0)+(+o.qty||1)});return Object.entries(g).sort((a,b)=>b[1]-a[1]).slice(0,8)};
+  const prodP=el('div',{class:'panel'},el('h3',{text:'Top products sold'}),hBars(cnt(o=>{const c=prodCode(o);return c?(CODE_NAMES[c]||c):''}),false));
   const distP=el('div',{class:'panel'},el('h3',{text:'Top districts'}),hBars(cnt(o=>String(o.district||'').trim().toUpperCase()),false));
   const ph={};D.os.forEach(o=>{const k=String(o.phone||'').replace(/\D/g,'').slice(-10);if(k.length>=10)(ph[k]=ph[k]||[]).push(o)});
   const rep=Object.values(ph).filter(l=>l.length>1);
-  const repP=rep.length?el('div',{class:'panel'},el('h3',{text:'Repeat customers this month ('+rep.length+')'}),el('details',{},el('summary',{text:'Show list'}),el('div',{class:'scroll'},el('table',{},
+  const repP=rep.length?el('div',{class:'panel'},el('h3',{text:'Repeat customers ('+rep.length+')'}),el('details',{},el('summary',{text:'Show list'}),el('div',{class:'scroll'},el('table',{},
     el('thead',{},el('tr',{},...['Customer','Phone','Orders','Sales'].map(t=>el('th',{text:t})))),
     el('tbody',{},...rep.sort((a,b)=>b.length-a.length).map(l=>el('tr',{},el('th',{text:l[0].customer||'—'}),el('td',{class:'mono',text:l[0].phone||''}),
       el('td',{class:'mono',text:String(l.length)}),el('td',{class:'mono',text:rs(l.reduce((t,o)=>t+(+o.amount||0),0))})))))))):null;
-  return[head,staffP,weekP,dayP,el('div',{class:'split'},prodP,distP),repP,gridP];
+  const showDays=D.days.filter(ds=>ds<=todayStr||D.byDay[ds]);
+  const gridP=D.days.length>1&&D.total?el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('details',{},el('summary',{text:'Show every day (P · A for each staff)'}),
+    el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},el('th',{text:'Date'}),...D.people.map(s=>el('th',{text:s.name})),el('th',{text:'Total'}),el('th',{text:'Printed'}))),
+      el('tbody',{},...showDays.map(ds=>{const dt=new Date(ds+'T12:00:00'),b=D.byDay[ds]||{p:0,a:0};
+        return el('tr',{class:dt.getDay()===0?'sun':''},el('th',{},el('span',{class:'mono',text:dm(ds)}),' '+DAYS[dt.getDay()].slice(0,3)),
+          ...D.people.map(s=>{const g=D.grid[s.id+'|'+ds];return el('td',{class:'mono'+(g?'':' c-hrs'),text:g?g.p+' · '+g.a:'—'})}),
+          el('td',{class:'mono',text:(b.p+b.a)?String(b.p+b.a):'—'}),el('td',{class:'mono',text:P.pDay[ds]?String(P.pDay[ds]):'—'}))})))))):null;
+  return[head,head2,staffP,bucketP,timeP,dispP,printP,el('div',{class:'split'},prodP,distP),repP,gridP];
 }
 function dashXlsx(D){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
-  const[y,mo]=D.m.split('-').map(Number),n=D.days.length,title='MONTH-ODERS-'+MON[mo-1].toUpperCase()+'-'+y;
-  const r1=[title],r2=['DATE'],r3=[''];D.days.forEach(ds=>{r2.push(+ds.slice(8),'');r3.push('PREMIUM','AFFORDABLE')});
-  const rows=[r1,r2,r3];
-  D.people.forEach(s=>{const r=[s.name.toUpperCase()];D.days.forEach(ds=>{const g=D.grid[s.id+'|'+ds];r.push(g&&g.p?g.p:'',g&&g.a?g.a:'')});rows.push(r)});
-  const tr=['TOTAL'];D.days.forEach(ds=>{const b=D.byDay[ds];tr.push(b&&b.p?b.p:'',b&&b.a?b.a:'')});rows.push(tr);
-  rows.push([],[]);const ws0=rows.length;
-  rows.push(['',...WEEKS.flatMap(w=>[w[2].toUpperCase(),'','']),'MONTH END','','']);
-  rows.push(['',...Array(5).fill(0).flatMap(()=>['PREMIUM','AFFORDABLE','TOTAL'])]);
-  const wr=(name,get)=>{const r=[name];let mp=0,ma=0;WEEKS.forEach((_,i)=>{const x=get(i);mp+=x.p;ma+=x.a;r.push(x.p,x.a,x.p+x.a)});r.push(mp,ma,mp+ma);return r};
-  D.people.forEach(s=>rows.push(wr(s.name.toUpperCase(),i=>D.wk[s.id+'|'+i]||{p:0,a:0})));
-  rows.push(wr('TOTAL',i=>D.people.reduce((t,s)=>{const x=D.wk[s.id+'|'+i]||{p:0,a:0};return{p:t.p+x.p,a:t.a+x.a}},{p:0,a:0})));
+  const wb=XLSX.utils.book_new(), label=D.oneMonth?MON[+D.f.slice(5,7)-1].toUpperCase()+'-'+D.f.slice(0,4):D.f+'_to_'+D.t;
+  const title='MONTH-ODERS-'+label, days=D.days, n=days.length;
+  /* sheet 1: same layout as the order sheet */
+  const r2=['DATE'],r3=[''];days.forEach(ds=>{r2.push(D.oneMonth?+ds.slice(8):dm(ds),'');r3.push('PREMIUM','AFFORDABLE')});
+  const rows=[[title],r2,r3];
+  D.people.forEach(s=>{const r=[s.name.toUpperCase()];days.forEach(ds=>{const g=D.grid[s.id+'|'+ds];r.push(g&&g.p?g.p:'',g&&g.a?g.a:'')});rows.push(r)});
+  const tr=['TOTAL'];days.forEach(ds=>{const b=D.byDay[ds];tr.push(b&&b.p?b.p:'',b&&b.a?b.a:'')});rows.push(tr);
+  rows.push([],[]);const ws0=rows.length,ks=D.bucketKeys;
+  rows.push(['',...ks.flatMap(k=>[(D.oneMonth?WEEKS[k][2]:monLabel(k)).toUpperCase(),'','']),'TOTAL','','']);
+  rows.push(['',...[...ks,'t'].flatMap(()=>['PREMIUM','AFFORDABLE','TOTAL'])]);
+  const wr=(name,get)=>{const r=[name];let mp=0,ma=0;ks.forEach(k=>{const x=get(k);mp+=x.p;ma+=x.a;r.push(x.p,x.a,x.p+x.a)});r.push(mp,ma,mp+ma);return r};
+  D.people.forEach(s=>rows.push(wr(s.name.toUpperCase(),k=>D.bk[s.id+'|'+k]||{p:0,a:0})));
+  rows.push(wr('TOTAL',k=>D.people.reduce((t,s)=>{const x=D.bk[s.id+'|'+k]||{p:0,a:0};return{p:t.p+x.p,a:t.a+x.a}},{p:0,a:0})));
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:n*2}},...D.days.map((_,i)=>({s:{r:1,c:1+i*2},e:{r:1,c:2+i*2}})),...Array(5).fill(0).map((_,i)=>({s:{r:ws0,c:1+i*3},e:{r:ws0,c:3+i*3}}))];
-  ws['!cols']=[{wch:12},...Array(n*2).fill({wch:5})];
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'ORDERS');
-  const ol=[['DATE','STAFF','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','TYPE','QTY','AMOUNT']];
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:Math.max(1,n*2)}},...days.map((_,i)=>({s:{r:1,c:1+i*2},e:{r:1,c:2+i*2}})),...[...ks,'t'].map((_,i)=>({s:{r:ws0,c:1+i*3},e:{r:ws0,c:3+i*3}}))];
+  ws['!cols']=[{wch:12},...Array(n*2).fill({wch:5})];XLSX.utils.book_append_sheet(wb,ws,'ORDERS');
+  const add=(name,aoa)=>{const s=XLSX.utils.aoa_to_sheet(aoa);s['!cols']=(aoa[0]||[]).map((_,i)=>({wch:i?14:22}));XLSX.utils.book_append_sheet(wb,s,name)};
+  add('SALES STAFF',[['STAFF','LEADS','PREMIUM','AFFORDABLE','ORDERS','DISPATCHED','NOT DISPATCHED','SALES'],...D.per.map(r=>[r.s.name,r.leads,r.p,r.a,r.p+r.a,r.sent,r.p+r.a-r.sent,r.amt]),['TOTAL',D.leads,D.p,D.a,D.total,D.dispatched,D.total-D.dispatched,D.sales]]);
   const nm=id=>(staff.find(s=>s.id===id)||{name:id}).name;
-  D.os.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(o=>ol.push([o.date,nm(o.staffId),o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',o.type==='affordable'?'AFFORDABLE':'PREMIUM',+o.qty||1,+o.amount||0]));
-  const ws2=XLSX.utils.aoa_to_sheet(ol);ws2['!cols']=ol[0].map(()=>({wch:14}));XLSX.utils.book_append_sheet(wb,ws2,'ALL ORDERS');
-  saveFile(title+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
+  add('ALL ORDERS',[['DATE','STAFF','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','TYPE','QTY','AMOUNT','DISPATCHED'],...D.os.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(o=>[o.date,nm(o.staffId),o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',o.type==='affordable'?'AFFORDABLE':'PREMIUM',+o.qty||1,+o.amount||0,D.sent(o)?'YES':'NO'])]);
+  const P=D.print;
+  add('PRINTING',[['ITEM','COUNT'],['PIECES PRINTED',P.pieces],['ORDER NOS PRINTED',P.orders],['ORDERS RECEIVED',P.received],['REPRINTS',P.reprints.length],['DAMAGE',P.damage],['WASHING',P.washing],['BALANCE TO PRINT (LATEST)',P.bal?+P.bal.value||0:''],[],['PRODUCT','PIECES PRINTED'],...P.items.map(([c,q])=>[CODE_NAMES[c]||c,q]),[],['DATE','REPRINT ORDER NO'],...P.reprints.map(r=>[r.date,r.no])]);
+  add('PRINTED BY DAY',[['DATE','PIECES PRINTED'],...days.filter(ds=>P.pDay[ds]).map(ds=>[ds,P.pDay[ds]])]);
+  saveFile('COUPLO_DASHBOARD_'+(D.f===D.t?D.f:D.f+'_to_'+D.t)+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
 }
 
 /* ---------- admin: product list ---------- */
