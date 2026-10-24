@@ -19,7 +19,7 @@
 :root{
   --bg:#F3F5F7; --surface:#FFFFFF; --sunk:#E8ECF0; --ink:#1C2630; --muted:#5B6874; --line:#D5DCE2;
   --accent:#511F52; --accent-ink:#FFFFFF; --accent-soft:#F1E6F1;
-  --ok:#1F7A55; --ok-soft:#DDF1E7; --warn:#9A5B00; --warn-soft:#FBEBD0; --off:#6B7682; --off-soft:#E6EAEE;
+  --c-prem:#511F52; --c-aff:#E3A21A; --c-one:#2F6FB0; --ok:#1F7A55; --ok-soft:#DDF1E7; --warn:#9A5B00; --warn-soft:#FBEBD0; --off:#6B7682; --off-soft:#E6EAEE;
   --f-display:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;
   --f-body:"Figtree","Segoe UI",system-ui,sans-serif;
   --f-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
@@ -27,11 +27,11 @@
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#11161B; --surface:#1A2128; --sunk:#232C34; --ink:#E8EDF1; --muted:#9AA6B1; --line:#2E3943;
-  --accent:#D2A6D3; --accent-ink:#2A0F2B; --accent-soft:#3A2440;
+  --accent:#D2A6D3; --accent-ink:#2A0F2B; --accent-soft:#3A2440; --c-prem:#C58DC6; --c-aff:#F0B35C; --c-one:#6EA8E0;
   --ok:#5CCB98; --ok-soft:#173528; --warn:#F0B35C; --warn-soft:#3A2B14; --off:#8E99A4; --off-soft:#232C34; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#11161B; --surface:#1A2128; --sunk:#232C34; --ink:#E8EDF1; --muted:#9AA6B1; --line:#2E3943;
-  --accent:#D2A6D3; --accent-ink:#2A0F2B; --accent-soft:#3A2440;
+  --accent:#D2A6D3; --accent-ink:#2A0F2B; --accent-soft:#3A2440; --c-prem:#C58DC6; --c-aff:#F0B35C; --c-one:#6EA8E0;
   --ok:#5CCB98; --ok-soft:#173528; --warn:#F0B35C; --warn-soft:#3A2B14; --off:#8E99A4; --off-soft:#232C34; color-scheme:dark}
 *{box-sizing:border-box}
 html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -134,6 +134,27 @@ details[open]>summary{margin-bottom:8px}
 .homecard{max-width:440px;width:100%}
 #home{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
 #home[hidden]{display:none}
+/* dashboard */
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.kpi{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpi span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kpi b{font-family:var(--f-display);font-size:24px;line-height:1.15}
+.kpi small{color:var(--muted);font-size:12px}
+.chart svg{display:block}
+.chart text{font-family:var(--f-body);fill:var(--ink)}
+.chart .ax{font-size:10px;fill:var(--muted)}.chart .ax.sun{fill:var(--accent);font-weight:700}
+.chart .vl{font-size:10.5px;font-weight:600}.chart .lb{font-size:12.5px;font-weight:600}
+.chart .gl{stroke:var(--line);stroke-width:1}
+.c-prem{fill:var(--c-prem);background:var(--c-prem)}.c-aff{fill:var(--c-aff);background:var(--c-aff)}.c-one{fill:var(--c-one)}
+.chartscroll{border:0;padding-bottom:4px}
+.legend{display:flex;gap:14px;font-size:13px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+table.wk td,table.wk th{text-align:center}
+table.wk tbody th,table.wk tfoot th{text-align:left}
+table.wk td.wt{font-weight:700;border-right:2px solid var(--line)}
+table.wk td.me{background:var(--ok-soft)}
+table.wk thead th.w4{background:var(--ok-soft);color:var(--ok)}
 </style>
 </head>
 <body>
