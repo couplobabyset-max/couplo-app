@@ -190,6 +190,16 @@ table.sheetg th.vp,table.sheetg td.cp{background:#5B9BD5;color:#111}
 table.sheetg thead th.vp{color:#fff}
 table.sheetg td.cp,table.sheetg td.ca{min-width:24px;font-weight:600}
 table.sheetg tfoot th,table.sheetg tfoot td{font-weight:700}
+/* dispatch list */
+.displist{display:flex;flex-direction:column;gap:10px}
+.fchips{display:flex;flex-wrap:wrap;gap:6px}
+.fchip{border:1.5px solid var(--line);background:var(--surface);color:var(--ink);font:600 13.5px var(--f-body);padding:8px 12px;border-radius:999px;cursor:pointer;min-height:38px}
+.fchip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+#dsp-q{flex:2 1 240px;min-width:0}
+@media (max-width:520px){#dsp-q{flex-basis:100%}}
+.cbwrap{display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:12.5px}
+.bigcb{width:22px;height:22px;margin:0;accent-color:var(--ok)}
+table.disptbl tr.sent td{color:var(--muted)}table.disptbl tr.sent .cbwrap{color:var(--ok)}
 </style>
 </head>
 <body>

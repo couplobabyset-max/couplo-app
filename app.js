@@ -803,7 +803,7 @@ function dashData(R){
     dispatched:os.filter(sent).length,leads:R.sales.reduce((t,r)=>t+(+r.leads||0),0)};
 }
 /* ---------- this week: which week we are in, holidays, what was missed ---------- */
-let holidays={}, wkSel=null, hasHolidayApi=null;
+let holidays={}, wkSel=null, hasHolidayApi=null, dspF={staff:'',show:'pending',q:''};
 const isHoliday=ds=>new Date(ds+'T12:00:00').getDay()===0||!!holidays[ds];
 const holName=ds=>holidays[ds]||(new Date(ds+'T12:00:00').getDay()===0?'Sunday':'');
 function weekRange(m,i){const n=monthDates(m).length,[a,b]=WEEKS[i];const out=[];for(let d=a;d<=Math.min(b,n);d++)out.push(m+'-'+pad2(d));return out}
@@ -924,17 +924,35 @@ function viewDashboard(){
   const cols=D.byMonth?rpMonths(D.f,D.t).map(m=>{const x=D.os.filter(o=>o.date.slice(0,7)===m);const p=x.filter(D.isP).length;return{label:MON[+m.slice(5)-1],p,a:x.length-p,tip:monLabel(m)+': '+p+' premium, '+(x.length-p)+' affordable'}})
     :D.days.map(ds=>{const b=D.byDay[ds]||{p:0,a:0},dt=new Date(ds+'T12:00:00');return{label:String(+ds.slice(8)),p:b.p,a:b.a,sun:dt.getDay()===0,tip:dm(ds)+': '+b.p+' premium, '+b.a+' affordable'}});
   const timeP=D.days.length>1?el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:D.byMonth?'Orders per month':'Orders per day'}),legend()),el('div',{class:'scroll chartscroll'},colChart(cols))):null;
-  /* dispatch */
-  const pend=D.os.filter(o=>!D.sent(o)).sort((a,b)=>a.date.localeCompare(b.date));
+  /* dispatch — filter by staff / status / search, tick right here */
   const nm=id=>(staff.find(s=>s.id===id)||{name:id}).name;
-  const dispP=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Dispatch'}),legend('Dispatched','Not dispatched')),
+  const dispList=el('div',{class:'displist'});
+  const drawDisp=()=>{
+    const F=dspF, q=F.q.trim().toUpperCase();
+    const base=D.os.filter(o=>(!F.staff||o.staffId===F.staff)&&(!q||[o.orderNo,o.customer,o.phone,o.district,o.product].some(v=>String(v||'').toUpperCase().includes(q))));
+    const pendN=base.filter(o=>!D.sent(o)).length, doneN=base.length-pendN;
+    const rows=base.filter(o=>F.show==='all'||(F.show==='pending')===!D.sent(o)).sort((a,b)=>F.show==='done'?b.date.localeCompare(a.date):a.date.localeCompare(b.date));
+    const chip=(on,txt,fn)=>el('button',{type:'button',class:'fchip'+(on?' on':''),text:txt,onclick:fn});
+    const staffChips=el('div',{class:'fchips'},chip(!F.staff,'All staff ('+D.os.filter(o=>!D.sent(o)).length+' left)',()=>{F.staff='';drawDisp()}),
+      ...D.per.filter(r=>r.p+r.a).map(r=>{const left=r.p+r.a-r.sent;return chip(F.staff===r.s.id,r.s.name+' ('+left+' left)',()=>{F.staff=r.s.id;drawDisp()})}));
+    const showChips=el('div',{class:'fchips'},chip(F.show==='pending','Not dispatched ('+pendN+')',()=>{F.show='pending';drawDisp()}),chip(F.show==='done','Dispatched ('+doneN+')',()=>{F.show='done';drawDisp()}),chip(F.show==='all','All ('+base.length+')',()=>{F.show='all';drawDisp()}));
+    const qI=el('input',{id:'dsp-q',type:'search',placeholder:'Search order no, customer, phone…',value:F.q,oninput:e=>{F.q=e.target.value;clearTimeout(drawDisp._t);drawDisp._t=setTimeout(()=>{drawDisp();const i=$('#dsp-q');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},250)}});
+    const tickAll=rows.length&&F.show==='pending'?el('button',{class:'btn',type:'button',text:'Tick all '+rows.length+' shown as dispatched',onclick:async e=>{
+      if(!confirm('Mark these '+rows.length+' orders as dispatched?'))return;e.target.disabled=true;let ok=0;
+      for(const o of rows){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE';ok++}catch(x){}}
+      toast(ok+' marked dispatched');renderAdmin()}}):null;
+    const tbl=rows.length?el('div',{class:'scroll'},el('table',{class:'disptbl'},
+      el('thead',{},el('tr',{},...['Dispatched','Date','No.','Customer','Phone','Staff','Product','District','Amount'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...rows.slice(0,400).map(o=>{const cb=el('input',{type:'checkbox',class:'bigcb','aria-label':'Dispatched '+(o.orderNo||'')});cb.checked=D.sent(o);
+        const tr=el('tr',{class:D.sent(o)?'sent':''},el('td',{},el('label',{class:'cbwrap'},cb,el('span',{text:D.sent(o)?'Sent':'Tick'}))),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
+          el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}),el('td',{class:'mono',text:+o.amount?rs(+o.amount):'—'}));
+        cb.onchange=async()=>{cb.disabled=true;try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE';tr.classList.toggle('sent',cb.checked);cb.nextSibling.textContent=cb.checked?'Sent':'Tick';toast(cb.checked?(o.orderNo||'Order')+' dispatched':(o.orderNo||'Order')+' marked not sent')}catch(e){cb.checked=!cb.checked;toast('Could not save.')}cb.disabled=false};
+        return tr})))):el('div',{class:'empty',text:F.show==='pending'?'Nothing left to dispatch here. ✓':'No orders match.'});
+    dispList.replaceChildren(...[staffChips,showChips,el('div',{class:'row'},qI,tickAll),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Pick a staff or search to narrow.'}):null].filter(Boolean))};
+  drawDisp();
+  const dispP=el('div',{class:'panel',id:'dispatch'},el('div',{class:'toolbar'},el('h3',{text:'Dispatch'}),legend('Dispatched','Not dispatched')),
     D.total?hBars(D.per.filter(r=>r.p+r.a).map(r=>[r.s.name,r.sent,r.p+r.a-r.sent]),true):el('div',{class:'empty',text:'No orders in this period.'}),
-    pend.length?el('details',{},el('summary',{text:'Not dispatched yet ('+pend.length+') — tick when sent'}),el('div',{class:'scroll'},el('table',{},
-      el('thead',{},el('tr',{},...['Sent','Date','No.','Customer','Staff','Product','District'].map(t=>el('th',{text:t})))),
-      el('tbody',{},...pend.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched '+(o.orderNo||'')});
-        cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE';toast(cb.checked?'Marked dispatched':'Marked not sent')}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
-        return el('tr',{},el('td',{},cb),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}))}))))):
-      (D.total?el('p',{class:'hint',text:'All orders in this period are dispatched.'}):null));
+    D.total?dispList:null);
   /* printing (Jaseera's daily work) */
   const P=D.print;
   const printP=el('div',{class:'panel'},el('h3',{text:'Printing'}),
