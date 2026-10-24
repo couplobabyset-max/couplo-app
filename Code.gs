@@ -193,6 +193,7 @@ function remove_(name, key) {
   var found = rows_(name).filter(function (r) { return r[col] === key; })[0];
   if (found) sh.deleteRow(found._row);
 }
+function holidays_() { try { return JSON.parse(setting_('holidays') || '{}') || {}; } catch (e) { return {}; } }
 function setting_(k) { var r = rows_('Settings').filter(function (x) { return x.key === k; })[0]; return r ? r.value : ''; }
 function bool_(v) { return String(v).toUpperCase() === 'TRUE'; }
 function staffList_() {
@@ -422,7 +423,14 @@ function handle_(b) {
         att: rows_('Attendance').filter(function (r) { return r.date.indexOf(m) === 0; }),
         sales: rows_('Sales').filter(function (r) { return r.date.indexOf(m) === 0; }),
         pay: rows_('Pay').filter(function (r) { return r.month === m; }),
-        orders: rows_('Orders').filter(function (r) { return r.date.indexOf(m) === 0; }) };
+        orders: rows_('Orders').filter(function (r) { return r.date.indexOf(m) === 0; }), holidays: holidays_() };
+    }
+    case 'saveHoliday': { // office holidays: { 'yyyy-MM-dd': 'name' } — Sundays are holidays anyway
+      var h = holidays_(), d = String(b.date || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return { ok: false, error: 'Pick a date' };
+      if (b.name) h[d] = String(b.name).trim().slice(0, 60); else delete h[d];
+      upsert_('Settings', { key: 'holidays', value: JSON.stringify(h) });
+      return { ok: true, holidays: h };
     }
     case 'allOrders': return { ok: true, orders: rows_('Orders') };
     case 'saveOrder': {

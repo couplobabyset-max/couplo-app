@@ -187,7 +187,7 @@ async function loadMonth(m){
   adminMonth=m;
   if(salesDate&&salesDate.slice(0,7)!==m)salesDate=m+'-01';
   $('#admin').replaceChildren(el('div',{class:'empty',text:'Loading '+m+'…'}));
-  try{const j=await call('month',{adminPin,month:m});todayStr=j.today;staff=j.staff;if(j.products)products=j.products;if(j.tasks)tasks=j.tasks;adminWork=j.work||[];
+  try{const j=await call('month',{adminPin,month:m});todayStr=j.today;staff=j.staff;if(j.products)products=j.products;if(j.tasks)tasks=j.tasks;adminWork=j.work||[];if(j.holidays)holidays=j.holidays;
     adminRecs={};j.att.forEach(r=>adminRecs[r.date+'__'+r.staffId]=r);
     adminSales={};const sx=k=>adminSales[k]=adminSales[k]||{leads:0,premium:0,affordable:0,amount:0};
     j.sales.forEach(r=>{sx(r.date+'__'+r.staffId).leads=+r.leads||0});
@@ -802,6 +802,77 @@ function dashData(R){
     total:os.length,p:os.filter(isP).length,a:os.filter(o=>!isP(o)).length,sales:os.reduce((x,o)=>x+amt(o),0),
     dispatched:os.filter(sent).length,leads:R.sales.reduce((t,r)=>t+(+r.leads||0),0)};
 }
+/* ---------- this week: which week we are in, holidays, what was missed ---------- */
+let holidays={}, wkSel=null, hasHolidayApi=null;
+const isHoliday=ds=>new Date(ds+'T12:00:00').getDay()===0||!!holidays[ds];
+const holName=ds=>holidays[ds]||(new Date(ds+'T12:00:00').getDay()===0?'Sunday':'');
+function weekRange(m,i){const n=monthDates(m).length,[a,b]=WEEKS[i];const out=[];for(let d=a;d<=Math.min(b,n);d++)out.push(m+'-'+pad2(d));return out}
+function weekStep(dir){let{m,i}=wkSel;i+=dir;if(i<0){const d=new Date(m+'-01T12:00:00');d.setMonth(d.getMonth()-1);m=ymOf(d);i=3}else if(i>3){const d=new Date(m+'-01T12:00:00');d.setMonth(d.getMonth()+1);m=ymOf(d);i=0}
+  if(m>todayStr.slice(0,7))return;wkSel={m,i};renderAdmin()}
+function weekMissed(days,J){
+  const past=days.filter(ds=>ds<todayStr&&!isHoliday(ds)), att=J.att||[], os=J.orders||[], work=(J.work||[]).filter(w=>w.value!==''&&w.value!=null), sales=J.sales||[];
+  const A=(sid,ds)=>att.find(r=>r.staffId===sid&&r.date===ds);
+  const out=[];
+  [...staff].filter(s=>s.active!==false).sort(byOrder).forEach(s=>{const items=[];
+    past.forEach(ds=>{const r=A(s.id,ds);
+      if(!r){items.push([ds,'Absent — no check-in, leave not marked','bad']);return}
+      if(r.status==='leave'){items.push([ds,'Leave','lv']);return}
+      if(r.in&&!r.out&&r.status!=='wfh')items.push([ds,'OUT not tapped','bad']);
+      if(s.sales&&!os.some(o=>o.staffId===s.id&&o.date===ds))items.push([ds,'No orders entered','bad']);
+      if(tasksFor(s).length&&!work.some(w=>w.staffId===s.id&&w.date===ds))items.push([ds,'Daily work not filled','bad'])});
+    if(items.length)out.push({s,items})});
+  const noLeads=past.filter(ds=>!sales.some(r=>r.date===ds&&+r.leads>0));
+  const oldPend=os.filter(o=>o.dispatched!=='TRUE'&&o.date<=addDays(todayStr,-3)&&days.includes(o.date));
+  return{out,noLeads,oldPend,past};
+}
+function holidaySheet(){
+  const d=el('input',{id:'hd-d',type:'date',value:todayStr}),nm=el('input',{id:'hd-n',type:'text',placeholder:'e.g. Onam, Office closed'});
+  const list=()=>{const ks=Object.keys(holidays).sort().reverse();return ks.length?el('div',{},...ks.slice(0,40).map(k=>el('div',{class:'staffrow'},el('div',{},el('b',{text:dm(k)+'/'+k.slice(0,4)+' · '+DAYS[new Date(k+'T12:00:00').getDay()].slice(0,3)}),el('div',{class:'meta',text:holidays[k]})),
+    el('button',{class:'btn danger',type:'button',text:'Remove',onclick:()=>save(k,'')})))):el('p',{text:'No holidays added yet. Sundays are always holidays.'})};
+  const box=el('div',{},list());
+  const save=async(date,name)=>{try{const j=await call('saveHoliday',{adminPin,date,name});holidays=j.holidays||{};hasHolidayApi=true;box.replaceChildren(list());toast(name?'Holiday added':'Holiday removed');renderAdmin()}
+    catch(e){toast(/action|Unknown|Admin PIN needed/i.test(e.message)?'Update the Apps Script first (see note).':'Could not save: '+e.message)}};
+  openOv(el('h2',{text:'Holidays'}),el('p',{text:'Days the office is closed. They are not counted as missed days. Sundays are holidays automatically.'}),
+    el('div',{class:'form2'},el('label',{class:'f',for:'hd-d'},'Date',d),el('label',{class:'f',for:'hd-n'},'Name',nm)),
+    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Add holiday',onclick:()=>{if(!nm.value.trim()){toast('Type a name for the holiday.');nm.focus();return}save(d.value,nm.value.trim()).then(()=>{nm.value=''})}})),
+    box,el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Close',onclick:closeOv})));$('#sheet').style.maxWidth='480px'}
+function viewWeek(){
+  if(!wkSel)wkSel={m:todayStr.slice(0,7),i:wkOf(todayStr)};
+  const{m,i}=wkSel, J=rpCache[m];
+  if(!J){if(!rpLoading)rpLoad([m]);return el('div',{class:'panel'},el('div',{class:'empty',text:'Loading the week…'}))}
+  if(J.holidays)holidays={...J.holidays,...holidays};
+  const days=weekRange(m,i), isNow=m===todayStr.slice(0,7)&&i===wkOf(todayStr);
+  const work=days.filter(ds=>!isHoliday(ds)), passed=work.filter(ds=>ds<todayStr).length, left=work.filter(ds=>ds>todayStr).length+(work.includes(todayStr)?1:0);
+  const hol=days.filter(isHoliday);
+  const os=(J.orders||[]).filter(o=>days.includes(o.date)), isP=o=>o.type!=='affordable';
+  const label=WEEKS[i][2]+' of '+MON[+m.slice(5)-1]+' · '+(+days[0].slice(8))+'–'+(+days[days.length-1].slice(8))+' '+MON[+m.slice(5)-1];
+  /* last week, same number of days, for comparison */
+  const prevKey=i?{m,i:i-1}:(()=>{const d=new Date(m+'-01T12:00:00');d.setMonth(d.getMonth()-1);return{m:ymOf(d),i:3}})();
+  const PJ=rpCache[prevKey.m];const pDays=weekRange(prevKey.m,prevKey.i);const pn=PJ?(PJ.orders||[]).filter(o=>pDays.includes(o.date)).length:null;
+  const strip=el('div',{class:'daystrip'},...days.map(ds=>{const dt=new Date(ds+'T12:00:00'),n=os.filter(o=>o.date===ds).length,h=isHoliday(ds);
+    const cls='day'+(h?' hol':'')+(ds===todayStr?' now':ds>todayStr?' later':'');
+    return el('div',{class:cls,title:h?holName(ds):n+' orders'},el('span',{class:'dw',text:DAYS[dt.getDay()].slice(0,3)}),el('b',{class:'mono',text:String(+ds.slice(8))}),
+      el('span',{class:'dn',text:h?holName(ds):ds>todayStr?'':n+' ord'}))}));
+  const stat=(v,l,sub)=>el('div',{class:'kpi'},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+  const kp=el('div',{class:'kpis'},stat(os.length,'Orders this week',pn!=null?(pn?((os.length>=pn?'▲ ':'▼ ')+Math.abs(Math.round((os.length-pn)/pn*100))+'% vs last week'):'last week 0'):''),
+    stat(os.filter(isP).length+' · '+os.filter(o=>!isP(o)).length,'Premium · Affordable'),
+    stat(work.length,'Working days',passed+' done · '+left+' left'),stat(hol.length,'Holidays',hol.map(ds=>holName(ds)+' '+(+ds.slice(8))).join(', ')));
+  const M=weekMissed(days,J);
+  const mi=M.out.length||M.noLeads.length||M.oldPend.length;
+  const missP=el('div',{class:'missbox'},el('h3',{class:'sub',text:M.past.length?'Missed this week (till yesterday)':'Nothing to check yet — the week has just started'}),
+    M.past.length&&!mi?el('p',{class:'hint',style:'color:var(--ok)',text:'✓ Nothing missed. Everyone checked in, orders and work are filled.'}):null,
+    ...M.out.map(r=>el('div',{class:'missrow'},el('b',{text:r.s.name}),el('div',{class:'misslist'},...r.items.map(([ds,t,c])=>el('span',{class:'chip '+(c==='lv'?'leave':'miss'),text:dm(ds)+' · '+t}))))),
+    M.noLeads.length?el('div',{class:'missrow'},el('b',{text:'Leads (HR)'}),el('div',{class:'misslist'},...M.noLeads.map(ds=>el('span',{class:'chip miss',text:dm(ds)+' · Leads not entered'})))):null,
+    M.oldPend.length?el('div',{class:'missrow'},el('b',{text:'Dispatch'}),el('div',{class:'misslist'},el('span',{class:'chip miss',text:M.oldPend.length+' orders older than 3 days not dispatched'}))):null);
+  const nav=el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'◀ Previous week',onclick:()=>weekStep(-1)}),
+    isNow?null:el('button',{class:'btn',type:'button',text:'This week',onclick:()=>{wkSel=null;renderAdmin()}}),
+    isNow?null:el('button',{class:'btn',type:'button',text:'Next week ▶',onclick:()=>weekStep(1)}),
+    el('button',{class:'btn',type:'button',text:'Holidays',onclick:holidaySheet}));
+  if(!PJ&&!rpLoading)rpLoad([prevKey.m]);
+  return el('div',{class:'panel weekp'},el('div',{class:'toolbar'},el('h3',{text:(isNow?'This week · ':'')+label}),el('span',{class:'wkbadge w'+i,text:WEEKS[i][2].toUpperCase()})),
+    strip,kp,missP,nav);
+}
+
 function viewDashboard(){
   const R0=rpData(dsh);
   const presets=[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['lastyear','Last year'],['custom','Pick dates']];
@@ -839,13 +910,13 @@ function viewDashboard(){
   /* week-by-week (one month) or month-by-month (longer) — same layout as the order sheet */
   const ks=D.bucketKeys, sub=['P','A','Total'];
   const brow=(name,get)=>{const cells=[];let mp=0,ma=0;ks.forEach(k=>{const x=get(k);mp+=x.p;ma+=x.a;cells.push(x.p,x.a,x.p+x.a)});cells.push(mp,ma,mp+ma);
-    return el('tr',{},el('th',{text:name}),...cells.map((v,i)=>el('td',{class:'mono'+(i%3===2?' wt':'')+(i>=ks.length*3?' me':''),text:String(v)})))};
+    return el('tr',{},el('th',{text:name}),...cells.map((v,i)=>el('td',{class:'mono'+(i%3===2?' wt':'')+(i>=ks.length*3?' me':' b'+(Math.floor(i/3)%4)),text:String(v)})))};
   const sumK=k=>D.people.reduce((t,s)=>{const x=D.bk[s.id+'|'+k]||{p:0,a:0};return{p:t.p+x.p,a:t.a+x.a}},{p:0,a:0});
   const bucketP=D.days.length>7?el('div',{class:'panel'},el('h3',{text:D.oneMonth?'Week by week':'Month by month'}),
     el('p',{class:'hint',text:'P = Premium, A = Affordable — same as the monthly order sheet.'}),
     el('div',{class:'scroll'},el('table',{class:'wk'},
-      el('thead',{},el('tr',{},el('th',{rowspan:'2',text:'Staff'}),...ks.map(k=>el('th',{colspan:'3',class:'wh',text:D.bLabel(k)})),el('th',{colspan:'3',class:'wh me-h',text:'Total'})),
-        el('tr',{},...[...ks,'t'].flatMap((k,i)=>sub.map(s=>el('th',{class:i===ks.length?'me-h':'',text:s}))))),
+      el('thead',{},el('tr',{},el('th',{rowspan:'2',text:'Staff'}),...ks.map((k,j)=>el('th',{colspan:'3',class:'wh h'+(j%4),text:D.bLabel(k)})),el('th',{colspan:'3',class:'wh me-h',text:'Total'})),
+        el('tr',{},...[...ks,'t'].flatMap((k,i)=>sub.map(s=>el('th',{class:i===ks.length?'me-h':'h'+(i%4),text:s}))))),
       el('tbody',{},...D.people.map(s=>brow(s.name,k=>D.bk[s.id+'|'+k]||{p:0,a:0}))),
       el('tfoot',{},brow('Total',sumK)))),
     hBars(ks.map(k=>{const x=sumK(k);return[D.oneMonth?WEEKS[k][2]:monLabel(k),x.p,x.a]}),true)):null;
@@ -882,15 +953,22 @@ function viewDashboard(){
     el('thead',{},el('tr',{},...['Customer','Phone','Orders','Sales'].map(t=>el('th',{text:t})))),
     el('tbody',{},...rep.sort((a,b)=>b.length-a.length).map(l=>el('tr',{},el('th',{text:l[0].customer||'—'}),el('td',{class:'mono',text:l[0].phone||''}),
       el('td',{class:'mono',text:String(l.length)}),el('td',{class:'mono',text:rs(l.reduce((t,o)=>t+(+o.amount||0),0))})))))))):null;
-  const showDays=D.days.filter(ds=>ds<=todayStr||D.byDay[ds]);
-  const gridP=D.days.length>1&&D.total?el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('details',{},el('summary',{text:'Show every day (P · A for each staff)'}),
-    el('div',{class:'scroll'},el('table',{},
-      el('thead',{},el('tr',{},el('th',{text:'Date'}),...D.people.map(s=>el('th',{text:s.name})),el('th',{text:'Total'}),el('th',{text:'Printed'}))),
-      el('tbody',{},...showDays.map(ds=>{const dt=new Date(ds+'T12:00:00'),b=D.byDay[ds]||{p:0,a:0};
-        return el('tr',{class:dt.getDay()===0?'sun':''},el('th',{},el('span',{class:'mono',text:dm(ds)}),' '+DAYS[dt.getDay()].slice(0,3)),
-          ...D.people.map(s=>{const g=D.grid[s.id+'|'+ds];return el('td',{class:'mono'+(g?'':' c-hrs'),text:g?g.p+' · '+g.a:'—'})}),
-          el('td',{class:'mono',text:(b.p+b.a)?String(b.p+b.a):'—'}),el('td',{class:'mono',text:P.pDay[ds]?String(P.pDay[ds]):'—'}))})))))):null;
-  return[head,head2,staffP,bucketP,timeP,dispP,printP,el('div',{class:'split'},prodP,distP),repP,gridP];
+  /* day grid in the same layout as the MONTH-ODERS sheet: dates across, PREMIUM / AFFORDABLE under each date, staff down */
+  const gDays=D.days.length<=62?D.days:[];
+  const gc=(v,cls)=>el('td',{class:'mono '+cls,text:v?String(v):''});
+  const gridP=gDays.length>1&&D.total?el('div',{class:'panel'},el('h3',{text:(D.oneMonth?'MONTH-ODERS-'+MON[+D.f.slice(5,7)-1].toUpperCase()+'-'+D.f.slice(0,4):'Day by day')}),
+    el('p',{class:'hint',text:'Same as the order sheet. Blue = Premium, white = Affordable. Scroll sideways to see all dates.'}),
+    el('div',{class:'scroll'},el('table',{class:'sheetg'},
+      el('thead',{},el('tr',{},el('th',{class:'stk',text:'DATE'}),...gDays.map(ds=>el('th',{colspan:'2',class:'dh'+(isHoliday(ds)?' hd':''),title:holName(ds),text:D.oneMonth?String(+ds.slice(8)):dm(ds)}))),
+        el('tr',{},el('th',{class:'stk'}),...gDays.flatMap(()=>[el('th',{class:'vp'},el('span',{text:'PREMIUM'})),el('th',{class:'va'},el('span',{text:'AFFORDOBLE'}))]))),
+      el('tbody',{},...D.people.map(s=>el('tr',{},el('th',{class:'stk',text:s.name.toUpperCase()}),...gDays.flatMap(ds=>{const g=D.grid[s.id+'|'+ds]||{};return[gc(g.p,'cp'),gc(g.a,'ca')]})))),
+      el('tfoot',{},el('tr',{},el('th',{class:'stk',text:'TOTAL'}),...gDays.flatMap(ds=>{const b=D.byDay[ds]||{};return[gc(b.p,'cp'),gc(b.a,'ca')]}))))),
+    el('details',{},el('summary',{text:'Day list with printing'}),el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},el('th',{text:'Date'}),el('th',{text:'Orders'}),el('th',{text:'Premium'}),el('th',{text:'Affordable'}),el('th',{text:'Printed'}))),
+      el('tbody',{},...gDays.filter(ds=>ds<=todayStr||D.byDay[ds]).map(ds=>{const dt=new Date(ds+'T12:00:00'),b=D.byDay[ds]||{p:0,a:0};
+        return el('tr',{class:isHoliday(ds)?'sun':''},el('th',{},el('span',{class:'mono',text:dm(ds)}),' '+DAYS[dt.getDay()].slice(0,3)+(holidays[ds]?' · '+holidays[ds]:'')),
+          el('td',{class:'mono',text:String(b.p+b.a)}),el('td',{class:'mono',text:String(b.p)}),el('td',{class:'mono',text:String(b.a)}),el('td',{class:'mono',text:P.pDay[ds]?String(P.pDay[ds]):'—'}))})))))):null;
+  return[head,viewWeek(),head2,staffP,bucketP,gridP,timeP,dispP,printP,el('div',{class:'split'},prodP,distP),repP];
 }
 function dashXlsx(D){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
