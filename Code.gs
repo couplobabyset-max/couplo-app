@@ -202,8 +202,8 @@ function staffList_() {
              sales: bool_(s.sales), active: s.active === '' ? true : bool_(s.active), order: s.order === '' ? null : Number(s.order), email: s.email || '' };
   });
 }
-/* Printing = printing production, Add-ons = bows / socks / boots…, Regular = does every kind of work (attendance only, no work list) */
-var CATS = ['Sales', 'Office', 'Media', 'Printing', 'Add-ons', 'Regular'];
+/* Printing = printing production, Add-ons = bows / socks / boots…, HR = enters daily leads for sales staff, Regular = does every kind of work (attendance only, no work list) */
+var CATS = ['Sales', 'Office', 'Media', 'Printing', 'Add-ons', 'HR', 'Regular'];
 function cat_(role, sales) {
   if (sales) return 'Sales';
   var r = String(role || '').trim().toLowerCase();
@@ -249,6 +249,13 @@ function saveWork_(staffId, date, items, n) {
     if (val === '') remove_('Work', key);
     else upsert_('Work', { key: key, date: date, staffId: staffId, taskId: t.id, value: val, updatedAt: n.date + ' ' + n.time });
   });
+}
+function hrLeadsData_(month) { // sales staff + this month's lead rows + order counts, for the HR leads box
+  var st = staffList_().filter(function (s) { return s.sales && s.active; })
+    .sort(function (a, b) { return (a.order == null ? 999 : a.order) - (b.order == null ? 999 : b.order); })
+    .map(function (s) { return { id: s.id, name: s.name }; });
+  var orders = {}; rows_('Orders').forEach(function (o) { if (o.date.indexOf(month) === 0) { var k = o.date + '__' + o.staffId; orders[k] = (orders[k] || 0) + 1; } });
+  return { staff: st, leads: rows_('Sales').filter(function (r) { return r.date.indexOf(month) === 0; }).map(function (r) { return { date: r.date, staffId: r.staffId, leads: Number(r.leads) || 0 }; }), orders: orders };
 }
 function productList_() {
   if (!sh_('Products')) return [];
@@ -359,7 +366,22 @@ function handle_(b) {
       return { ok: true, today: n.date, month: mm, name: p.name, sales: p.sales, products: productList_().filter(function (x) { return x.active; }), lateAfter: setting_('lateAfter') || '09:40', minHours: Number(setting_('minHours') || 8),
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
-        category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id) };
+        category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
+        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null };
+    }
+    case 'hrSaveLeads': { // HR staff type the daily lead count for each sales person (same rows the admin Leads tab saves)
+      var hr = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
+      if (!hr || !hr.pin || String(hr.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
+      if (cats_(hr.role, hr.sales).indexOf('HR') < 0) return { ok: false, error: 'Only HR can enter leads' };
+      var ld = String(b.date || ''), oldestL = Utilities.formatDate(new Date(new Date().getTime() - 45 * 864e5), TZ, 'yyyy-MM-dd');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ld) || ld > n.date || ld < oldestL) return { ok: false, error: 'Pick today or a day in the last 45 days' };
+      var salesIds = {}; staffList_().forEach(function (x) { if (x.sales) salesIds[x.id] = 1; });
+      (b.rows || []).forEach(function (r) {
+        if (!salesIds[r.staffId]) return;
+        var v = Math.max(0, Math.round(Number(r.leads) || 0));
+        upsert_('Sales', { key: ld + '__' + r.staffId, date: ld, staffId: r.staffId, leads: v, premium: '', affordable: '', amount: '' });
+      });
+      return { ok: true, hr: hrLeadsData_(ld.slice(0, 7)) };
     }
     case 'saveMyWork': {
       var w = staffList_().filter(function (x) { return x.id === b.staffId; })[0];

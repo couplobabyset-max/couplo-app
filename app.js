@@ -487,8 +487,8 @@ function orderForm(o,onSave,extra){
 
 /* ---------- daily work (media / production) ---------- */
 let tasks=[], adminWork=[], adminWorkDate=null;
-const CATS=['Sales','Office','Media','Printing','Add-ons','Regular'];
-const CAT_NOTE={Sales:' (enters orders)',Printing:' (printing production)','Add-ons':' (bows, socks, boots…)',Regular:' (all work · attendance only)'};
+const CATS=['Sales','Office','Media','Printing','Add-ons','HR','Regular'];
+const CAT_NOTE={Sales:' (enters orders)',Printing:' (printing production)','Add-ons':' (bows, socks, boots…)',HR:' (enters daily leads)',Regular:' (all work · attendance only)'};
 const roleCat=r=>{const x=String(r||'').trim();if(x.toLowerCase()==='production')return'Printing';return CATS.includes(x)?x:'Office'};
 /* role can hold several categories: "Media,Add-ons" */
 const catsOf=s=>{const l=String(s.role||'').split(',').map(x=>x.trim()).filter(Boolean).map(roleCat);if(s.sales&&!l.includes('Sales'))l.unshift('Sales');const u=[...new Set(l)];return u.length?u:['Office']};
@@ -553,6 +553,40 @@ function myWorkView(d){
     el('tbody',{},...dates.map(ds=>el('tr',{},el('th',{class:'mono',text:ds.slice(8)+'/'+ds.slice(5,7)}),...myTasks.map(t=>{const w=myWork.find(x=>x.date===ds&&x.taskId===t.id);return el('td',{text:w?fmtWork(t,w.value):''})})))),
     el('tfoot',{},el('tr',{},el('th',{text:'Total'}),...myTasks.map(t=>el('td',{class:'mono',text:workTotal(t,myWork.filter(w=>w.taskId===t.id))})))))):el('div',{class:'empty',text:'No work saved this month yet.'}));
   return[form,hist];
+}
+/* HR: type how many new leads each sales person got. Same rows as the admin Leads tab; orders come in by themselves. */
+function hrLeadsView(d){
+  const H=d.hr,td=d.today,lo=new Date(td+'T12:00:00');lo.setDate(lo.getDate()-45);
+  const mFirst=d.month+'-01',mLast=ymd(new Date(+d.month.slice(0,4),+d.month.slice(5,7),0));
+  const min=[ymd(lo),mFirst].sort()[1],max=[td,mLast].sort()[0];
+  if(min>max)return[el('div',{class:'empty',text:'Leads can be entered only for the last 45 days. Pick this month above.'})];
+  if(!hrDate||hrDate<min||hrDate>max)hrDate=max;
+  const leadOf=(ds,id)=>{const r=H.leads.find(x=>x.date===ds&&x.staffId===id);return r?r.leads:''};
+  const ordOf=(ds,id)=>H.orders[ds+'__'+id]||0;
+  const dInp=el('input',{id:'hrdate',type:'date',value:hrDate,min,max,onchange:e=>{if(e.target.value){hrDate=e.target.value;ordersHome()}}});
+  const rows=H.staff.map(s=>({s,inp:el('input',{type:'number',min:'0',inputmode:'numeric',placeholder:'0',value:String(leadOf(hrDate,s.id)),style:'width:100%','aria-label':'Leads for '+s.name})}));
+  const btn=el('button',{class:'btn primary',type:'button',text:'Save leads'});
+  btn.onclick=async()=>{const out=rows.filter(r=>r.inp.value!=='').map(r=>({staffId:r.s.id,leads:Number(r.inp.value)||0}));
+    if(!out.length){toast('Type the lead numbers first.');return}
+    btn.disabled=true;btn.textContent='Saving…';
+    try{await call('hrSaveLeads',{staffId:me.id,pin:me.pin,date:hrDate,rows:out});toast('Leads saved for '+dm(hrDate));ordersHome()}
+    catch(e){toast('Could not save: '+e.message);btn.disabled=false;btn.textContent='Save leads'}};
+  const form=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Daily leads'}),dInp),
+    el('p',{class:'hint',text:'Count the new leads given to each sales person in Leadvyne for this day and type them here. Orders come in by themselves from the orders staff enter.'}),
+    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Name','Leads','Orders (auto)'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...rows.map(r=>el('tr',{},el('th',{text:r.s.name}),el('td',{},r.inp),el('td',{class:'mono',text:String(ordOf(hrDate,r.s.id))})))))),
+    el('div',{class:'row'},btn));
+  const pct=(o,l)=>l?Math.round(o/l*100)+'%':'—';
+  const tot=H.staff.map(s=>{const L=H.leads.filter(x=>x.staffId===s.id).reduce((a,x)=>a+x.leads,0);const O=Object.keys(H.orders).filter(k=>k.endsWith('__'+s.id)).reduce((a,k)=>a+H.orders[k],0);return{s,L,O}});
+  const all=tot.reduce((a,t)=>({L:a.L+t.L,O:a.O+t.O}),{L:0,O:0});
+  const sum=el('div',{class:'panel'},el('h3',{text:'This month'}),
+    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Name','Leads','Orders','Conversion'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...tot.map(t=>el('tr',{},el('th',{text:t.s.name}),el('td',{class:'mono',text:String(t.L)}),el('td',{class:'mono',text:String(t.O)}),el('td',{class:'mono',text:pct(t.O,t.L)})))),
+      el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{class:'mono',text:String(all.L)}),el('td',{class:'mono',text:String(all.O)}),el('td',{class:'mono',text:pct(all.O,all.L)}))))));
+  const days=[...new Set(H.leads.map(x=>x.date))].sort().reverse();
+  const missing=[];for(let x=new Date(min+'T12:00:00');ymd(x)<=max;x.setDate(x.getDate()+1)){const ds=ymd(x);if(x.getDay()!==0&&!days.includes(ds))missing.push(ds)}
+  const miss=missing.length?el('div',{class:'banner'},'Leads not entered: '+missing.slice(-10).map(dm).join(', ')+(missing.length>10?' and '+(missing.length-10)+' more':'')):null;
+  return[miss,form,sum].filter(Boolean);
 }
 function workTotal(t,list){if(!list.length)return'';if(t.kind==='yesno')return list.filter(w=>w.value==='TRUE').length+' days';if(t.kind==='text')return list.length+' days';if(t.kind==='colours'||t.kind==='items')return String(list.reduce((a,w)=>a+colTotal(w.value),0));return String(list.reduce((a,w)=>a+(+w.value||0),0))}
 function viewWork(){
@@ -1044,7 +1078,7 @@ function editProduct(p){
 /* ---------- staff portal (#me): each staff logs in with name + PIN ---------- */
 let me=null;
 try{me=JSON.parse(LS.get('couplo_me')||'null')}catch(e){me=null}
-let portalTab='auto', portalMonth=null, myTasks=[], myWork=[], workDate=null;
+let portalTab='auto', portalMonth=null, myTasks=[], myWork=[], workDate=null, hrDate=null;
 function portalOut(){goHome()}
 async function ordersBoot(){show('orders');if(!me){goHome();return}ordersHome()}
 let myOrders=[];
@@ -1061,11 +1095,11 @@ async function ordersHome(edit){
     el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
-  const tabList=[['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]);
+  const tabList=[['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
   if(portalTab==='auto')portalTab=me.sales?'orders':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})));
-  const body=portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):myOrdersView(edit,d);
+  const body=portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
   box.replaceChildren(head,warn,tabs,...body);
 }
