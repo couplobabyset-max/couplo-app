@@ -190,7 +190,7 @@ async function loadMonth(m){
   try{const j=await call('month',{adminPin,month:m});todayStr=j.today;staff=j.staff;if(j.products)products=j.products;if(j.tasks)tasks=j.tasks;adminWork=j.work||[];if(j.holidays)holidays=j.holidays;
     adminRecs={};j.att.forEach(r=>adminRecs[r.date+'__'+r.staffId]=r);
     adminSales={};const sx=k=>adminSales[k]=adminSales[k]||{leads:0,premium:0,affordable:0,amount:0};
-    j.sales.forEach(r=>{sx(r.date+'__'+r.staffId).leads=+r.leads||0});
+    j.sales.forEach(r=>{const x=sx(r.date+'__'+r.staffId);x.leads=+r.leads||0;x.calls=+r.calls||0;x.answered=+r.answered||0;x.missed=+r.missed||0;x.called=+r.called||0});
     adminOrders=j.orders||[];adminOrders.forEach(o=>{const x=sx(o.date+'__'+o.staffId);if(o.type==='affordable')x.affordable++;else x.premium++;x.amount+=(+o.amount||0)});
     rpCache[m]=j;adminPay={};j.pay.forEach(r=>adminPay[r.staffId]={advance:+r.advance||0,extra:+r.extra||0,note:r.note||''});
     renderAdmin()}
@@ -308,7 +308,18 @@ function viewSales(){
     el('thead',{},el('tr',{},el('th',{text:'Date'}),...list.map(s=>el('th',{text:s.name})),el('th',{text:'Total'}))),
     el('tbody',{},...days.map(d=>{const ds=ymd(d);let tO=0,tA=0;
       return el('tr',{},el('th',{},el('span',{class:'mono',text:pad2(d.getDate())}),' '+DAYS[d.getDay()].slice(0,3)),...list.map(s=>{const x=adminSales[ds+'__'+s.id];if(!x)return el('td',{class:'c-hrs',text:'—'});const o=x.premium+x.affordable;tO+=o;tA+=x.amount;return el('td',{class:'mono',text:o+' · '+rs(x.amount)})}),el('td',{class:'mono',text:tO+' · '+rs(tA)}))})))):el('div',{class:'empty',text:'No sales entered this month yet.'}));
-  return[entry,report,daily];
+  /* leads + calls per day (all staff together), like the Leadvyne report */
+  const all2=list.concat(staff.filter(s=>s.id==='team-leads'&&!list.includes(s)));
+  const dayRows=dates.map(d=>{const ds=ymd(d);const r={d,L:0,C:0,A:0,M:0,K:0,O:0};all2.forEach(s=>{const x=adminSales[ds+'__'+s.id];if(x){r.L+=x.leads;r.C+=x.calls||0;r.A+=x.answered||0;r.M+=x.missed||0;r.K+=x.called||0;r.O+=x.premium+x.affordable}});return r}).filter(r=>r.L||r.C||r.O).reverse();
+  const T=dayRows.reduce((a,r)=>({L:a.L+r.L,C:a.C+r.C,A:a.A+r.A,M:a.M+r.M,K:a.K+r.K,O:a.O+r.O}),{L:0,C:0,A:0,M:0,K:0,O:0});
+  const lc=el('div',{class:'panel'},el('h3',{text:'Day by day · leads & calls'}),
+    el('p',{class:'hint',text:'New leads and calls from Leadvyne, orders from the app. Calls made counts every call; customers called counts each person once that day.'}),
+    dayRows.length?el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},...['Date','New leads','Calls made','Answered','Missed','Customers called','Orders','Conversion'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...dayRows.map(r=>el('tr',{},el('th',{},el('span',{class:'mono',text:pad2(r.d.getDate())}),' '+DAYS[r.d.getDay()].slice(0,3)),
+        ...[r.L,r.C,r.A].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',style:r.M?'color:#c0392b':'',text:String(r.M)}),el('td',{class:'mono',text:String(r.K)}),el('td',{class:'mono',text:String(r.O)}),el('td',{class:'mono',text:pct(r.O,r.L)})))),
+      el('tfoot',{},el('tr',{},el('th',{text:'Total'}),...[T.L,T.C,T.A,T.M,T.K,T.O].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',text:pct(T.O,T.L)}))))):el('div',{class:'empty',text:'No leads entered this month yet.'}));
+  return[entry,report,lc,daily];
 }
 function viewSalary(){
   const m=adminMonth, list=payStaff();const[y,mo]=m.split('-').map(Number);

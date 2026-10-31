@@ -8,7 +8,7 @@ var TZ = 'Asia/Kolkata';
 var SHEETS = {
   Staff:      ['id','name','role','salary','pin','sales','active','order','email'],
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
-  Sales:      ['key','date','staffId','leads','premium','affordable','amount'],
+  Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
   Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt'],
   Products:   ['id','name','type','price','active','order'],
@@ -376,10 +376,12 @@ function handle_(b) {
       var ld = String(b.date || ''), oldestL = Utilities.formatDate(new Date(new Date().getTime() - 45 * 864e5), TZ, 'yyyy-MM-dd');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(ld) || ld > n.date || ld < oldestL) return { ok: false, error: 'Pick today or a day in the last 45 days' };
       var salesIds = {}; staffList_().forEach(function (x) { if (x.sales) salesIds[x.id] = 1; });
+      var haveL = {}; rows_('Sales').forEach(function (x) { haveL[x.key] = x; });
       (b.rows || []).forEach(function (r) {
         if (!salesIds[r.staffId]) return;
-        var v = Math.max(0, Math.round(Number(r.leads) || 0));
-        upsert_('Sales', { key: ld + '__' + r.staffId, date: ld, staffId: r.staffId, leads: v, premium: '', affordable: '', amount: '' });
+        var v = Math.max(0, Math.round(Number(r.leads) || 0)), k = ld + '__' + r.staffId, was = haveL[k] || {};
+        upsert_('Sales', { key: k, date: ld, staffId: r.staffId, leads: v, premium: '', affordable: '', amount: '',
+          calls: was.calls || '', answered: was.answered || '', missed: was.missed || '', called: was.called || '' });
       });
       return { ok: true, hr: hrLeadsData_(ld.slice(0, 7)) };
     }
@@ -471,7 +473,9 @@ function handle_(b) {
     case 'saveAtt': { var a = b.rec; a.key = a.date + '__' + a.staffId; upsert_('Attendance', a); return { ok: true }; }
     case 'deleteAtt': remove_('Attendance', b.date + '__' + b.staffId); return { ok: true };
     case 'saveSales':
-      (b.rows || []).forEach(function (r) { r.key = r.date + '__' + r.staffId; upsert_('Sales', r); });
+      var haveS = {}; rows_('Sales').forEach(function (x) { haveS[x.key] = x; });
+      (b.rows || []).forEach(function (r) { r.key = r.date + '__' + r.staffId; var was = haveS[r.key] || {};
+        ['calls', 'answered', 'missed', 'called'].forEach(function (c) { if (r[c] == null) r[c] = was[c] || ''; }); upsert_('Sales', r); });
       return { ok: true };
     case 'savePay': { var p = b.pay; p.key = p.month + '__' + p.staffId; upsert_('Pay', p); return { ok: true }; }
     case 'saveStaff': {
