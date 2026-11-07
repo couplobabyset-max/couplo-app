@@ -419,7 +419,6 @@ function handle_(b) {
         o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || (me.name.charAt(0) + (o.type === 'affordable' ? 'A' : 'P') + od.slice(5, 7) + od.slice(8, 10) + '-' + (mine + 1));
         o.date = od; o.staffId = me.id; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = n.date + ' ' + n.time;
         upsert_('Orders', o);
-        capiSendOrder_(o); // Meta Purchase event (never blocks the order)
         return { ok: true, order: o };
       }
       var old = rows_('Orders').filter(function (x) { return x.id === b.order.id; })[0];
@@ -467,7 +466,6 @@ function handle_(b) {
       var isNew = !b.order.id;
       if (isNew && !so.createdAt) so.createdAt = n.date + ' ' + n.time;
       upsert_('Orders', so);
-      if (isNew) capiSendOrder_(so); // Meta Purchase event (never blocks the order)
       return { ok: true, order: so };
     }
     case 'deleteOrder': remove_('Orders', b.id); return { ok: true };
@@ -598,17 +596,20 @@ function setupLeadSync() {
 }
 
 /* ---------- Meta Conversions API (CAPI) ----------
-   Every new order saved in the app is sent to Meta as a "Purchase" event, so Meta Ads can
+   Every order saved in the app is sent to Meta as a "Purchase" event, so Meta Ads can
    see real sales (the Leadvyne CRM order data is not used).
+   Orders are sent only CAPI_DELAY_HOURS after they were entered, so a wrong or duplicate order
+   deleted (or an amount corrected) within that time never reaches Meta — Meta cannot delete events.
    One-time setup — Apps Script editor → Project Settings (gear) → Script properties → add:
      META_PIXEL_ID     = 1396011689261359  (dataset "couplo design studio" — the one Leadvyne also uses)
      META_CAPI_TOKEN   = Events Manager → that pixel → Settings → Conversions API → Generate access token
      META_TEST_CODE    = (optional) test code from Events Manager → Test events; delete it when testing is done
    Then run capiSetup() once from the editor. The token is kept only in Script properties —
    never paste it into this file (this file is in the GitHub repo).
-   Every order sent is logged in the "Capi" sheet (status sent / error). capiSweep() runs every hour
-   and retries anything that failed or was missed (Meta accepts events up to 7 days old). */
+   Every order sent is logged in the "Capi" sheet (status sent / error). capiSweep() runs every hour,
+   sends orders older than CAPI_DELAY_HOURS and retries failures (Meta accepts events up to 7 days old). */
 var CAPI_VERSION = 'v23.0';
+var CAPI_DELAY_HOURS = 2;
 
 function capiProps_() {
   var p = PropertiesService.getScriptProperties();
@@ -631,7 +632,8 @@ function sha256_(v) {
 }
 /* 'yyyy-MM-dd HH:mm' (India time) → unix seconds; falls back to now */
 function capiTime_(o) {
-  var m = String(o.createdAt || '').match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/);
+  var m = String(o.createdAt || '').match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/) ||
+          String(o.date || '').match(/^(\d{4})-(\d{2})-(\d{2})/); // old rows without createdAt: order date, noon
   var now = Math.floor(Date.now() / 1000);
   if (!m) return now;
   var t = Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 12), +(m[5] || 0)) / 1000) - 330 * 60; // IST = UTC+5:30
@@ -673,21 +675,13 @@ function capiLog_(o, r) {
   upsert_('Capi', { id: o.id, status: r.error ? 'error' : (r.test ? 'test' : 'sent'), sentAt: n.date + ' ' + n.time,
     orderNo: o.orderNo, value: o.amount, note: r.error ? String(r.error).slice(0, 300) : '' });
 }
-/* called right after an order is saved — any problem is only logged, the order is never affected */
-function capiSendOrder_(o) {
-  try {
-    if (!capiProps_().token || !(Number(o.amount) > 0)) return;
-    capiSheet_();
-    capiLog_(o, capiPost_([o]));
-  } catch (e) { try { capiLog_(o, { error: String(e && e.message || e) }); } catch (x) {} }
-}
-/* hourly: send orders from the last 7 days that are not yet in the Capi sheet as "sent" */
+/* hourly: send orders entered 2+ hours ago (and within 7 days) that are not yet "sent" in the Capi sheet */
 function capiSweep() {
   if (!capiProps_().token) return { ok: false, error: 'CAPI not set up' };
   capiSheet_();
   var done = {}; rows_('Capi').forEach(function (r) { if (r.status === 'sent') done[r.id] = 1; });
-  var oldest = Math.floor(Date.now() / 1000) - 7 * 86400 + 3600;
-  var todo = rows_('Orders').filter(function (o) { return !done[o.id] && Number(o.amount) > 0 && capiTime_(o) > oldest; });
+  var nowS = Math.floor(Date.now() / 1000), oldest = nowS - 7 * 86400 + 3600, newest = nowS - CAPI_DELAY_HOURS * 3600;
+  var todo = rows_('Orders').filter(function (o) { var t = capiTime_(o); return !done[o.id] && Number(o.amount) > 0 && t > oldest && t <= newest; });
   var sent = 0, errors = [];
   for (var i = 0; i < todo.length; i += 50) {
     var batch = todo.slice(i, i + 50), r = capiPost_(batch);
