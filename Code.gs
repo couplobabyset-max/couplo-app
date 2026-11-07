@@ -14,7 +14,8 @@ var SHEETS = {
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
-  Settings:   ['key','value']
+  Settings:   ['key','value'],
+  Capi:       ['id','status','sentAt','orderNo','value','note']   // Meta Conversions API log — one row per order sent
 };
 /* daily work items. category = a staff category (Media, Production, Office) OR one staff id (e.g. jaseera).
    kind: count = a number, yesno = done / not done, colours = colour + how many, items = fixed list + how many, text = short note */
@@ -418,6 +419,7 @@ function handle_(b) {
         o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || (me.name.charAt(0) + (o.type === 'affordable' ? 'A' : 'P') + od.slice(5, 7) + od.slice(8, 10) + '-' + (mine + 1));
         o.date = od; o.staffId = me.id; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = n.date + ' ' + n.time;
         upsert_('Orders', o);
+        capiSendOrder_(o); // Meta Purchase event (never blocks the order)
         return { ok: true, order: o };
       }
       var old = rows_('Orders').filter(function (x) { return x.id === b.order.id; })[0];
@@ -462,7 +464,11 @@ function handle_(b) {
       ['orderNo','date','staffId','createdAt'].forEach(function (k) { so[k] = String(b.order[k] || ''); });
       so.dispatched = (b.order.dispatched === true || b.order.dispatched === 'TRUE') ? 'TRUE' : 'FALSE';
       if (!so.date) so.date = n.date;
-      upsert_('Orders', so); return { ok: true, order: so };
+      var isNew = !b.order.id;
+      if (isNew && !so.createdAt) so.createdAt = n.date + ' ' + n.time;
+      upsert_('Orders', so);
+      if (isNew) capiSendOrder_(so); // Meta Purchase event (never blocks the order)
+      return { ok: true, order: so };
     }
     case 'deleteOrder': remove_('Orders', b.id); return { ok: true };
     case 'setDispatched': {
@@ -545,4 +551,119 @@ function handle_(b) {
     }
   }
   return { ok: false, error: 'Unknown action' };
+}
+
+
+/* ---------- Meta Conversions API (CAPI) ----------
+   Every new order saved in the app is sent to Meta as a "Purchase" event, so Meta Ads can
+   see real sales (the Leadvyne CRM order data is not used).
+   One-time setup — Apps Script editor → Project Settings (gear) → Script properties → add:
+     META_PIXEL_ID     = 1396011689261359  (dataset "couplo design studio" — the one Leadvyne also uses)
+     META_CAPI_TOKEN   = Events Manager → that pixel → Settings → Conversions API → Generate access token
+     META_TEST_CODE    = (optional) test code from Events Manager → Test events; delete it when testing is done
+   Then run capiSetup() once from the editor. The token is kept only in Script properties —
+   never paste it into this file (this file is in the GitHub repo).
+   Every order sent is logged in the "Capi" sheet (status sent / error). capiSweep() runs every hour
+   and retries anything that failed or was missed (Meta accepts events up to 7 days old). */
+var CAPI_VERSION = 'v23.0';
+
+function capiProps_() {
+  var p = PropertiesService.getScriptProperties();
+  return { pixel: String(p.getProperty('META_PIXEL_ID') || '').trim(), token: String(p.getProperty('META_CAPI_TOKEN') || '').trim(),
+           test: String(p.getProperty('META_TEST_CODE') || '').trim(), version: String(p.getProperty('META_API_VERSION') || CAPI_VERSION).trim() };
+}
+function capiSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), sh = ss.getSheetByName('Capi');
+  if (!sh) {
+    sh = ss.insertSheet('Capi');
+    sh.getRange(1, 1, sh.getMaxRows(), SHEETS.Capi.length).setNumberFormat('@');
+    sh.getRange(1, 1, 1, SHEETS.Capi.length).setValues([SHEETS.Capi]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+function sha256_(v) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, v, Utilities.Charset.UTF_8)
+    .map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+/* 'yyyy-MM-dd HH:mm' (India time) → unix seconds; falls back to now */
+function capiTime_(o) {
+  var m = String(o.createdAt || '').match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/);
+  var now = Math.floor(Date.now() / 1000);
+  if (!m) return now;
+  var t = Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 12), +(m[5] || 0)) / 1000) - 330 * 60; // IST = UTC+5:30
+  return t > now ? now : t;
+}
+function capiEvent_(o) {
+  var phone = String(o.phone || '').replace(/\D/g, '').slice(-10);
+  var ud = { country: [sha256_('in')] };
+  if (phone.length === 10) { ud.ph = [sha256_('91' + phone)]; ud.external_id = [sha256_('91' + phone)]; }
+  var first = String(o.customer || '').trim().toLowerCase().split(/\s+/)[0].replace(/[^a-z]/g, '');
+  if (first) ud.fn = [sha256_(first)];
+  var city = String(o.district || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (city) ud.ct = [sha256_(city)];
+  var pin = String(o.pincode || '').replace(/\D/g, '');
+  if (pin.length === 6) ud.zp = [sha256_(pin)];
+  var qty = Number(o.qty) || 1, value = Number(o.amount) || 0;
+  return {
+    event_name: 'Purchase', event_time: capiTime_(o), event_id: 'order_' + o.id, action_source: 'chat', user_data: ud,
+    custom_data: { currency: 'INR', value: value, order_id: String(o.orderNo || o.id), content_type: 'product',
+      content_name: String(o.product || ''), content_category: o.type === 'affordable' ? 'affordable' : 'premium',
+      contents: [{ id: String(o.product || 'order').toLowerCase().replace(/[^a-z0-9]+/g, '-'), quantity: qty, item_price: Math.round(value / qty) }], num_items: qty }
+  };
+}
+/* sends orders to Meta; returns { sent, failed, error } */
+function capiPost_(orders) {
+  var c = capiProps_();
+  if (!c.pixel || !c.token) return { sent: 0, failed: orders.length, error: 'META_PIXEL_ID / META_CAPI_TOKEN not set in Script properties' };
+  var payload = { data: orders.map(capiEvent_), access_token: c.token };
+  if (c.test) payload.test_event_code = c.test;
+  var res = UrlFetchApp.fetch('https://graph.facebook.com/' + c.version + '/' + c.pixel + '/events',
+    { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+  var code = res.getResponseCode(), body = res.getContentText();
+  if (code === 200) return { sent: orders.length, failed: 0, test: !!c.test };
+  var msg = body; try { msg = JSON.parse(body).error.message; } catch (e) {}
+  return { sent: 0, failed: orders.length, error: 'HTTP ' + code + ': ' + msg };
+}
+function capiLog_(o, r) {
+  var n = now_();
+  upsert_('Capi', { id: o.id, status: r.error ? 'error' : (r.test ? 'test' : 'sent'), sentAt: n.date + ' ' + n.time,
+    orderNo: o.orderNo, value: o.amount, note: r.error ? String(r.error).slice(0, 300) : '' });
+}
+/* called right after an order is saved — any problem is only logged, the order is never affected */
+function capiSendOrder_(o) {
+  try {
+    if (!capiProps_().token || !(Number(o.amount) > 0)) return;
+    capiSheet_();
+    capiLog_(o, capiPost_([o]));
+  } catch (e) { try { capiLog_(o, { error: String(e && e.message || e) }); } catch (x) {} }
+}
+/* hourly: send orders from the last 7 days that are not yet in the Capi sheet as "sent" */
+function capiSweep() {
+  if (!capiProps_().token) return { ok: false, error: 'CAPI not set up' };
+  capiSheet_();
+  var done = {}; rows_('Capi').forEach(function (r) { if (r.status === 'sent') done[r.id] = 1; });
+  var oldest = Math.floor(Date.now() / 1000) - 7 * 86400 + 3600;
+  var todo = rows_('Orders').filter(function (o) { return !done[o.id] && Number(o.amount) > 0 && capiTime_(o) > oldest; });
+  var sent = 0, errors = [];
+  for (var i = 0; i < todo.length; i += 50) {
+    var batch = todo.slice(i, i + 50), r = capiPost_(batch);
+    batch.forEach(function (o) { capiLog_(o, r); });
+    sent += r.sent; if (r.error) errors.push(r.error);
+  }
+  Logger.log('CAPI sweep: ' + sent + ' sent of ' + todo.length + (errors.length ? ' — ' + errors[0] : ''));
+  return { ok: !errors.length, sent: sent, total: todo.length, error: errors[0] };
+}
+/* run once from the editor after adding the Script properties: checks the settings,
+   sends the last 7 days of orders, and turns on the hourly retry */
+function capiSetup() {
+  var c = capiProps_();
+  if (!c.pixel || !c.token) throw new Error('Add META_PIXEL_ID and META_CAPI_TOKEN in Project Settings → Script properties first.');
+  capiSheet_();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'capiSweep') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('capiSweep').timeBased().everyHours(1).create();
+  var r = capiSweep();
+  Logger.log(JSON.stringify(r));
+  if (r.error) throw new Error('Meta said: ' + r.error);
+  return r;
 }
