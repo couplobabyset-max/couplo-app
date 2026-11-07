@@ -554,6 +554,49 @@ function handle_(b) {
 }
 
 
+/* ---------- Leadvyne CRM → app leads (auto) ----------
+   Reads the "COUPLO LEADS CRM" sheet (Leadvyne export), counts leads per sales person per day (IST)
+   and writes them into the Sales sheet's "leads" column — the same numbers HR used to type by hand.
+   All CRM dates from Settings "leadSyncFrom" (default 2026-09-01 = full CRM history) are written; this replaces HR's manual numbers for those days.
+   Run setupLeadSync() once: it syncs now and then every hour. */
+var LEAD_CRM_ID = '1eCcse_bsNzvCC0fNAmdKHaH5pZ_I3mkfNAqfW0_ev0k';
+function leadName_(s) { return String(s || '').trim().toLowerCase().replace(/[^a-z]/g, '').replace(/(.)\1+$/, '$1'); } // "reshmaa" → "reshma"
+function syncLeadvyneLeads() {
+  var lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    var from = setting_('leadSyncFrom') || '2026-09-01';
+    var sh = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1');
+    var data = sh.getDataRange().getValues(), head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
+    var cDate = head.indexOf('date'), cWho = head.indexOf('assigned to');
+    if (cDate < 0 || cWho < 0) throw new Error('CRM sheet: Date / Assigned To column not found');
+    var byName = {}; staffList_().forEach(function (s) { byName[leadName_(s.name)] = s.id; byName[leadName_(s.id.split('-')[0])] = s.id; });
+    var count = {}, unknown = {};
+    data.forEach(function (r) {
+      var d = r[cDate]; if (!d) return;
+      if (!(d instanceof Date)) d = new Date(String(d).trim().replace(' ', 'T'));
+      if (isNaN(d)) return;
+      var day = Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); if (day < from) return;
+      var id = byName[leadName_(r[cWho])];
+      if (!id) { unknown[String(r[cWho])] = (unknown[String(r[cWho])] || 0) + 1; return; }
+      var k = day + '__' + id; count[k] = (count[k] || 0) + 1;
+    });
+    var have = {}; rows_('Sales').forEach(function (r) { have[r.key] = r; });
+    Object.keys(count).forEach(function (k) {
+      var old = have[k] || {}, p = k.split('__');
+      if (String(old.leads) === String(count[k])) return;
+      upsert_('Sales', { key: k, date: p[0], staffId: p[1], leads: count[k], premium: old.premium || '', affordable: old.affordable || '', amount: old.amount || '',
+        calls: old.calls || '', answered: old.answered || '', missed: old.missed || '', called: old.called || '' });
+    });
+    upsert_('Settings', { key: 'leadSyncLast', value: now_().date + ' ' + now_().time });
+    return { ok: true, days: Object.keys(count).length, notMatched: unknown };
+  } finally { lock.releaseLock(); }
+}
+function setupLeadSync() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncLeadvyneLeads') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('syncLeadvyneLeads').timeBased().everyHours(1).create();
+  var res = syncLeadvyneLeads(); Logger.log(JSON.stringify(res)); return res;
+}
+
 /* ---------- Meta Conversions API (CAPI) ----------
    Every new order saved in the app is sent to Meta as a "Purchase" event, so Meta Ads can
    see real sales (the Leadvyne CRM order data is not used).
