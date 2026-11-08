@@ -457,7 +457,14 @@ function orderForm(o,onSave,extra){
   o=o||{};
   const f=(id,label,attrs)=>{const i=el('input',{id,...attrs});return[i,el('label',{class:'f',for:id},label,i)]};
   const [nm,lnm]=f('o-nm','Customer name',{type:'text',value:o.customer||'',autocomplete:'off'});
-  const [ph,lph]=f('o-ph','Phone (10 digits)',{type:'tel',inputmode:'numeric',maxlength:'14',value:o.phone||''});
+  /* country: India by default; GCC numbers are saved with their code (e.g. 971501234567) */
+  const CC=[['91','🇮🇳 +91',10],['971','🇦🇪 +971',9],['966','🇸🇦 +966',9],['974','🇶🇦 +974',8],['968','🇴🇲 +968',8],['965','🇰🇼 +965',8],['973','🇧🇭 +973',8]];
+  const p0=String(o.phone||'').replace(/\D/g,'');const cc0=CC.find(c=>c[0]!=='91'&&p0.startsWith(c[0])&&p0.length===c[0].length+c[2]);
+  const ccs=el('select',{id:'o-cc','aria-label':'Country code',style:'flex:0 0 auto;width:auto'},...CC.map(c=>el('option',{value:c[0],text:c[1]})));
+  ccs.value=cc0?cc0[0]:'91';
+  const ph=el('input',{id:'o-ph',type:'tel',inputmode:'numeric',maxlength:'14',autocomplete:'off',style:'flex:1;min-width:0',value:cc0?p0.slice(cc0[0].length):p0});
+  const phHint=()=>{const c=CC.find(c=>c[0]===ccs.value);ph.placeholder=c[2]+' digits'};phHint();ccs.onchange=phHint;
+  const lph=el('label',{class:'f',for:'o-ph'},'Phone',el('div',{style:'display:flex;gap:6px'},ccs,ph));
   const [di,ldi]=f('o-di','District',{type:'text',value:o.district||'',list:datalist('dl-dist',DISTRICTS),autocomplete:'off'});
   const [pc,lpc]=f('o-pc','Pincode',{type:'text',inputmode:'numeric',maxlength:'6',value:o.pincode||''});
   const [qt,lqt]=f('o-qt','Qty',{type:'number',min:'1',value:o.qty||1});
@@ -482,10 +489,14 @@ function orderForm(o,onSave,extra){
   const dp=el('input',{id:'o-dp',type:'checkbox'});dp.checked=o.dispatched==='TRUE'||o.dispatched===true;
   const ldp=el('label',{for:'o-dp',style:'display:flex;gap:8px;align-items:center;font-weight:500'},dp,'Dispatched');
   const btn=el('button',{class:'btn primary big',type:'button',text:o.id?'Save changes':'Save order'});
+  /* '' = no phone; null = wrong length; India → 10 digits, GCC → code + number */
+  const fullPhone=()=>{let d=ph.value.replace(/\D/g,'').replace(/^0+/,'');if(!d)return '';const c=CC.find(c=>c[0]===ccs.value);
+    if(d.length===c[0].length+c[2]&&d.startsWith(c[0]))d=d.slice(c[0].length);
+    if(d.length!==c[2])return null;return c[0]==='91'?d:c[0]+d};
   btn.onclick=async()=>{
-    const data={...o,orderNo:on.value.trim().toUpperCase(),dispatched:dp.checked,customer:nm.value.trim(),phone:ph.value.replace(/\D/g,''),district:di.value.trim().toUpperCase(),pincode:pc.value.replace(/\D/g,''),product:pr.value==='__other'?pkey(other.value):pr.value,qty:Number(qt.value)||1,amount:Number(am.value)||0,type,note:nt.value.trim()};
+    const data={...o,orderNo:on.value.trim().toUpperCase(),dispatched:dp.checked,customer:nm.value.trim(),phone:fullPhone(),district:di.value.trim().toUpperCase(),pincode:pc.value.replace(/\D/g,''),product:pr.value==='__other'?pkey(other.value):pr.value,qty:Number(qt.value)||1,amount:Number(am.value)||0,type,note:nt.value.trim()};
     if(!data.customer&&!data.phone){toast('Enter the customer name or phone.');return}
-    if(data.phone&&data.phone.length<10){toast('Phone number needs 10 digits.');return}
+    if(data.phone===null){const c=CC.find(c=>c[0]===ccs.value);toast('Phone number needs '+c[2]+' digits for '+c[1].split(' ')[1]+'.');return}
     if(data.pincode&&data.pincode.length!==6){toast('Pincode needs 6 digits.');return}
     if(!data.product){toast('Choose the product.');return}
     btn.disabled=true;btn.textContent='Saving…';

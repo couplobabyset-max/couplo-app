@@ -269,7 +269,7 @@ function cleanOrder_(o) {
   o = o || {};
   var t = function (v) { return String(v == null ? '' : v).trim(); };
   return { type: t(o.type) === 'affordable' ? 'affordable' : 'premium', customer: t(o.customer).toUpperCase(),
-    phone: t(o.phone).replace(/\D/g, '').slice(-10), district: t(o.district).toUpperCase(), pincode: t(o.pincode).replace(/\D/g, '').slice(0, 6),
+    phone: phoneNorm_(o.phone), district: t(o.district).toUpperCase(), pincode: t(o.pincode).replace(/\D/g, '').slice(0, 6),
     product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note) };
 }
 /* delete every row of a sheet that matches — bottom first so row numbers stay right */
@@ -626,6 +626,30 @@ function capiSheet_() {
   }
   return sh;
 }
+/* Phone numbers: India is kept as 10 digits (as before); GCC numbers are kept with their country code,
+   e.g. 971501234567. Works out the country so Meta gets the right code. */
+var GCC_CODES = { '971': ['ae', 9], '966': ['sa', 9], '974': ['qa', 8], '968': ['om', 8], '965': ['kw', 8], '973': ['bh', 8] };
+function phoneInfo_(v) {
+  var d = String(v || '').replace(/\D/g, '').replace(/^0+/, '');
+  for (var cc in GCC_CODES) {
+    var g = GCC_CODES[cc];
+    if (d.indexOf(cc) === 0 && d.length === cc.length + g[1]) return { stored: d, full: d, country: g[0] };
+  }
+  var in10 = d.slice(-10);
+  return { stored: in10, full: in10.length === 10 ? '91' + in10 : '', country: 'in' };
+}
+var KERALA_DISTRICTS = ['malappuram','kozhikode','palakkad','thrissur','ernakulam','kannur','kasaragod','wayanad','kollam','thiruvananthapuram','alappuzha','kottayam','idukki','pathanamthitta'];
+var TN_DISTRICTS = ['chennai','coimbatore','madurai','tiruchirappalli','salem','tirunelveli','kanyakumari','thanjavur','dindigul','nilgiris','tamilnadu'];
+/* state from the district picked in the app (Meta wants lowercase, no spaces); unknown → not sent */
+function stateOf_(district) {
+  var d = String(district || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (KERALA_DISTRICTS.indexOf(d) >= 0) return 'kerala';
+  if (TN_DISTRICTS.indexOf(d) >= 0) return 'tamilnadu';
+  if (d === 'karnataka') return 'karnataka';
+  if (d === 'puducherry') return 'puducherry';
+  return '';
+}
+function phoneNorm_(v) { return phoneInfo_(v).stored; }
 function sha256_(v) {
   return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, v, Utilities.Charset.UTF_8)
     .map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
@@ -640,13 +664,15 @@ function capiTime_(o) {
   return t > now ? now : t;
 }
 function capiEvent_(o) {
-  var phone = String(o.phone || '').replace(/\D/g, '').slice(-10);
-  var ud = { country: [sha256_('in')] };
-  if (phone.length === 10) { ud.ph = [sha256_('91' + phone)]; ud.external_id = [sha256_('91' + phone)]; }
+  var pi = phoneInfo_(o.phone);
+  var ud = { country: [sha256_(pi.country)] };
+  var st = pi.country === 'in' ? stateOf_(o.district) : '';
+  if (st) ud.st = [sha256_(st)];
+  if (pi.full) { ud.ph = [sha256_(pi.full)]; ud.external_id = [sha256_(pi.full)]; }
   var first = String(o.customer || '').trim().toLowerCase().split(/\s+/)[0].replace(/[^a-z]/g, '');
   if (first) ud.fn = [sha256_(first)];
   var city = String(o.district || '').toLowerCase().replace(/[^a-z]/g, '');
-  if (city) ud.ct = [sha256_(city)];
+  if (city && !/^(karnataka|tamilnadu|otherstate)$/.test(city)) ud.ct = [sha256_(city)];
   var pin = String(o.pincode || '').replace(/\D/g, '');
   if (pin.length === 6) ud.zp = [sha256_(pin)];
   var qty = Number(o.qty) || 1, value = Number(o.amount) || 0;
