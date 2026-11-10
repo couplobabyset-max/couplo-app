@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt'],
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items'],  // items = JSON list when one order has several products
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -144,7 +144,8 @@ function dailyReport(forceDate) {
     var t = gT[s.id] || { n: 0, p: 0, a: 0, amt: 0 }, m = gM[s.id] || { n: 0, amt: 0 };
     return [esc(s.name), t.n, t.p, t.a, rs(t.amt), m.n, rs(m.amt)]; });
   var tot = today.reduce(function (t, o) { return t + (Number(o.amount) || 0); }, 0), totM = mtd.reduce(function (t, o) { return t + (Number(o.amount) || 0); }, 0);
-  var topOf = function (key) { var g = {}; today.forEach(function (o) { var k = o[key] || '—'; g[k] = (g[k] || 0) + 1; }); return Object.keys(g).sort(function (a, b) { return g[b] - g[a]; }).slice(0, 8).map(function (k) { return [esc(k), g[k]]; }); };
+  var topOf = function (key) { var g = {}; var src = key === 'product' ? [].concat.apply([], today.map(orderItems_)) : today;
+    src.forEach(function (o) { var k = o[key] || '—'; g[k] = (g[k] || 0) + (key === 'product' ? (Number(o.qty) || 1) : 1); }); return Object.keys(g).sort(function (a, b) { return g[b] - g[a]; }).slice(0, 8).map(function (k) { return [esc(k), g[k]]; }); };
   // daily work (media / production)
   var tasks = {}; taskList_().forEach(function (t) { tasks[t.id] = t; });
   var wb = {}; workRows_(day.slice(0, 7)).filter(function (w) { return w.date === day; }).forEach(function (w) { (wb[w.staffId] = wb[w.staffId] || []).push(w); });
@@ -268,9 +269,33 @@ function productList_() {
 function cleanOrder_(o) {
   o = o || {};
   var t = function (v) { return String(v == null ? '' : v).trim(); };
-  return { type: t(o.type) === 'affordable' ? 'affordable' : 'premium', customer: t(o.customer).toUpperCase(),
+  var r = { type: t(o.type) === 'affordable' ? 'affordable' : 'premium', customer: t(o.customer).toUpperCase(),
     phone: phoneNorm_(o.phone), district: t(o.district).toUpperCase(), pincode: t(o.pincode).replace(/\D/g, '').slice(0, 6),
-    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note) };
+    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '' };
+  /* several products in one order: keep the list, and product / qty / amount become the joined name and the totals */
+  var it = Array.isArray(o.items) ? o.items : [];
+  if (typeof o.items === 'string') { try { it = JSON.parse(o.items || '[]'); } catch (e) { it = []; } }
+  it = it.map(function (x) { return { product: t(x && x.product).toUpperCase(), qty: Math.max(1, Number(x && x.qty) || 1), amount: Number(x && x.amount) || 0 }; })
+    .filter(function (x) { return x.product; });
+  if (it.length > 1) {
+    r.items = JSON.stringify(it);
+    r.product = it.map(function (x) { return x.product; }).join(' + ');
+    r.qty = it.reduce(function (a, x) { return a + x.qty; }, 0);
+    r.amount = it.reduce(function (a, x) { return a + x.amount; }, 0);
+  }
+  ordersHeader_();
+  return r;
+}
+/* one product line per entry — old orders have no items, so they give themselves back */
+function orderItems_(o) {
+  var it = []; try { it = JSON.parse(o.items || '[]'); } catch (e) {}
+  if (!it || !it.length) return [{ product: o.product, qty: Number(o.qty) || 1, amount: Number(o.amount) || 0 }];
+  return it;
+}
+/* adds the "items" heading to the Orders sheet the first time it is needed */
+function ordersHeader_() {
+  var sh = sh_('Orders'), col = SHEETS.Orders.length;
+  if (sh && !sh.getRange(1, col).getValue()) sh.getRange(1, col).setValue('items');
 }
 /* delete every row of a sheet that matches — bottom first so row numbers stay right */
 function deleteWhere_(name, fn) {
@@ -680,7 +705,8 @@ function capiEvent_(o) {
     event_name: 'Purchase', event_time: capiTime_(o), event_id: 'order_' + o.id, action_source: 'chat', user_data: ud,
     custom_data: { currency: 'INR', value: value, order_id: String(o.orderNo || o.id), content_type: 'product',
       content_name: String(o.product || ''), content_category: o.type === 'affordable' ? 'affordable' : 'premium',
-      contents: [{ id: String(o.product || 'order').toLowerCase().replace(/[^a-z0-9]+/g, '-'), quantity: qty, item_price: Math.round(value / qty) }], num_items: qty }
+      contents: orderItems_(o).map(function (x) { var q = Number(x.qty) || 1; return { id: String(x.product || 'order').toLowerCase().replace(/[^a-z0-9]+/g, '-'), quantity: q, item_price: Math.round((Number(x.amount) || 0) / q) }; }),
+      num_items: qty }
   };
 }
 /* sends orders to Meta; returns { sent, failed, error } */

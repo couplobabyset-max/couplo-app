@@ -452,6 +452,11 @@ const DISTRICTS=['MALAPPURAM','KOZHIKODE','PALAKKAD','THRISSUR','ERNAKULAM','KAN
 let products=[['FULL ROMBER','premium',1350],['HALF ROMBER','premium',899],['PANT TYPE ROMBER','premium',1050],['SKIRTS','premium',1500],['CODSET','premium',800],['T SHIRT','premium',650],
   ['FULL ROMBER','affordable',810],['HALF ROMBER','affordable',650],['CODSET','affordable',0]].map(([name,type,price],i)=>({id:(type[0])+'-'+i,name,type,price,active:true,order:i+1}));
 const pkey=v=>String(v||'').trim().toUpperCase();
+/* one order can hold several products (e.g. HALF + FULL + PANT). They are kept in o.items as JSON;
+   old orders have only product/qty/amount. linesOf gives one entry per product so product reports count each piece. */
+const itemsOf=o=>{let it=o&&o.items;if(typeof it==='string'){try{it=JSON.parse(it||'[]')}catch(e){it=[]}}return Array.isArray(it)?it.filter(x=>x&&x.product):[]};
+const linesOf=o=>{const it=itemsOf(o);return it.length?it.map((x,i)=>({...o,product:x.product,qty:+x.qty||1,amount:+x.amount||0,_line:i})):[o]};
+const orderLines=os=>os.flatMap(linesOf);
 function datalist(id,items){let d=document.getElementById(id);if(!d){d=el('datalist',{id});document.body.append(d)}d.replaceChildren(...[...new Set(items)].map(v=>el('option',{value:v})));return id}
 function orderForm(o,onSave,extra){
   o=o||{};
@@ -467,23 +472,49 @@ function orderForm(o,onSave,extra){
   const lph=el('label',{class:'f',for:'o-ph'},'Phone',el('div',{style:'display:flex;gap:6px'},ccs,ph));
   const [di,ldi]=f('o-di','District',{type:'text',value:o.district||'',list:datalist('dl-dist',DISTRICTS),autocomplete:'off'});
   const [pc,lpc]=f('o-pc','Pincode',{type:'text',inputmode:'numeric',maxlength:'6',value:o.pincode||''});
-  const [qt,lqt]=f('o-qt','Qty',{type:'number',min:'1',value:o.qty||1});
-  const [am,lam]=f('o-am','Amount ₹ (total)',{type:'number',min:'0',value:o.amount||''});
-  /* Type first, then pick the product from that list; the price fills the amount (it can still be changed) */
+  /* Type first, then one or more products. Each product line has its own qty and ₹; the total adds up by itself. */
   let type=o.type==='affordable'?'affordable':'premium';
+  const type0=type;
   const tyBox=el('div',{class:'seg',role:'radiogroup','aria-label':'Type'});
-  const pr=el('select',{id:'o-pr'});
-  const other=el('input',{id:'o-pr2',type:'text',placeholder:'Type the product name',autocomplete:'off',hidden:true,style:'margin-top:6px'});
-  const fillProducts=()=>{
-    const list=products.filter(p=>p.type===type&&p.active!==false);const cur=pkey(o.product);
+  const lines=[], linesBox=el('div',{style:'display:grid;gap:10px'});
+  const totalEl=el('b',{class:'mono',style:'font-size:18px'});
+  const total=()=>lines.reduce((t,r)=>t+(Number(r.am.value)||0),0);
+  const showTotal=()=>{totalEl.textContent=rs(total())};
+  const priceOf=name=>{const p=products.find(p=>p.type===type&&pkey(p.name)===name);return p?+p.price||0:0};
+  const fillLine=r=>{
+    const list=products.filter(p=>p.type===type&&p.active!==false);
     const opts=[el('option',{value:'',text:'— Choose product —'}),...list.map(p=>el('option',{value:pkey(p.name),text:p.name}))];
-    if(cur&&!list.some(p=>pkey(p.name)===cur)&&type===(o.type==='affordable'?'affordable':'premium'))opts.push(el('option',{value:cur,text:cur}));
+    const keep=r.cur&&type===type0;
+    if(keep&&!list.some(p=>pkey(p.name)===r.cur))opts.push(el('option',{value:r.cur,text:r.cur}));
     opts.push(el('option',{value:'__other',text:'Other (type name)…'}));
-    pr.replaceChildren(...opts);pr.value=(type===(o.type==='affordable'?'affordable':'premium')&&cur)?cur:'';other.hidden=true};
-  const drawType=()=>tyBox.replaceChildren(...[['premium','Premium'],['affordable','Affordable']].map(([v,t])=>el('button',{type:'button',role:'radio','aria-checked':String(type===v),class:'segbtn'+(type===v?' on':''),text:t,onclick:()=>{if(type===v)return;type=v;drawType();fillProducts()}})));
-  drawType();fillProducts();
-  pr.onchange=()=>{other.hidden=pr.value!=='__other';if(!other.hidden)other.focus()};
-  const lpr=el('label',{class:'f',for:'o-pr',style:'grid-column:1/-1'},'Product',pr,other);
+    r.pr.replaceChildren(...opts);r.pr.value=keep?r.cur:'';r.other.hidden=true};
+  const renum=()=>lines.forEach((r,i)=>{r.num.textContent='Product '+(i+1);r.rm.hidden=lines.length<2});
+  const autoPrice=r=>{if(r.touched)return;const pz=priceOf(r.pr.value);if(pz){r.am.value=pz*(Number(r.qt.value)||1);showTotal()}};
+  const addLine=(x,focus)=>{x=x||{};
+    const n=lines.length;
+    const r={cur:pkey(x.product),touched:!!x.amount,
+      pr:el('select',{id:'o-pr'+(n?'-'+n:''),'aria-label':'Product'}),
+      other:el('input',{type:'text',placeholder:'Type the product name',autocomplete:'off',hidden:true,'aria-label':'Product name'}),
+      qt:el('input',{type:'number',min:'1',inputmode:'numeric',value:x.qty||1,'aria-label':'Qty'}),
+      am:el('input',{type:'number',min:'0',inputmode:'numeric',value:x.amount||'',placeholder:'₹','aria-label':'Amount ₹'}),
+      num:el('b',{})};
+    r.rm=el('button',{class:'btn',type:'button',text:'✕ Remove',style:'padding:6px 10px;font-size:13px',onclick:()=>{lines.splice(lines.indexOf(r),1);r.box.remove();renum();showTotal()}});
+    r.pr.onchange=()=>{r.other.hidden=r.pr.value!=='__other';if(!r.other.hidden)r.other.focus();autoPrice(r)};
+    r.qt.oninput=()=>autoPrice(r);
+    r.am.oninput=()=>{r.touched=true;showTotal()};
+    r.box=el('div',{style:'border:1px solid var(--line);border-radius:12px;padding:10px;display:grid;gap:6px'},
+      el('div',{style:'display:flex;justify-content:space-between;align-items:center'},r.num,r.rm),
+      r.pr,r.other,
+      el('div',{style:'display:grid;grid-template-columns:90px 1fr;gap:8px'},
+        el('label',{class:'f'},'Qty',r.qt),el('label',{class:'f'},'Amount ₹',r.am)));
+    fillLine(r);lines.push(r);linesBox.append(r.box);renum();showTotal();if(focus)r.pr.focus()};
+  const start=itemsOf(o).length?itemsOf(o):[{product:o.product||'',qty:+o.qty||1,amount:+o.amount||0}];
+  start.forEach(x=>addLine(x));
+  const addBtn=el('button',{class:'btn',type:'button',text:'+ Add product',onclick:()=>addLine({},true)});
+  const drawType=()=>tyBox.replaceChildren(...[['premium','Premium'],['affordable','Affordable']].map(([v,t])=>el('button',{type:'button',role:'radio','aria-checked':String(type===v),class:'segbtn'+(type===v?' on':''),text:t,onclick:()=>{if(type===v)return;type=v;drawType();lines.forEach(fillLine)}})));
+  drawType();
+  const lpr=el('div',{class:'f',style:'grid-column:1/-1'},'Products',linesBox,addBtn,
+    el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-top:4px'},el('span',{text:'Total amount'}),totalEl));
   const [nt,lnt]=f('o-nt','Note (optional)',{type:'text',value:o.note||''});
   const [on,lon]=f('o-no','Order No. (empty = automatic)',{type:'text',value:o.orderNo||'',autocomplete:'off',style:'text-transform:uppercase'});
   const dp=el('input',{id:'o-dp',type:'checkbox'});dp.checked=o.dispatched==='TRUE'||o.dispatched===true;
@@ -494,17 +525,20 @@ function orderForm(o,onSave,extra){
     if(d.length===c[0].length+c[2]&&d.startsWith(c[0]))d=d.slice(c[0].length);
     if(d.length!==c[2])return null;return c[0]==='91'?d:c[0]+d};
   btn.onclick=async()=>{
-    const data={...o,orderNo:on.value.trim().toUpperCase(),dispatched:dp.checked,customer:nm.value.trim(),phone:fullPhone(),district:di.value.trim().toUpperCase(),pincode:pc.value.replace(/\D/g,''),product:pr.value==='__other'?pkey(other.value):pr.value,qty:Number(qt.value)||1,amount:Number(am.value)||0,type,note:nt.value.trim()};
+    const items=lines.map(r=>({product:r.pr.value==='__other'?pkey(r.other.value):r.pr.value,qty:Math.max(1,Number(r.qt.value)||1),amount:Number(r.am.value)||0}));
+    if(!items.length){toast('Add at least one product.');return}
+    if(items.some(i=>!i.product)){toast('Choose the product in every line (or remove the empty one).');return}
+    const data={...o,orderNo:on.value.trim().toUpperCase(),dispatched:dp.checked,customer:nm.value.trim(),phone:fullPhone(),district:di.value.trim().toUpperCase(),pincode:pc.value.replace(/\D/g,''),
+      product:items.map(i=>i.product).join(' + '),qty:items.reduce((t,i)=>t+i.qty,0),amount:items.reduce((t,i)=>t+i.amount,0),items:items.length>1?items:[],type,note:nt.value.trim()};
     if(!data.customer&&!data.phone){toast('Enter the customer name or phone.');return}
     if(data.phone===null){const c=CC.find(c=>c[0]===ccs.value);toast('Phone number needs '+c[2]+' digits for '+c[1].split(' ')[1]+'.');return}
     if(data.pincode&&data.pincode.length!==6){toast('Pincode needs 6 digits.');return}
-    if(!data.product){toast('Choose the product.');return}
     btn.disabled=true;btn.textContent='Saving…';
     try{await onSave(data)}catch(e){toast('Could not save: '+e.message)}finally{btn.disabled=false;btn.textContent=o.id?'Save changes':'Save order'}
   };
   return el('div',{class:'panel'},el('h3',{text:o.id?'Edit order '+(o.orderNo||''):'New order'}),
     el('div',{class:'f'},'Type',tyBox),
-    el('div',{class:'form2'},lpr,lqt,lam,lon,lnm,lph,ldi,lpc),lnt,ldp,btn);
+    el('div',{class:'form2'},lpr,lon,lnm,lph,ldi,lpc),lnt,ldp,btn);
 }
 
 /* ---------- daily work (media / production) ---------- */
@@ -683,7 +717,7 @@ function rpBuild(D){
   const sum={orders:D.orders.length,amount:D.orders.reduce((a,o)=>a+amt(o),0),premium:D.orders.filter(isPrem).length,affordable:D.orders.filter(o=>!isPrem(o)).length,
     leads:D.sales.reduce((a,r)=>a+(+r.leads||0),0),noAmt:D.orders.filter(o=>!amt(o)).length};
   const sales=all.filter(s=>s.sales||D.orders.some(o=>o.staffId===s.id)).map(s=>{const os=D.orders.filter(o=>o.staffId===s.id);
-    const pp={};os.forEach(o=>{const c=prodCode(o)||'NOT WRITTEN';const r=pp[c]=pp[c]||{c,q:0,amt:0};r.q+=(+o.qty||1);r.amt+=amt(o)});
+    const pp={};orderLines(os).forEach(o=>{const c=prodCode(o)||'NOT WRITTEN';const r=pp[c]=pp[c]||{c,q:0,amt:0};r.q+=(+o.qty||1);r.amt+=amt(o)});
     return{s,os:os.slice().sort((a,b)=>(a.date+(a.createdAt||'')).localeCompare(b.date+(b.createdAt||''))),prods:Object.values(pp).sort((a,b)=>b.q-a.q),n:os.length,p:os.filter(isPrem).length,a:os.filter(o=>!isPrem(o)).length,amt:os.reduce((x,o)=>x+amt(o),0),leads:D.sales.filter(r=>r.staffId===s.id).reduce((a,r)=>a+(+r.leads||0),0)}})
     .filter(r=>r.n||r.leads||r.s.active!==false);
   /* days a person came (IN or WFH) but saved no work — so you can see who skipped filling */
@@ -698,7 +732,7 @@ function rpBuild(D){
       return{t,total:t.kind==='text'?(notes.length?(D.days.length>1?notes.length+' day'+(notes.length>1?'s':''):'✓'):''):workTotal(t,ws),parts,notes}});
     const missing=workDays.filter(ds=>{const a=D.att.find(r=>r.staffId===s.id&&r.date===ds);return a&&(a.in||a.status==='wfh')&&a.status!=='leave'&&!dates.includes(ds)});
     return{s,list,dates,mine,totals,missing}}).filter(r=>r.s.active!==false||r.mine.length);
-  const pg={};D.orders.forEach(o=>{const c=prodCode(o);if(!c)return;const r=pg[c]=pg[c]||{c,p:0,a:0,q:0,amt:0};const q=+o.qty||1;isPrem(o)?r.p+=q:r.a+=q;r.q+=q;r.amt+=amt(o)});
+  const pg={};orderLines(D.orders).forEach(o=>{const c=prodCode(o);if(!c)return;const r=pg[c]=pg[c]||{c,p:0,a:0,q:0,amt:0};const q=+o.qty||1;isPrem(o)?r.p+=q:r.a+=q;r.q+=q;r.amt+=amt(o)});
   const products=Object.values(pg).sort((a,b)=>b.q-a.q);
   const att=all.filter(s=>s.active!==false||D.att.some(r=>r.staffId===s.id)).map(s=>{const l=D.att.filter(r=>r.staffId===s.id);
     return{s,present:l.filter(r=>r.in&&r.status!=='leave'&&r.status!=='wfh').length,wfh:l.filter(r=>r.status==='wfh').length,leave:l.filter(r=>r.status==='leave').length,
@@ -1018,8 +1052,8 @@ function viewDashboard(){
     D.days.length>1&&Object.keys(P.pDay).length&&!D.byMonth?el('div',{class:'scroll chartscroll'},colChart(D.days.map(ds=>({label:String(+ds.slice(8)),p:P.pDay[ds]||0,a:0,sun:new Date(ds+'T12:00:00').getDay()===0,tip:dm(ds)+': '+(P.pDay[ds]||0)+' printed'})),true)):null,
     P.reprints.length?el('details',{},el('summary',{text:'Reprint order numbers ('+P.reprints.length+')'}),el('p',{class:'hint',text:P.reprints.map(r=>dm(r.date)+' '+r.no).join(' · ')})):null,
     P.remarks.length?el('details',{},el('summary',{text:'Printing remarks ('+P.remarks.length+')'}),el('p',{class:'hint',text:P.remarks.map(r=>dm(r.date)+': '+r.value).join(' · ')})):null);
-  const cnt=key=>{const g={};D.os.forEach(o=>{const k=key(o);if(k)g[k]=(g[k]||0)+(+o.qty||1)});return Object.entries(g).sort((a,b)=>b[1]-a[1]).slice(0,8)};
-  const prodP=el('div',{class:'panel'},el('h3',{text:'Top products sold'}),hBars(cnt(o=>{const c=prodCode(o);return c?(CODE_NAMES[c]||c):''}),false));
+  const cnt=(key,src)=>{const g={};(src||D.os).forEach(o=>{const k=key(o);if(k)g[k]=(g[k]||0)+(+o.qty||1)});return Object.entries(g).sort((a,b)=>b[1]-a[1]).slice(0,8)};
+  const prodP=el('div',{class:'panel'},el('h3',{text:'Top products sold'}),hBars(cnt(o=>{const c=prodCode(o);return c?(CODE_NAMES[c]||c):''},orderLines(D.os)),false));
   const distP=el('div',{class:'panel'},el('h3',{text:'Top districts'}),hBars(cnt(o=>String(o.district||'').trim().toUpperCase()),false));
   const ph={};D.os.forEach(o=>{const k=String(o.phone||'').replace(/\D/g,'').slice(-10);if(k.length>=10)(ph[k]=ph[k]||[]).push(o)});
   const rep=Object.values(ph).filter(l=>l.length>1);
@@ -1074,7 +1108,7 @@ function dashXlsx(D){
 
 /* ---------- admin: product list ---------- */
 function viewProducts(){
-  const cnt={};adminOrders.forEach(o=>{const k=o.type+'|'+pkey(o.product);cnt[k]=(cnt[k]||0)+1});
+  const cnt={};orderLines(adminOrders).forEach(o=>{const k=o.type+'|'+pkey(o.product);cnt[k]=(cnt[k]||0)+1});
   const block=(type,title)=>{const list=products.filter(p=>p.type===type);
     return el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:title+' ('+list.length+')'}),el('button',{class:'btn',type:'button',text:'+ Add '+title.toLowerCase()+' product',onclick:()=>editProduct({type})})),
       list.length?el('div',{},...list.map(p=>el('div',{class:'staffrow'},
@@ -1181,7 +1215,7 @@ function prodCode(o){const p=pkey(o.product),a=o.type==='affordable'?'A':'P';
   if(/PANT/.test(p))return a+'PR';if(/HALF/.test(p))return a+'HR';if(/FULL/.test(p))return a+'FR';return p}
 const CODE_NAMES={PHR:'PREMIUM HALF ROMBER',PFR:'PREMIUM FULL ROMBER',PPR:'PREMIUM PANT ROMBER',AHR:'AFFORDABLE HALF ROMBER',AFR:'AFFORDABLE FULL ROMBER',APR:'AFFORDABLE PANT ROMBER'};
 function productReport(src,m,showPrinted){
-  const g={};src.forEach(o=>{const c=prodCode(o);if(!c)return;const r=g[c]=g[c]||{c,n:0,q:0,a:0,p:0,af:0};r.n++;r.q+=(+o.qty||1);r.a+=(+o.amount||0);o.type==='affordable'?r.af+=(+o.qty||1):r.p+=(+o.qty||1)});
+  const g={};orderLines(src).forEach(o=>{const c=prodCode(o);if(!c)return;const r=g[c]=g[c]||{c,n:0,q:0,a:0,p:0,af:0};r.n++;r.q+=(+o.qty||1);r.a+=(+o.amount||0);o.type==='affordable'?r.af+=(+o.qty||1):r.p+=(+o.qty||1)});
   const printed={};if(showPrinted)adminWork.filter(w=>w.taskId==='printed-items').forEach(w=>Object.entries(colParse(w.value)).forEach(([c,q])=>printed[c]=(printed[c]||0)+(+q||0)));
   Object.keys(printed).forEach(c=>{g[c]=g[c]||{c,n:0,q:0,a:0,p:0,af:0}});
   const order=['PHR','PFR','PPR','AHR','AFR','APR','T SHIRT','TURKEY','CAP'];
@@ -1200,14 +1234,14 @@ function productReport(src,m,showPrinted){
 function viewOrders(){
   const m=adminMonth, byId=Object.fromEntries(staff.map(s=>[s.id,s.name]));
   const base=orderScope==='all'?(allOrdersCache||[]):adminOrders;
-  const src=base.filter(o=>(!of.staff||o.staffId===of.staff)&&(!of.type||o.type===of.type)&&(!of.district||o.district===of.district)&&(!of.product||pkey(o.product)===of.product)&&(!of.sent||(of.sent==='yes')===(o.dispatched==='TRUE'))&&(!of.from||o.date>=of.from)&&(!of.to||o.date<=of.to));
+  const src=base.filter(o=>(!of.staff||o.staffId===of.staff)&&(!of.type||o.type===of.type)&&(!of.district||o.district===of.district)&&(!of.product||linesOf(o).some(l=>pkey(l.product)===of.product))&&(!of.sent||(of.sent==='yes')===(o.dispatched==='TRUE'))&&(!of.from||o.date>=of.from)&&(!of.to||o.date<=of.to));
   if(orderScope==='all'&&!allOrdersCache){call('allOrders',{adminPin}).then(j=>{allOrdersCache=j.orders;renderAdmin()}).catch(e=>toast(e.message));return[el('div',{class:'empty',text:'Loading all orders…'})]}
   const amt=o=>+o.amount||0, qty=o=>+o.qty||1;
-  const group=(key)=>{const g={};src.forEach(o=>{const k=(key(o)||'—');g[k]=g[k]||{k,n:0,q:0,a:0};g[k].n++;g[k].q+=qty(o);g[k].a+=amt(o)});return Object.values(g).sort((a,b)=>b.n-a.n||b.a-a.a)};
+  const group=(key,from)=>{const g={};(from||src).forEach(o=>{const k=(key(o)||'—');g[k]=g[k]||{k,n:0,q:0,a:0};g[k].n++;g[k].q+=qty(o);g[k].a+=amt(o)});return Object.values(g).sort((a,b)=>b.n-a.n||b.a-a.a)};
   const top=(title,rows,label)=>el('div',{class:'panel'},el('h3',{text:title}),rows.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},el('th',{text:label}),el('th',{text:'Orders'}),el('th',{text:'Qty'}),el('th',{text:'Amount'}))),
     el('tbody',{},...rows.slice(0,10).map(r=>el('tr',{},el('th',{text:r.k}),el('td',{class:'mono',text:String(r.n)}),el('td',{class:'mono',text:String(r.q)}),el('td',{class:'mono',text:r.a?rs(r.a):'—'})))))):el('div',{class:'empty',text:'No orders.'}));
   const total=src.reduce((t,o)=>t+amt(o),0), withAmt=src.filter(o=>amt(o)).length;
-  const custs={};src.forEach(o=>{const k=o.phone||o.customer;if(!k)return;const c=custs[k]=custs[k]||{name:'',phone:o.phone,n:0,a:0,prods:new Set(),dist:o.district};c.n++;c.a+=amt(o);if(o.customer)c.name=o.customer;if(o.product)c.prods.add(o.product)});
+  const custs={};src.forEach(o=>{const k=o.phone||o.customer;if(!k)return;const c=custs[k]=custs[k]||{name:'',phone:o.phone,n:0,a:0,prods:new Set(),dist:o.district};c.n++;c.a+=amt(o);if(o.customer)c.name=o.customer;linesOf(o).forEach(l=>{if(l.product)c.prods.add(pkey(l.product))})});
   const repeat=Object.values(custs).filter(c=>c.n>1).sort((a,b)=>b.n-a.n||b.a-a.a);
   const scopeSel=el('select',{id:'oscope','aria-label':'Report period',onchange:e=>{orderScope=e.target.value;renderAdmin()}},el('option',{value:'month',text:'Selected month',selected:orderScope==='month'}),el('option',{value:'all',text:'All time',selected:orderScope==='all'}));
   const uniq=k=>[...new Set(base.map(o=>o[k]).filter(Boolean))].sort();
@@ -1216,7 +1250,7 @@ function viewOrders(){
   const active=Object.values(of).some(Boolean);
   const filters=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Filter sales'}),active?el('button',{class:'btn',type:'button',text:'Clear filters',onclick:()=>{of={staff:'',type:'',district:'',product:'',sent:'',from:'',to:''};renderAdmin()}}):null),
     el('div',{class:'form2'},fsel('staff','Staff',salesStaff().concat(staff.filter(s=>!s.sales&&base.some(o=>o.staffId===s.id))).map(s=>[s.id,s.name])),fsel('type','Type',[['premium','Premium'],['affordable','Affordable']]),
-      fsel('district','District',uniq('district').map(v=>[v,v])),fsel('product','Product',[...new Set(base.map(o=>pkey(o.product)).filter(Boolean))].sort().map(v=>[v,v])),fsel('sent','Dispatched',[['yes','Sent'],['no','Not sent']]),fdate('from','From date'),fdate('to','To date')));
+      fsel('district','District',uniq('district').map(v=>[v,v])),fsel('product','Product',[...new Set(orderLines(base).map(o=>pkey(o.product)).filter(Boolean))].sort().map(v=>[v,v])),fsel('sent','Dispatched',[['yes','Sent'],['no','Not sent']]),fdate('from','From date'),fdate('to','To date')));
   const summary=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Order report'+(active?' (filtered)':'')}),el('div',{class:'row'},scopeSel,el('button',{class:'btn primary',type:'button',text:'+ Add order',onclick:()=>adminOrderSheet(null)}))),
     el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(src.length)}),el('span',{text:'Orders'})),el('div',{},el('b',{class:'mono',text:rs(total)}),el('span',{text:'Sales'})),
       el('div',{},el('b',{class:'mono',text:String(src.filter(o=>o.type==='premium').length)}),el('span',{text:'Premium'})),el('div',{},el('b',{class:'mono',text:String(src.filter(o=>o.type==='affordable').length)}),el('span',{text:'Affordable'})),
@@ -1233,7 +1267,7 @@ function viewOrders(){
       return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{},cb),
         el('td',{},el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>adminOrderSheet(o)})))})))),
     rows.length>300?el('p',{class:'hint',text:'Showing the newest 300. Use search to find older ones.'}):null);
-  return[filters,summary,productReport(src,m,orderScope==='month'),el('div',{class:'split'},top('Best products',group(o=>o.product?pkey(o.product)+(o.type==='affordable'?' (A)':' (P)'):''),'Product'),top('Top districts',group(o=>o.district),'District')),el('div',{class:'split'},top('Top pincodes',group(o=>o.pincode),'Pincode'),top('By staff',group(o=>(staff.find(s=>s.id===o.staffId)||{}).name||o.staffId),'Staff')),rep,list];
+  return[filters,summary,productReport(src,m,orderScope==='month'),el('div',{class:'split'},top('Best products',group(o=>o.product?pkey(o.product)+(o.type==='affordable'?' (A)':' (P)'):'',orderLines(src)),'Product'),top('Top districts',group(o=>o.district),'District')),el('div',{class:'split'},top('Top pincodes',group(o=>o.pincode),'Pincode'),top('By staff',group(o=>(staff.find(s=>s.id===o.staffId)||{}).name||o.staffId),'Staff')),rep,list];
 }
 function adminOrderSheet(o){
   const ss=el('select',{id:'o-st'},...salesStaff().map(s=>el('option',{value:s.id,text:s.name,selected:o?o.staffId===s.id:false})));
