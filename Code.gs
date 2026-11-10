@@ -72,6 +72,7 @@ function setup() {
   // Fida (sales) — added once if missing
   if (!rows_('Staff').some(function (r) { return r.id === 'fida'; }))
     staff.getRange(staff.getLastRow() + 1, 1, 1, 9).setNumberFormat('@').setValues([['fida', 'FIDA', 'Sales', '', '1234', 'TRUE', 'TRUE', '7', 'couplodesign@gmail.com']]);
+  forget_('Staff');
   // fill staff emails the owner gave (only where empty)
   var EMAILS = { VINAYA: 'vinayacouplo@gmail.com', RESHMA: 'reshmacouplo@gmail.com', RAHILA: 'rahilacouplo@gmail.com',
                  JASEERA: 'jaseeracouplo@gmail.com', FIDA: 'couplodesign@gmail.com' };
@@ -104,6 +105,7 @@ function setup() {
   }
   // prices are not used any more
   var pr2 = ss.getSheetByName('Products'); if (pr2.getLastRow() >= 2) pr2.getRange(2, 4, pr2.getLastRow() - 1, 1).clearContent();
+  MEMO_ = {}; // setup wrote straight into the sheets above
   migrate_();
   MailApp.getRemainingDailyQuota(); // asks for e-mail permission once, so slips can be e-mailed
   scheduleReport_();
@@ -176,24 +178,51 @@ function str_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, TZ, v.getFullYear() < 1900 ? 'HH:mm' : 'yyyy-MM-dd');
   return v == null ? '' : String(v);
 }
+/* SPEED: each sheet is read at most once per request (MEMO_), and writes keep that copy up to date,
+   so a request never reads the same sheet again and again. */
+var MEMO_ = {};
+function forget_(name) { delete MEMO_[name]; }
+function rowObj_(cols, r, row) { var o = { _row: row }; cols.forEach(function (c, j) { o[c] = str_(r[j]); }); return o; }
 function rows_(name) {
+  if (MEMO_[name]) return MEMO_[name];
+  var sh = sh_(name), cols = SHEETS[name], n = sh.getLastRow();
+  if (n < 2) return (MEMO_[name] = []);
+  return (MEMO_[name] = sh.getRange(2, 1, n - 1, cols.length).getValues().map(function (r, i) { return rowObj_(cols, r, i + 2); }));
+}
+/* only the last `count` rows — enough for "today" on the check-in screen without reading the whole year */
+function rowsTail_(name, count) {
+  if (MEMO_[name]) return MEMO_[name].slice(-count);
   var sh = sh_(name), cols = SHEETS[name], n = sh.getLastRow();
   if (n < 2) return [];
-  return sh.getRange(2, 1, n - 1, cols.length).getValues().map(function (r, i) {
-    var o = { _row: i + 2 }; cols.forEach(function (c, j) { o[c] = str_(r[j]); }); return o;
-  });
+  var from = Math.max(2, n - count + 1);
+  return sh.getRange(from, 1, n - from + 1, cols.length).getValues().map(function (r, i) { return rowObj_(cols, r, from + i); });
+}
+/* finds one row by its key (first column) without reading the whole sheet */
+function findRow_(name, key) {
+  var cols = SHEETS[name], list = MEMO_[name], i;
+  if (list) { for (i = 0; i < list.length; i++) if (list[i][cols[0]] === key) return list[i]; return null; }
+  var sh = sh_(name), n = sh.getLastRow();
+  if (n < 2 || key === '' || key == null) return null;
+  var cells = sh.getRange(2, 1, n - 1, 1).createTextFinder(String(key)).matchEntireCell(true).matchCase(true).findAll();
+  for (i = 0; i < cells.length; i++) {
+    var row = cells[i].getRow(), o = rowObj_(cols, sh.getRange(row, 1, 1, cols.length).getValues()[0], row);
+    if (o[cols[0]] === String(key)) return o;
+  }
+  return null;
 }
 function upsert_(name, obj) {
-  var sh = sh_(name), cols = SHEETS[name], key = obj[cols[0]];
-  var found = rows_(name).filter(function (r) { return r[cols[0]] === key; })[0];
+  var sh = sh_(name), cols = SHEETS[name], key = String(obj[cols[0]]);
+  var found = findRow_(name, key);
   var vals = [cols.map(function (c) { return obj[c] == null ? '' : String(obj[c]); })];
-  if (found) sh.getRange(found._row, 1, 1, cols.length).setValues(vals);
-  else { var r = sh.getLastRow() + 1; sh.getRange(r, 1, 1, cols.length).setNumberFormat('@').setValues(vals); }
+  var row = found ? found._row : sh.getLastRow() + 1;
+  if (found) sh.getRange(row, 1, 1, cols.length).setValues(vals);
+  else sh.getRange(row, 1, 1, cols.length).setNumberFormat('@').setValues(vals);
+  var list = MEMO_[name];
+  if (list) { var o = rowObj_(cols, vals[0], row), at = found ? list.indexOf(found) : -1; if (at >= 0) list[at] = o; else list.push(o); }
 }
 function remove_(name, key) {
-  var sh = sh_(name), col = SHEETS[name][0];
-  var found = rows_(name).filter(function (r) { return r[col] === key; })[0];
-  if (found) sh.deleteRow(found._row);
+  var found = findRow_(name, key);
+  if (found) { sh_(name).deleteRow(found._row); forget_(name); }
 }
 function holidays_() { try { return JSON.parse(setting_('holidays') || '{}') || {}; } catch (e) { return {}; } }
 function setting_(k) { var r = rows_('Settings').filter(function (x) { return x.key === k; })[0]; return r ? r.value : ''; }
@@ -302,6 +331,7 @@ function deleteWhere_(name, fn) {
   if (!sh_(name)) return 0;
   var sh = sh_(name), hit = rows_(name).filter(fn).map(function (r) { return r._row; }).sort(function (a, b) { return b - a; });
   hit.forEach(function (row) { sh.deleteRow(row); });
+  forget_(name);
   return hit.length;
 }
 /* one-time change (Oct 2026): Production split into Printing + Add-ons, Hiba becomes Regular, Hiba's work goes to Rahila */
@@ -317,6 +347,7 @@ function migrate_() {
     if (t.category === 'hiba') tk.getRange(t._row, 2).setValue('rahila');
     else if (t.category === 'jaseera') tk.getRange(t._row, 2).setValue('Printing');
   });
+  forget_('Staff'); forget_('Tasks');
   upsert_('Settings', { key: 'catVersion', value: '1' });
 }
 function now_() { var d = new Date(); return { date: Utilities.formatDate(d, TZ, 'yyyy-MM-dd'), time: Utilities.formatDate(d, TZ, 'HH:mm') }; }
@@ -325,15 +356,18 @@ function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).set
 /* ---------- API ---------- */
 function doGet() { return out_({ ok: true, app: 'couplo-attendance' }); }
 
+/* actions that only read: they never wait in the queue, so the check-in screen refresh
+   and reports don't slow down people who are saving */
+var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1 };
 function doPost(e) {
-  var lock = LockService.getScriptLock();
+  var lock = null;
   try {
-    lock.waitLock(20000);
     var b = JSON.parse(e.postData.contents || '{}');
+    if (!READ_ONLY[b.action]) { lock = LockService.getScriptLock(); lock.waitLock(25000); }
     return out_(handle_(b));
   } catch (err) {
     return out_({ ok: false, error: String(err && err.message || err) });
-  } finally { try { lock.releaseLock(); } catch (x) {} }
+  } finally { try { if (lock) lock.releaseLock(); } catch (x) {} }
 }
 
 function handle_(b) {
@@ -342,7 +376,7 @@ function handle_(b) {
   switch (b.action) {
     case 'kiosk': {
       var att = {};
-      rows_('Attendance').forEach(function (r) { if (r.date === n.date) att[r.staffId] = r; });
+      rowsTail_('Attendance', 400).forEach(function (r) { if (r.date === n.date) att[r.staffId] = r; });
       return { ok: true, today: n.date, time: n.time, lateAfter: setting_('lateAfter') || '09:40', minHours: Number(setting_('minHours') || 8),
         staff: staffList_().filter(function (s) { return s.active; })
           .map(function (s) { return { id: s.id, name: s.name, role: s.role, order: s.order, hasPin: !!s.pin }; }),
@@ -353,7 +387,7 @@ function handle_(b) {
       if (!s) return { ok: false, error: 'Staff not found' };
       if (s.pin && String(s.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
       var key = n.date + '__' + s.id;
-      var rec = rows_('Attendance').filter(function (r) { return r.key === key; })[0];
+      var rec = findRow_('Attendance', key);
       if (rec && (rec.status === 'leave' || rec.status === 'wfh')) return { ok: false, error: 'Today is marked as ' + rec.status };
       var kind, reason = String(b.reason || '').trim();
       var toMin = function (t) { var p = String(t).split(':'); return Number(p[0]) * 60 + Number(p[1]); };
@@ -377,7 +411,7 @@ function handle_(b) {
       if (b.action === 'setMyPin' && q.pin) return { ok: false, error: 'PIN already set. Ask HR to reset it.' };
       if (b.action === 'changeMyPin' && String(q.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
       var row = rows_('Staff').filter(function (r) { return r.id === q.id; })[0];
-      sh_('Staff').getRange(row._row, 5).setNumberFormat('@').setValue(String(b.newPin));
+      sh_('Staff').getRange(row._row, 5).setNumberFormat('@').setValue(String(b.newPin)); forget_('Staff');
       return { ok: true, staffId: q.id, name: q.name, sales: q.sales };
     }
     case 'portalLogin': case 'myData': {
@@ -585,11 +619,12 @@ function handle_(b) {
 var LEAD_CRM_ID = '1eCcse_bsNzvCC0fNAmdKHaH5pZ_I3mkfNAqfW0_ev0k';
 function leadName_(s) { return String(s || '').trim().toLowerCase().replace(/[^a-z]/g, '').replace(/(.)\1+$/, '$1'); } // "reshmaa" → "reshma"
 function syncLeadvyneLeads() {
+  /* the big CRM sheet is read BEFORE taking the lock, so check-ins don't wait for it */
+  var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
   var lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
     var from = setting_('leadSyncFrom') || '2026-09-01';
-    var sh = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1');
-    var data = sh.getDataRange().getValues(), head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
+    var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
     var cDate = head.indexOf('date'), cWho = head.indexOf('assigned to');
     if (cDate < 0 || cWho < 0) throw new Error('CRM sheet: Date / Assigned To column not found');
     var byName = {}; staffList_().forEach(function (s) { byName[leadName_(s.name)] = s.id; byName[leadName_(s.id.split('-')[0])] = s.id; });
