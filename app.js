@@ -9,7 +9,7 @@ const hm=d=>pad2(d.getHours())+':'+pad2(d.getMinutes());
 const toMin=t=>{if(!t)return null;const[a,b]=String(t).split(':').map(Number);return a*60+b};
 /* from 14 Nov 2026: working hours start at 9:30 AM — coming in earlier still counts from 9:30 (hours, half day, overtime).
    Days before that keep their real IN time, so old records stay exactly as they were. */
-const WORK_START='09:30',RULE_FROM='2026-11-14';const inMin=(t,ds)=>{const m=toMin(t);return m==null?null:(ds||'')>=RULE_FROM?Math.max(m,toMin(WORK_START)):m};
+const WORK_START='09:30',RULE_FROM='2026-11-14',OT_FROM='2026-11-01'; /* overtime counted from 1 Nov 2026 */const inMin=(t,ds)=>{const m=toMin(t);return m==null?null:(ds||'')>=RULE_FROM?Math.max(m,toMin(WORK_START)):m};
 const fmtMin=m=>m==null?'':Math.floor(m/60)+'h '+pad2(m%60)+'m';
 const t12=t=>{if(!t)return '';let[h,m]=String(t).split(':').map(Number);const ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+pad2(m)+' '+ap};
 const rs=n=>'₹'+Math.round(n||0).toLocaleString('en-IN');
@@ -207,7 +207,7 @@ const payStaff=()=>staff.filter(s=>s.active!==false||s.sales).sort(byOrder);
 function ordersOn(ds,sid){const x=adminSales[ds+'__'+sid];return x?x.premium+x.affordable:0}
 /* overtime (admin only): time worked beyond the office minimum hours (Settings → minHours, default 8). Under 15 min is ignored. */
 let adminMinH=8;
-function otMin(r){if(!r||r.status==='leave'||r.status==='wfh'||(r.date||'')<RULE_FROM)return 0;const a=inMin(r.in,r.date),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-adminMinH*60;return x>=15?x:0}
+function otMin(r){if(!r||r.status==='leave'||r.status==='wfh'||(r.date||'')<OT_FROM)return 0;const a=inMin(r.in,r.date),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-adminMinH*60;return x>=15?x:0}
 function cellInfo(r){
   if(!r)return null;
   if(r.status==='leave')return{txt:'LEAVE',cls:'leave'};
