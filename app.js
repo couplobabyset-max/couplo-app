@@ -283,7 +283,7 @@ function viewRegister(){
   const tfoot=el('tfoot',{},el('tr',{},el('th',{text:'OT total'}),...otTot.map(v=>el('td',{class:'mono',style:v?'color:#0a7a3d;font-weight:700':'',text:v?fmtMin(v):'—'}))));
   const reg=el('div',{class:'panel'},
     el('div',{class:'toolbar'},el('h3',{text:'Monthly register'}),el('button',{class:'btn primary',type:'button',text:'Download Excel',onclick:()=>exportXlsx(m)})),
-    el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped. From 14 Nov: hours count from 9:30 AM even if someone comes earlier. Green OT = overtime: time worked beyond '+adminMinH+' hours (only admin sees this).'}),
+    el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped. From 14 Nov: hours count from 9:30 AM even if someone comes earlier. Green OT = overtime: time worked beyond '+adminMinH+' hours.'}),
     list.length?el('div',{class:'scroll'},el('table',{},thead,tbody,tfoot)):el('div',{class:'empty',text:'Add staff in the Staff tab to see the register.'}));
   return[todayPanel,reg];
 }
@@ -348,7 +348,7 @@ function viewSalary(){
       el('button',{class:'btn',type:'button',text:'Salary Excel',onclick:()=>exportSalary(m,calc)}),el('button',{class:'btn',type:'button',text:'Salary slips (PDF)',onclick:()=>exportSlips(m,calc)}),el('button',{class:'btn primary',type:'button',text:'Email slips',onclick:()=>emailSlips(m,calc)}))),
     ...warn.map(w=>el('div',{class:'banner',text:w})),
     el('div',{class:'scroll'},tbl),
-    el('p',{class:'hint',text:'Rules: per day = salary ÷ days in the month. Sundays are paid, but a Sunday with leave or absence on both the Saturday before and the Monday after is cut. 6 hours or more is a full day, less is a half day. A sales person\'s work-from-home day is paid only if orders were entered for that day in Sales. OT hours = time worked beyond '+adminMinH+' hours a day; shown for your information only, it does not change the pay and is not on the salary slip.'}))];
+    el('p',{class:'hint',text:'Rules: per day = salary ÷ days in the month. Sundays are paid, but a Sunday with leave or absence on both the Saturday before and the Monday after is cut. 6 hours or more is a full day, less is a half day. A sales person\'s work-from-home day is paid only if orders were entered for that day in Sales. OT hours = time worked beyond '+adminMinH+' hours a day; shown for information, it does not change the pay.'}))];
 }
 function editPay(s,m){
   const p=adminPay[s.id]||{};
@@ -1215,19 +1215,20 @@ function changeMyPin(){let first=null;
   ask()}
 function myAttendance(d){
   const recs={};d.att.forEach(r=>recs[r.date]=r);
+  if(Number(d.minHours)>0)adminMinH=Number(d.minHours);
   const dates=monthDates(d.month).filter(x=>ymd(x)<=d.today);
-  let full=0,half=0,leave=0,wfh=0,late=0,early=0,absent=0,mins=0;
-  const rows=dates.slice().reverse().map(x=>{const ds=ymd(x),sun=x.getDay()===0,r=recs[ds];let st,cls='',hrs='';
+  let full=0,half=0,leave=0,wfh=0,late=0,early=0,absent=0,mins=0,otT=0;
+  const rows=dates.slice().reverse().map(x=>{const ds=ymd(x),sun=x.getDay()===0,r=recs[ds];let st,cls='',hrs='',ot=0;
     if(!r){if(sun){st='Sunday';cls='c-hrs'}else if(ds===d.today){st='Not checked in yet';cls='c-hrs'}else{st='Absent';cls='flag';absent++}}
     else if(r.status==='leave'){st='Leave';leave++}
     else if(r.status==='wfh'){st='Work from home';wfh++}
-    else{const a=inMin(r.in,r.date),b=toMin(r.out);st=t12(r.in)+' – '+(r.out?t12(r.out):'no OUT');if(a!=null&&b!=null){const h=b-a;mins+=h;hrs=fmtMin(h);if(h>=360)full++;else half++}else if(ds!==d.today){cls='flag'}else full+=0;if(r.lateReason)late++;if(r.earlyReason)early++}
-    return el('tr',{class:sun?'sun':''},el('th',{},el('span',{class:'mono',text:pad2(x.getDate())}),' '+DAYS[x.getDay()].slice(0,3)),el('td',{class:'mono '+cls,text:st}),el('td',{class:'mono c-hrs',text:hrs}),
+    else{const a=inMin(r.in,r.date),b=toMin(r.out);st=t12(r.in)+' – '+(r.out?t12(r.out):'no OUT');if(a!=null&&b!=null){const h=b-a;mins+=h;hrs=fmtMin(h);if(h>=360)full++;else half++;ot=otMin(r);otT+=ot}else if(ds!==d.today){cls='flag'}else full+=0;if(r.lateReason)late++;if(r.earlyReason)early++}
+    return el('tr',{class:sun?'sun':''},el('th',{},el('span',{class:'mono',text:pad2(x.getDate())}),' '+DAYS[x.getDay()].slice(0,3)),el('td',{class:'mono '+cls,text:st}),el('td',{class:'mono c-hrs',text:hrs}),el('td',{class:'mono',style:ot?'color:#0a7a3d;font-weight:600':'',text:ot?fmtMin(ot):''}),
       el('td',{class:'c-hrs',text:r?[r.lateReason?'Late: '+r.lateReason:'',r.earlyReason?'Early: '+r.earlyReason:'',r.note||''].filter(Boolean).join(' · '):''}))});
   const stat=(n,l)=>el('div',{},el('b',{class:'mono',text:String(n)}),el('span',{text:l}));
-  return[el('div',{class:'panel'},el('h3',{text:'Summary'}),el('div',{class:'stats'},stat(full,'Full days'),stat(half,'Half days'),stat(leave,'Leave'),stat(absent,'Absent'),stat(wfh,'WFH'),stat(late,'Late'),stat(early,'Left early'),stat(fmtMin(mins),'Total hours')),
-      el('p',{class:'hint',text:'Office rule: in by '+t12(d.lateAfter)+', at least '+d.minHours+' hours a day. From 14 Nov, hours count from 9:30 AM even if you come earlier. Under 6 hours counts as a half day. If something is wrong, tell HR.'})),
-    el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','In – Out','Hours','Reason / note'].map(t=>el('th',{text:t})))),el('tbody',{},...rows))))];
+  return[el('div',{class:'panel'},el('h3',{text:'Summary'}),el('div',{class:'stats'},stat(full,'Full days'),stat(half,'Half days'),stat(leave,'Leave'),stat(absent,'Absent'),stat(wfh,'WFH'),stat(late,'Late'),stat(early,'Left early'),stat(fmtMin(mins),'Total hours'),stat(otT?fmtMin(otT):'0h 00m','Overtime')),
+      el('p',{class:'hint',text:'Office rule: in by '+t12(d.lateAfter)+', at least '+d.minHours+' hours a day. From 14 Nov, hours count from 9:30 AM even if you come earlier. Under 6 hours counts as a half day. Overtime = time worked beyond '+d.minHours+' hours a day. If something is wrong, tell HR.'})),
+    el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','In – Out','Hours','OT','Reason / note'].map(t=>el('th',{text:t})))),el('tbody',{},...rows))))];
 }
 function myOrdersView(edit,d){
   const td=ymd(new Date());const today=myOrders.filter(o=>o.date===td);
