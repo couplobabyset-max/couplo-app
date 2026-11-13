@@ -238,7 +238,7 @@ function calcPay(m,s){
   return{...info,nd,paid,salary,perDay,earned,adv,extra,net:earned+extra-adv,note:p.note||'',future:dates.some(d=>ymd(d)>td)};
 }
 function adminNav(){
-  const views=[['dash','Dashboard'],['reports','Reports'],['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+  const views=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
   return el('nav',{class:'tabs',role:'tablist'},...views.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(adminView===v),text:t,onclick:()=>{adminView=v;renderAdmin()}})));
 }
 function monthPicker(){
@@ -249,6 +249,7 @@ function renderAdmin(){
   if(!adminOpen)return;
   const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
   if(adminView==='dash')parts.push(...viewDashboard());
+  else if(adminView==='arena')parts.push(...viewArena());
   else if(adminView==='reports')parts.push(...viewReports());
   else if(adminView==='register')parts.push(...viewRegister());
   else if(adminView==='orders')parts.push(...viewOrders());
@@ -1183,6 +1184,162 @@ function editProduct(p){
 let me=null;
 try{me=JSON.parse(LS.get('couplo_me')||'null')}catch(e){me=null}
 let portalTab='auto', portalMonth=null, myTasks=[], myWork=[], workDate=null, hrDate=null;
+
+/* ===================== WEEKLY ARENA (Nov 2026) ===================== */
+const SEC_LABEL={Sales:'Sales',Design:'Design',Printing:'Production',Media:'Media',Accounts:'Accounts'};
+const CONCEPTS=['Customer review','Unboxing','Name printing','Offer','How to order','Styling','Behind the scenes','Other'];
+const medal=i=>i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1);
+const ptsTxt=p=>(p>0?'+':'')+p;
+function ring(pct,big,sub,col){const r=34,C=2*Math.PI*r,p=Math.max(0,Math.min(1,pct||0));
+  return svgBox('<svg viewBox="0 0 88 88" width="88" height="88"><circle cx="44" cy="44" r="'+r+'" fill="none" stroke="var(--sunk)" stroke-width="9"/><circle cx="44" cy="44" r="'+r+'" fill="none" stroke="'+(col||'var(--accent)')+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+(C*(1-p)).toFixed(1)+'" transform="rotate(-90 44 44)"/><text x="44" y="46" text-anchor="middle" font-size="17" font-weight="700" fill="var(--ink)">'+big+'</text><text x="44" y="61" text-anchor="middle" font-size="9.5" fill="var(--muted)">'+(sub||'')+'</text></svg>',big+' '+(sub||''))}
+function bar(n,t,col){const p=t?Math.min(100,Math.round(n/t*100)):0;return el('div',{style:'height:10px;background:var(--sunk);border-radius:6px;overflow:hidden;margin:6px 0'},el('div',{style:'height:100%;width:'+p+'%;background:'+(col||'var(--accent)')+';border-radius:6px'}))}
+const wkLabel=w=>dm(w.from)+' – '+dm(w.to);
+function arenaTeam(A){const t=A.team;
+  return el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'🏆 Weekly Arena · '+wkLabel(A.week)})),
+    el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:t.week+' / '+t.weekTarget}),el('span',{text:'Team orders this week'})),el('div',{},el('b',{class:'mono',text:t.month+' / '+t.monthTarget}),el('span',{text:'Team orders this month'})),el('div',{},el('b',{class:'mono',text:String(Math.max(0,t.weekTarget-t.week))}),el('span',{text:'Left for the week'}))),
+    bar(t.week,t.weekTarget,t.week>=t.weekTarget?'var(--ok)':'var(--c-aff)'))}
+function arenaBoardList(A,meId,admin){
+  const open={};
+  const box=el('div',{class:'panel'},el('h3',{text:'Leaderboard · points this week'}));
+  const list=el('div');
+  const draw=()=>list.replaceChildren(...A.board.map((r,i)=>{
+    const mine=r.id===meId, top=A.board[0]&&A.board[0].pts>0?A.board[0].pts:1;
+    const head=el('button',{type:'button',class:'staffrow',style:'width:100%;display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:10px;background:'+(mine?'var(--accent-soft)':'var(--surface)')+';margin-bottom:6px;text-align:left;cursor:pointer;color:var(--ink)',onclick:()=>{open[r.id]=!open[r.id];draw()}},
+      el('span',{style:'font-size:20px;width:30px;text-align:center',text:r.pts>0?medal(i):String(i+1)}),
+      el('div',{style:'flex:1;min-width:0'},el('div',{style:'font-weight:600',text:r.name+(mine?' (you)':'')}),el('div',{class:'hint',style:'margin:0',text:SEC_LABEL[r.section]+(r.section==='Sales'?' · '+r.month+'/'+r.target+' orders this month':'')}),
+        el('div',{style:'height:6px;background:var(--sunk);border-radius:4px;margin-top:4px;overflow:hidden'},el('div',{style:'height:100%;width:'+Math.max(0,Math.round(r.pts/top*100))+'%;background:var(--accent)'}))),
+      el('b',{class:'mono',style:'font-size:18px',text:String(r.pts)}));
+    const lines=(open[r.id]&&(admin||mine||true))?el('div',{style:'margin:-2px 0 10px 40px'},...(r.lines.length?r.lines.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(l=>el('div',{class:'hint',style:'margin:2px 0;display:flex;gap:8px'},el('span',{class:'mono',text:dm(l.date)}),el('span',{style:'flex:1',text:l.why}),el('b',{class:'mono',style:'color:'+(l.pts<0?'#B3261E':'var(--ok)'),text:ptsTxt(l.pts)}))):[el('div',{class:'hint',text:'No points yet this week. Normal work = 0; points come for work above normal.'})])):null;
+    return el('div',{},head,lines)}));
+  draw();box.append(list);return box}
+function arenaMine(A,meId){
+  const r=A.board.find(x=>x.id===meId);if(!r)return el('div',{class:'panel'},el('p',{class:'hint',text:'You are not in the Arena yet. Ask admin to set your section.'}));
+  const rank=A.board.indexOf(r);
+  const kids=[el('div',{style:'display:flex;gap:16px;align-items:center;flex-wrap:wrap'},
+    el('div',{},el('div',{class:'hint',style:'margin:0',text:'My points this week'}),el('div',{style:'font:700 34px var(--f-display)',text:String(r.pts)}),el('div',{class:'hint',style:'margin:0',text:'Rank '+medal(rank)+' of '+A.board.length})),
+    r.section==='Sales'?ring(r.month/r.target,String(r.month),'of '+r.target,r.month>=r.target?'var(--ok)':'var(--accent)'):null,
+    r.section==='Sales'?el('div',{},el('div',{style:'font-weight:600',text:r.left?r.left+' orders left this month':'🔥 Incentive zone: '+r.incentive+' above target'}),el('div',{class:'hint',style:'margin:2px 0',text:r.left?'Need ~'+r.perDay+' orders a day ('+A.team.daysLeft+' working days left)':'Every order now counts for incentive.'}),el('div',{class:'hint',style:'margin:0',text:'This week: '+r.week+' orders'+(r.conv!=null?' · conversion '+r.conv+'%':'')})):null)];
+  return el('div',{class:'panel'},...kids)}
+
+/* ---- staff: media (Rahila) ---- */
+function arenaMedia(d,reload){
+  const td=ymd(new Date());
+  const ds=el('select',{id:'md-d','aria-label':'Date'},...[0,1,2].map(i=>{const x=addDays(td,-i);return el('option',{value:x,text:(i?i===1?'Yesterday':'2 days ago':'Today')+' · '+dm(x)})}));
+  const pr=el('select',{id:'md-p'},el('option',{value:'',text:'— Product —'}),...(products||[]).filter(p=>p.active!==false).map(p=>el('option',{value:p.name,text:p.name})));
+  const cp=el('select',{id:'md-c'},...CONCEPTS.map(c=>el('option',{value:c,text:c})));
+  const tt=el('input',{id:'md-t',type:'text',placeholder:'Short name (optional)',autocomplete:'off'});
+  const save=el('button',{class:'btn primary',type:'button',text:'+ Video done',onclick:async()=>{save.disabled=true;try{await call('mediaAdd',{staffId:me.id,pin:me.pin,date:ds.value,product:pr.value,concept:cp.value,title:tt.value});toast('Saved — waiting for admin approval');reload()}catch(e){toast(e.message);save.disabled=false}}});
+  const today=(d.media||[]).filter(m=>m.date===td);
+  const st={pending:['Pending','chip none'],approved:['Approved','chip in'],reedit:['Re-edit','chip miss']};
+  const rows=(d.media||[]).map(m=>{const li=el('input',{type:'url',placeholder:'Instagram link (after posting)',value:m.igLink||'',style:'flex:1;min-width:0'});
+    return el('div',{style:'border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px'},
+      el('div',{style:'display:flex;justify-content:space-between;gap:8px;align-items:center'},el('div',{},el('b',{text:dm(m.date)+' · '+[m.product,m.concept].filter(Boolean).join(' · ')}),m.title?el('div',{class:'hint',style:'margin:0',text:m.title}):null),el('span',{class:(st[m.status]||st.pending)[1],text:(st[m.status]||st.pending)[0]+(+m.reedits?' · re-edit ×'+m.reedits:'')})),
+      el('div',{style:'display:flex;gap:6px;margin-top:8px'},li,el('button',{class:'btn',type:'button',text:'Save link',onclick:async()=>{try{await call('mediaLink',{staffId:me.id,pin:me.pin,id:m.id,igLink:li.value});toast('Link saved')}catch(e){toast(e.message)}}})))});
+  return[el('div',{class:'panel'},el('h3',{text:'🎬 My videos · today '+today.filter(m=>m.status==='approved').length+' approved / '+today.length+' added (minimum 2)'}),
+      el('div',{class:'form2'},el('label',{class:'f',for:'md-d'},'Date',ds),el('label',{class:'f',for:'md-p'},'Product',pr),el('label',{class:'f',for:'md-c'},'Concept',cp),el('label',{class:'f',for:'md-t'},'Name',tt)),
+      el('p',{class:'hint',text:'Post the video in the WhatsApp group with the same name. Admin marks Approved or Re-edit here. Only approved videos count. After posting a reel or post on Instagram, paste its link. Stories are not needed.'}),save),
+    el('div',{class:'panel'},el('h3',{text:'Last 30 days'}),rows.length?el('div',{},...rows):el('div',{class:'empty',text:'No videos yet.'}))]}
+
+/* ---- staff: design (Hiba) & production (Jaseera) ---- */
+function arenaQueue(d,reload){
+  const out=[], nm=id=>{const s=(d.staffNames||[]).find(x=>x.id===id);return s?s.name:id};
+  const q=(d.queue||[]).slice().sort((a,b)=>a.date.localeCompare(b.date));
+  const rowOf=(o,btn)=>el('tr',{},el('td',{},btn),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{text:(o.customer||'')}),el('td',{text:nm(o.staffId)}));
+  const tbl=(rows,head)=>rows.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...[head,'Date','No.','Product','Customer','Sales'].map(t=>el('th',{text:t})))),el('tbody',{},...rows))):el('div',{class:'empty',text:'Nothing pending 🎉'});
+  if(d.cats.includes('Design')){const todo=q.filter(o=>!o.designDoneAt);
+    out.push(el('div',{class:'panel'},el('h3',{text:'🎨 Design pending · '+todo.length}),el('p',{class:'hint',text:'Tap Design done when the design is handed to printing. Design the same day or next day; late design = −5.'}),
+      tbl(todo.map(o=>rowOf(o,el('button',{class:'btn primary',type:'button',text:'Design done',onclick:async e=>{e.target.disabled=true;try{await call('designDone',{staffId:me.id,pin:me.pin,orderId:o.id});toast(o.orderNo+' sent to printing');reload()}catch(x){toast(x.message);e.target.disabled=false}}}))),'')))}
+  if(d.cats.includes('Printing')){const ready=q.filter(o=>o.designDoneAt),waiting=q.filter(o=>!o.designDoneAt).length;
+    out.push(el('div',{class:'panel'},el('h3',{text:'🖨️ Ready to print / dispatch · '+ready.length}),el('p',{class:'hint',text:waiting+' more orders are still with design. Dispatch on the day the design arrives = +2 each.'}),
+      tbl(ready.map(o=>rowOf(o,el('button',{class:'btn primary',type:'button',text:'Dispatched',onclick:async e=>{e.target.disabled=true;try{await call('dispatchDone',{staffId:me.id,pin:me.pin,orderId:o.id});toast(o.orderNo+' dispatched');reload()}catch(x){toast(x.message);e.target.disabled=false}}}))),'')))}
+  return out}
+function arenaIssueForm(d,reload){
+  const no=el('input',{id:'is-no',type:'text',placeholder:'Order no.',autocomplete:'off'});
+  const kd=el('select',{id:'is-k'},el('option',{value:'reprint',text:'Reprint'}),el('option',{value:'damage',text:'Damaged product'}),el('option',{value:'rework',text:'Rework'}));
+  const bl=el('select',{id:'is-b'},el('option',{value:'',text:'Whose mistake? (admin decides)'}),...(d.staffNames||[]).filter(s=>s.section).map(s=>el('option',{value:s.id,text:s.name+' · '+SEC_LABEL[s.section]})));
+  const nt=el('input',{id:'is-n',type:'text',placeholder:'What went wrong',autocomplete:'off'});
+  const go=el('button',{class:'btn',type:'button',text:'Report',onclick:async()=>{go.disabled=true;try{await call('issueAdd',{staffId:me.id,pin:me.pin,orderNo:no.value,kind:kd.value,blame:bl.value,note:nt.value});toast('Reported — admin will check');reload()}catch(e){toast(e.message);go.disabled=false}}});
+  const list=(d.issues||[]).slice(0,10).map(x=>el('div',{class:'hint',style:'margin:2px 0',text:dm(x.date)+' · '+x.orderNo+' · '+x.kind+' · '+(x.note||'')+' · '+x.status}));
+  return el('div',{class:'panel'},el('h3',{text:'⚠️ Report reprint / damage / rework'}),el('div',{class:'form2'},el('label',{class:'f',for:'is-no'},'Order',no),el('label',{class:'f',for:'is-k'},'Type',kd),el('label',{class:'f',for:'is-b'},'Mistake by',bl),el('label',{class:'f',for:'is-n'},'Note',nt)),go,...list)}
+
+/* ---- staff: accounts (Mashida) ---- */
+function arenaAccounts(d,reload){
+  const td=ymd(new Date()), last=(d.accounts||[]).slice().sort((a,b)=>b.date.localeCompare(a.date));
+  const ds=el('select',{id:'ac-d'},...[0,1,2].map(i=>{const x=addDays(td,-i);return el('option',{value:x,text:(i?i===1?'Yesterday':'2 days ago':'Today')+' · '+dm(x)})}));
+  let banks=[];try{banks=JSON.parse((last[0]||{}).banks||'[]')}catch(e){}if(!banks.length)banks=[{name:'Bank 1',amount:''}];
+  const bankBox=el('div');
+  const drawBanks=()=>bankBox.replaceChildren(...banks.map((b,i)=>el('div',{style:'display:flex;gap:6px;margin-bottom:6px'},el('input',{type:'text',value:b.name,'aria-label':'Bank name',style:'flex:1;min-width:0',oninput:e=>b.name=e.target.value}),el('input',{type:'number',inputmode:'decimal',value:b.amount,placeholder:'Balance ₹','aria-label':'Balance',style:'width:130px',oninput:e=>b.amount=e.target.value}),el('button',{class:'btn',type:'button',text:'✕','aria-label':'Remove bank',onclick:()=>{banks.splice(i,1);drawBanks()}}))),el('button',{class:'btn',type:'button',text:'+ Bank',onclick:()=>{banks.push({name:'',amount:''});drawBanks()}}));
+  const fill=()=>{const r=(d.accounts||[]).find(x=>x.date===ds.value);if(r){try{banks=JSON.parse(r.banks||'[]')}catch(e){}cash.value=r.cash;exp.value=r.expenses;mm.checked=r.mismatch==='TRUE';fx.checked=r.fixed==='TRUE';vd.checked=r.vendors==='TRUE';nt.value=r.note}else{banks.forEach(b=>b.amount='');cash.value='';exp.value='';mm.checked=fx.checked=vd.checked=false;nt.value=''}drawBanks()};
+  const cash=el('input',{id:'ac-c',type:'number',inputmode:'decimal'}),exp=el('input',{id:'ac-e',type:'number',inputmode:'decimal'}),nt=el('input',{id:'ac-n',type:'text'});
+  const cb=(id,t)=>{const c=el('input',{type:'checkbox',id});return[c,el('label',{for:id,style:'display:flex;gap:8px;align-items:center;margin:6px 0'},c,t)]};
+  const [mm,lmm]=cb('ac-m','Mismatch found (bank / cash vs Vyapar)'),[fx,lfx]=cb('ac-f','Mismatch fixed today'),[vd,lvd]=cb('ac-v','Weekly vendor balance checked and reported');
+  ds.onchange=fill;
+  const save=el('button',{class:'btn primary',type:'button',text:'Submit report',onclick:async()=>{save.disabled=true;try{await call('accountsSave',{staffId:me.id,pin:me.pin,date:ds.value,banks:banks.filter(b=>b.name||b.amount),cash:cash.value,expenses:exp.value,mismatch:mm.checked,fixed:fx.checked,vendors:vd.checked,note:nt.value});toast('Report saved');reload()}catch(e){toast(e.message);save.disabled=false}}});
+  fill();
+  /* happy customer moments — same layout as the sheet: date × sales staff */
+  const hs=(d.salesStaff||[]).filter(s=>s.active!==false||s.id==='fida').sort(byOrder);
+  const hd=el('select',{id:'hp-d'},...[0,1,2,3].map(i=>{const x=addDays(td,-i);return el('option',{value:x,text:(i?i+' day'+(i>1?'s':'')+' ago':'Today')+' · '+dm(x)})}));
+  const cnt={};const grid=el('div');
+  const drawH=()=>{hs.forEach(s=>{const h=(d.happy||[]).find(x=>x.date===hd.value&&x.staffId===s.id);cnt[s.id]=h?+h.count:0});
+    grid.replaceChildren(...hs.map(s=>{const v=el('b',{class:'mono',style:'min-width:28px;text-align:center',text:String(cnt[s.id])});const set=k=>{cnt[s.id]=Math.max(0,cnt[s.id]+k);v.textContent=cnt[s.id]};
+      return el('div',{style:'display:flex;align-items:center;gap:8px;margin-bottom:6px'},el('span',{style:'flex:1',text:s.name}),el('button',{class:'btn',type:'button',text:'−','aria-label':'Less',onclick:()=>set(-1)}),v,el('button',{class:'btn',type:'button',text:'+','aria-label':'More',onclick:()=>set(1)}))}))};
+  hd.onchange=drawH;drawH();
+  const hsave=el('button',{class:'btn primary',type:'button',text:'Save happy moments',onclick:async()=>{hsave.disabled=true;try{const j=await call('happySave',{staffId:me.id,pin:me.pin,date:hd.value,counts:cnt});d.happy=j.happy;toast('Saved');hsave.disabled=false}catch(e){toast(e.message);hsave.disabled=false}}});
+  const mon=td.slice(0,7),tot={};(d.happy||[]).filter(h=>h.date.indexOf(mon)===0).forEach(h=>tot[h.staffId]=(tot[h.staffId]||0)+(+h.count||0));
+  return[el('div',{class:'panel'},el('h3',{text:'🏦 Daily balance report'}),el('label',{class:'f',for:'ac-d'},'Date',ds),el('div',{class:'hint',text:'Bank balances'}),bankBox,
+      el('div',{class:'form2'},el('label',{class:'f',for:'ac-c'},'Cash balance ₹',cash),el('label',{class:'f',for:'ac-e'},'Today\'s expenses ₹',exp)),lmm,lfx,lvd,el('label',{class:'f',for:'ac-n'},'Note',nt),
+      el('p',{class:'hint',text:'Submit before 5:30 PM every working day. Once submitted, the time is kept even if you correct it later.'}),save),
+    el('div',{class:'panel'},el('h3',{text:'😊 Happy customer moments'}),el('label',{class:'f',for:'hp-d'},'Date',hd),grid,hsave,
+      el('p',{class:'hint',text:'This month: '+hs.map(s=>s.name+' '+(tot[s.id]||0)).join(' · ')}))]}
+
+/* ---- staff portal tab ---- */
+function myArenaView(){
+  const box=el('div',{},el('div',{class:'empty',text:'Loading Arena…'}));
+  const load=async()=>{try{const d=await call('arenaMe',{staffId:me.id,pin:me.pin});const A=d.arena;
+    const parts=[arenaMine(A,d.me),arenaTeam(A)];
+    if(d.media)parts.push(...arenaMedia(d,load));
+    if(d.queue)parts.push(...arenaQueue(d,load));
+    if(d.cats.includes('Design')||d.cats.includes('Printing'))parts.push(arenaIssueForm(d,load));
+    if(d.accounts)parts.push(...arenaAccounts(d,load));
+    parts.push(arenaBoardList(A,d.me,false));
+    box.replaceChildren(...parts)}catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load Arena'}))}};
+  load();return[box]}
+
+/* ---- admin tab ---- */
+let arenaDay=null;
+function viewArena(){
+  const box=el('div',{},el('div',{class:'empty',text:'Loading Arena…'}));
+  arenaDay=arenaDay||ymd(new Date());
+  const load=async()=>{let A;try{A=await call('arenaAdmin',{adminPin,day:arenaDay})}catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message}));return}
+    const nm=id=>{const s=A.staffNames.find(x=>x.id===id);return s?s.name:id||'—'};
+    const nav=el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'← Week',onclick:()=>{arenaDay=addDays(A.week.from,-7);load()}}),el('b',{text:wkLabel(A.week)}),el('button',{class:'btn',type:'button',text:'Week →',onclick:()=>{arenaDay=addDays(A.week.from,7);load()}}));
+    const sales=A.board.filter(r=>r.section==='Sales');
+    const tbl=el('div',{class:'panel'},el('h3',{text:'Sales targets · this month'}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Staff','Month','Target','Left','Per day','This week','Leads','Conv.','Incentive'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...sales.map(r=>el('tr',{},el('td',{text:r.name}),el('td',{class:'mono',text:String(r.month)}),el('td',{class:'mono',text:String(r.target)}),el('td',{class:'mono',text:String(r.left)}),el('td',{class:'mono',text:r.left?String(r.perDay):'✓'}),el('td',{class:'mono',text:String(r.week)}),el('td',{class:'mono',text:r.leads?String(r.leads):r.id==='fida'?'organic':'0'}),el('td',{class:'mono',text:r.conv!=null?r.conv+'%':'—'}),el('td',{class:'mono',text:r.incentive?'+'+r.incentive:''})))))),
+      el('p',{class:'hint',text:'Fida works organic customers (no CRM leads), so she has no conversion.'}));
+    /* approvals */
+    const pm=A.pendingMedia.map(m=>el('div',{style:'display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line);padding:8px 0;flex-wrap:wrap'},el('div',{style:'flex:1;min-width:180px'},el('b',{text:nm(m.staffId)+' · '+dm(m.date)}),el('div',{class:'hint',style:'margin:0',text:[m.product,m.concept,m.title].filter(Boolean).join(' · ')+(+m.reedits?' · re-edited ×'+m.reedits:'')})),
+      el('button',{class:'btn primary',type:'button',text:'✅ Approved',onclick:async()=>{await call('mediaDecide',{adminPin,id:m.id,status:'approved'}).catch(e=>toast(e.message));load()}}),el('button',{class:'btn',type:'button',text:'🔁 Re-edit (−5)',onclick:async()=>{await call('mediaDecide',{adminPin,id:m.id,status:'reedit'}).catch(e=>toast(e.message));load()}})));
+    const pi=A.pendingIssues.map(x=>{const bl=el('select',{'aria-label':'Mistake by'},el('option',{value:'',text:'— whose mistake —'}),...A.staffNames.filter(s=>s.section).map(s=>el('option',{value:s.id,selected:s.id===x.blame,text:s.name+' · '+SEC_LABEL[s.section]})));
+      return el('div',{style:'display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line);padding:8px 0;flex-wrap:wrap'},el('div',{style:'flex:1;min-width:180px'},el('b',{text:x.kind.toUpperCase()+' · '+x.orderNo}),el('div',{class:'hint',style:'margin:0',text:dm(x.date)+' · reported by '+nm(x.by)+(x.note?' · '+x.note:'')})),bl,
+        el('button',{class:'btn primary',type:'button',text:'Confirm (−10)',onclick:async()=>{if(!bl.value){toast('Pick whose mistake');return}await call('issueDecide',{adminPin,id:x.id,status:'approved',blame:bl.value}).catch(e=>toast(e.message));load()}}),el('button',{class:'btn',type:'button',text:'Reject',onclick:async()=>{await call('issueDecide',{adminPin,id:x.id,status:'rejected'}).catch(e=>toast(e.message));load()}}))});
+    const appr=el('div',{class:'panel'},el('h3',{text:'Waiting for you · '+(pm.length+pi.length)}),pm.length||pi.length?el('div',{},...pm,...pi):el('div',{class:'empty',text:'Nothing to approve.'}));
+    /* bonus */
+    const bs=el('select',{id:'bn-s'},...A.board.map(r=>el('option',{value:r.id,text:r.name}))),bp=el('input',{id:'bn-p',type:'number',value:'20',style:'width:90px'}),bnote=el('input',{id:'bn-n',type:'text',placeholder:'e.g. Top reel of the week'});
+    const bonus=el('div',{class:'panel'},el('h3',{text:'Bonus / minus points'}),el('div',{class:'form2'},el('label',{class:'f',for:'bn-s'},'Staff',bs),el('label',{class:'f',for:'bn-p'},'Points (minus allowed)',bp),el('label',{class:'f',for:'bn-n'},'Reason',bnote)),
+      el('button',{class:'btn primary',type:'button',text:'Add',onclick:async()=>{try{await call('bonusAdd',{adminPin,staffId:bs.value,points:bp.value,note:bnote.value,date:todayStr<=A.week.to&&todayStr>=A.week.from?todayStr:A.week.to});toast('Added');load()}catch(e){toast(e.message)}}}),
+      ...A.bonus.map(x=>el('div',{class:'hint',style:'display:flex;gap:8px;align-items:center'},el('span',{style:'flex:1',text:dm(x.date)+' · '+nm(x.staffId)+' · '+ptsTxt(+x.points)+' · '+(x.note||'')}),el('button',{class:'btn',type:'button',text:'Delete',onclick:async()=>{await call('bonusDelete',{adminPin,id:x.id});load()}}))));
+    /* media log + accounts */
+    const media=el('div',{class:'panel'},el('h3',{text:'Videos · last 14 days'}),A.recentMedia.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','Staff','Video','Status','Instagram'].map(t=>el('th',{text:t})))),el('tbody',{},...A.recentMedia.map(m=>el('tr',{},el('td',{class:'mono',text:dm(m.date)}),el('td',{text:nm(m.staffId)}),el('td',{text:[m.product,m.concept,m.title].filter(Boolean).join(' · ')}),el('td',{text:m.status+(+m.reedits?' ×'+m.reedits:'')}),el('td',{},m.igLink?el('a',{href:m.igLink,target:'_blank',rel:'noopener',text:'Open'}):'')))))):el('div',{class:'empty',text:'No videos yet.'}));
+    const acc=el('div',{class:'panel'},el('h3',{text:'Daily balance reports'}),A.accounts.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','Banks','Cash','Expenses','Mismatch','Sent at'].map(t=>el('th',{text:t})))),el('tbody',{},...A.accounts.map(r=>{let b=[];try{b=JSON.parse(r.banks||'[]')}catch(e){}
+      return el('tr',{},el('td',{class:'mono',text:dm(r.date)}),el('td',{text:b.map(x=>x.name+' '+rs(x.amount)).join(' · ')}),el('td',{class:'mono',text:rs(r.cash)}),el('td',{class:'mono',text:rs(r.expenses)}),el('td',{text:r.mismatch==='TRUE'?(r.fixed==='TRUE'?'Fixed':'⚠️ Open'):'—'}),el('td',{class:'mono',text:(r.submittedAt||'').slice(5)}))})))):el('div',{class:'empty',text:'No reports yet.'}));
+    /* settings */
+    const S=A.settings,inp={};const lbl={salesDailyMin:'Sales: normal orders a day',salesMonthTarget:'Sales: orders a month (target)',teamWeekTarget:'Team: orders a week',premiumPts:'Points per premium order',mediaDailyMin:'Media: approved videos a day',accountsBy:'Accounts report by (HH:MM)'};
+    const set=el('div',{class:'panel'},el('h3',{text:'Arena rules'}),el('div',{class:'form2'},...Object.keys(lbl).map(k=>{inp[k]=el('input',{id:'ar-'+k,type:'text',value:S[k]});return el('label',{class:'f',for:'ar-'+k},lbl[k],inp[k])})),
+      el('button',{class:'btn',type:'button',text:'Save rules',onclick:async()=>{const s={};Object.keys(inp).forEach(k=>s[k]=inp[k].value);try{await call('arenaSettings',{adminPin,settings:s});toast('Rules saved');load()}catch(e){toast(e.message)}}}));
+    box.replaceChildren(el('div',{class:'toolbar'},el('h3',{text:'Weekly Arena'}),nav),arenaTeam(A),appr,arenaBoardList(A,null,true),tbl,bonus,media,acc,set)};
+  load();return[box]}
+
 function portalOut(){goHome()}
 async function ordersBoot(){show('orders');if(!me){goHome();return}ordersHome()}
 let myOrders=[];
@@ -1199,11 +1356,11 @@ async function ordersHome(edit){
     el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
-  const tabList=[['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
+  const tabList=[['arena','🏆 Arena'],['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
   if(portalTab==='auto')portalTab=me.sales?'orders':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})));
-  const body=portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
+  const body=portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
   box.replaceChildren(head,warn,tabs,...body);
 }

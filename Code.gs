@@ -10,13 +10,19 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items'],  // items = JSON list when one order has several products
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
   Settings:   ['key','value'],
   Capi:       ['id','status','sentAt','orderNo','value','note'],   // Meta Conversions API log — one row per order sent
-  EditLog:    ['time','action','staff','date','before','after']    // every admin change to attendance / attendance settings (cannot be changed from the app)
+  EditLog:    ['time','action','staff','date','before','after'],   // every admin change to attendance / attendance settings (cannot be changed from the app)
+  /* ---- Weekly Arena (Nov 2026) ---- */
+  Media:      ['id','date','staffId','product','concept','title','status','reedits','igLink','createdAt','decidedAt'], // one video / post; status pending | approved | reedit
+  Happy:      ['key','date','staffId','count','by','updatedAt'],   // happy customer moments per sales person per day (Mashida enters)
+  Accounts:   ['key','date','staffId','banks','cash','expenses','mismatch','fixed','vendors','note','submittedAt'], // Mashida's daily balance report
+  Issues:     ['id','date','orderNo','kind','blame','note','by','status','createdAt'],  // reprint / damage / rework; blame = staff id; status pending | approved | rejected
+  Bonus:      ['id','date','staffId','points','note','createdAt']   // admin +/- points (top reel, mistakes…)
 };
 /* daily work items. category = a staff category (Media, Production, Office) OR one staff id (e.g. jaseera).
    kind: count = a number, yesno = done / not done, colours = colour + how many, items = fixed list + how many, text = short note */
@@ -268,7 +274,7 @@ function staffList_() {
   });
 }
 /* Printing = printing production, Add-ons = bows / socks / boots…, HR = enters daily leads for sales staff, Regular = does every kind of work (attendance only, no work list) */
-var CATS = ['Sales', 'Office', 'Media', 'Printing', 'Add-ons', 'HR', 'Regular'];
+var CATS = ['Sales', 'Office', 'Media', 'Printing', 'Add-ons', 'HR', 'Design', 'Accounts', 'Regular'];
 function cat_(role, sales) {
   if (sales) return 'Sales';
   var r = String(role || '').trim().toLowerCase();
@@ -392,7 +398,7 @@ function doGet() { return out_({ ok: true, app: 'couplo-attendance' }); }
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1 };
+var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, arenaMe: 1, arenaAdmin: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -406,6 +412,7 @@ function doPost(e) {
 
 function handle_(b) {
   migrate_();
+  arenaSetup_();
   var n = now_();
   switch (b.action) {
     case 'kiosk': {
@@ -513,6 +520,7 @@ function handle_(b) {
         o.id = 'o' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
         o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || (me.name.charAt(0) + (o.type === 'affordable' ? 'A' : 'P') + od.slice(5, 7) + od.slice(8, 10) + '-' + (mine + 1));
         o.date = od; o.staffId = me.id; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = n.date + ' ' + n.time;
+        o.designDoneAt = ''; o.dispatchedAt = o.dispatched === 'TRUE' ? n.date + ' ' + n.time : '';
         upsert_('Orders', o);
         return { ok: true, order: o };
       }
@@ -520,6 +528,7 @@ function handle_(b) {
       if (!old || old.staffId !== me.id) return { ok: false, error: 'Order not found' };
       if (old.date.indexOf(month) !== 0) return { ok: false, error: 'Only this month\'s orders can be changed' };
       o.id = old.id; o.orderNo = String(b.order.orderNo || '').trim().toUpperCase() || old.orderNo; o.date = okD ? pickD : old.date; o.staffId = old.staffId; o.dispatched = b.order.dispatched ? 'TRUE' : 'FALSE'; o.createdAt = old.createdAt;
+      keepStages_(o, old, n);
       upsert_('Orders', o);
       return { ok: true, order: o };
     }
@@ -534,9 +543,11 @@ function handle_(b) {
       return { ok: true };
     }
   }
+  var ar = arenaStaffAction_(b, n); if (ar) return ar;
   /* everything below needs the admin PIN */
   var pin = setting_('adminPin');
   if (!pin || String(b.adminPin) !== pin) return { ok: false, error: 'Admin PIN needed' };
+  var aa = arenaAdminAction_(b, n); if (aa) return aa;
   switch (b.action) {
     case 'month': {
       var m = String(b.month); // yyyy-MM
@@ -561,6 +572,7 @@ function handle_(b) {
       if (!so.date) so.date = n.date;
       var isNew = !b.order.id;
       if (isNew && !so.createdAt) so.createdAt = n.date + ' ' + n.time;
+      keepStages_(so, isNew ? null : rows_('Orders').filter(function (x) { return x.id === so.id; })[0], n);
       upsert_('Orders', so);
       return { ok: true, order: so };
     }
@@ -568,7 +580,7 @@ function handle_(b) {
     case 'setDispatched': {
       var od = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
       if (!od) return { ok: false, error: 'Order not found' };
-      od.dispatched = b.value ? 'TRUE' : 'FALSE'; upsert_('Orders', od); return { ok: true };
+      od.dispatched = b.value ? 'TRUE' : 'FALSE'; od.dispatchedAt = b.value ? (od.dispatchedAt || n.date + ' ' + n.time) : ''; upsert_('Orders', od); return { ok: true };
     }
     case 'saveAtt': { var a = b.rec; a.key = a.date + '__' + a.staffId; var was = findRow_('Attendance', a.key); was = was ? JSON.parse(JSON.stringify(was)) : null;
       upsert_('Attendance', a); logEdit_(was ? 'Attendance changed' : 'Attendance added', a.staffId, a.date, attText_(was), attText_(a)); return { ok: true }; }
@@ -834,4 +846,288 @@ function capiSetup() {
   Logger.log(JSON.stringify(r));
   if (r.error) throw new Error('Meta said: ' + r.error);
   return r;
+}
+
+/* =====================================================================
+   WEEKLY ARENA (Nov 2026)
+   Points only for work ABOVE normal; minus only for mistakes that cost money.
+   Week = Monday to Sunday. Everything is worked out live from the sheets,
+   so changing a rule here changes the whole board at once.
+   ===================================================================== */
+var ARENA_DEFAULTS = { salesDailyMin: '5', salesMonthTarget: '100', teamWeekTarget: '100', premiumPts: '5', mediaDailyMin: '2', accountsBy: '17:30' };
+function arenaSet_(k) { var v = setting_('arena_' + k); return v === '' ? ARENA_DEFAULTS[k] : v; }
+function arenaNum_(k) { return Number(arenaSet_(k)) || 0; }
+
+/* one-time: new sheets, the two new Orders columns, and Hiba → Design, Mashida → Accounts */
+function arenaSetup_() {
+  if (setting_('arenaVersion') === '1') return;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ['Media', 'Happy', 'Accounts', 'Issues', 'Bonus'].forEach(function (name) {
+    var sh = ss.getSheetByName(name) || ss.insertSheet(name);
+    sh.getRange(1, 1, sh.getMaxRows(), SHEETS[name].length).setNumberFormat('@');
+    sh.getRange(1, 1, 1, SHEETS[name].length).setValues([SHEETS[name]]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  });
+  var oc = SHEETS.Orders, os = sh_('Orders');
+  os.getRange(1, 1, 1, oc.length).setValues([oc]).setFontWeight('bold');
+  os.getRange(2, oc.length - 1, Math.max(1, os.getMaxRows() - 1), 2).setNumberFormat('@');
+  var st = sh_('Staff');
+  rows_('Staff').forEach(function (r) {
+    if (r.id === 'hiba') st.getRange(r._row, 3).setValue('Design');
+    else if (r.id === 'mashida') st.getRange(r._row, 3).setValue('Accounts');
+  });
+  forget_('Staff'); forget_('Orders');
+  upsert_('Settings', { key: 'arenaVersion', value: '1' });
+  if (!setting_('arenaStart')) upsert_('Settings', { key: 'arenaStart', value: now_().date }); // minus points only count from this day
+}
+
+/* when an order is edited, keep the design / dispatch times it already had */
+function keepStages_(o, old, n) {
+  o.designDoneAt = old ? (old.designDoneAt || '') : '';
+  var was = old ? old.dispatchedAt || '' : '';
+  o.dispatchedAt = o.dispatched === 'TRUE' ? (was || n.date + ' ' + n.time) : '';
+}
+
+/* ---- dates ---- */
+function ad_(ds, k) { var d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() + k); return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
+function weekOf_(ds) { var d = new Date(ds + 'T12:00:00'), dow = (d.getDay() + 6) % 7; var from = ad_(ds, -dow); return { from: from, to: ad_(from, 6) }; }
+function inRange_(ds, r) { ds = String(ds || '').slice(0, 10); return ds >= r.from && ds <= r.to; }
+/* Mon–Sat that are not office holidays */
+function workDays_(from, to) {
+  var h = holidays_(), out = [];
+  for (var d = from; d <= to; d = ad_(d, 1)) { if (new Date(d + 'T12:00:00').getDay() !== 0 && !h[d]) out.push(d); }
+  return out;
+}
+
+/* ---- who is in which arena section ---- */
+function arenaSection_(s) {
+  var c = cats_(s.role, s.sales);
+  if (c.indexOf('Sales') >= 0) return 'Sales';
+  if (c.indexOf('Design') >= 0) return 'Design';
+  if (c.indexOf('Printing') >= 0) return 'Printing';
+  if (c.indexOf('Media') >= 0) return 'Media';
+  if (c.indexOf('Accounts') >= 0 || c.indexOf('Office') >= 0) return 'Accounts';
+  return '';
+}
+function arenaStaff_() {
+  return staffList_().filter(function (s) { return s.active; }).map(function (s) {
+    return { id: s.id, name: s.name, order: s.order, section: arenaSection_(s), cats: cats_(s.role, s.sales) };
+  }).filter(function (s) { return s.section; });
+}
+
+/* ---- the scoring ---- returns { staffId: { pts, lines:[{date,why,pts}] } } */
+function arenaScore_(wk, today) {
+  var people = arenaStaff_(), res = {}, add = function (id, date, why, p) { if (!res[id] || !p) return; res[id].pts += p; res[id].lines.push({ date: date, why: why, pts: p }); };
+  people.forEach(function (s) { res[s.id] = { pts: 0, lines: [] }; });
+  var orders = rows_('Orders'), wkOrders = orders.filter(function (o) { return inRange_(o.date, wk); });
+  var issues = rows_('Issues').filter(function (x) { return x.status === 'approved' && inRange_(x.date, wk); });
+  var blamed = {}; issues.forEach(function (x) { (blamed[x.blame] = blamed[x.blame] || []).push(x); });
+  var dmin = arenaNum_('salesDailyMin'), prem = arenaNum_('premiumPts');
+  var leads = {}; rows_('Sales').forEach(function (r) { if (inRange_(r.date, wk)) leads[r.staffId] = (leads[r.staffId] || 0) + (Number(r.leads) || 0); });
+  var best = null, start = setting_('arenaStart') || '2000-01-01';
+  people.forEach(function (s) {
+    var mine = blamed[s.id] || [];
+    mine.forEach(function (x) { add(s.id, x.date, (x.kind || 'reprint').toUpperCase() + ' · ' + x.orderNo, -10); });
+    if (s.section === 'Sales') {
+      var my = wkOrders.filter(function (o) { return o.staffId === s.id; }), byDay = {}, late = 0;
+      my.forEach(function (o) {
+        byDay[o.date] = (byDay[o.date] || 0) + 1;
+        if (o.type === 'premium') add(s.id, o.date, 'Premium order ' + o.orderNo, prem);
+        if (o.date >= start && o.createdAt && o.createdAt.slice(0, 10) > o.date) { late++; add(s.id, o.date, 'Entered late ' + o.orderNo, -10); }
+      });
+      Object.keys(byDay).forEach(function (d) { if (byDay[d] > dmin) add(s.id, d, (byDay[d] - dmin) + ' orders above ' + dmin, (byDay[d] - dmin) * 10); });
+      if (my.length && !late) add(s.id, wk.to, 'All orders entered on time', 10);
+      var L = leads[s.id] || 0;
+      if (L >= 20) { var conv = my.length / L; if (!best || conv > best.conv) best = { id: s.id, conv: conv }; }
+    }
+    if (s.section === 'Design') {
+      var due = wkOrders.filter(function (o) { return o.date < today && o.date >= start; }), lateD = 0;
+      due.forEach(function (o) {
+        var dd = String(o.designDoneAt || '').slice(0, 10);
+        if (!dd || dd > ad_(o.date, 1)) { lateD++; add(s.id, o.date, 'Design late ' + o.orderNo, -5); }
+      });
+      if (due.length && !lateD) add(s.id, wk.to, 'No pending design all week', 15);
+      if (due.length && !mine.length) add(s.id, wk.to, 'Zero design mistakes', 20);
+    }
+    if (s.section === 'Printing') {
+      var sent = orders.filter(function (o) { return inRange_(o.dispatchedAt, wk); });
+      sent.forEach(function (o) { if (o.designDoneAt && o.dispatchedAt.slice(0, 10) === o.designDoneAt.slice(0, 10)) add(s.id, o.dispatchedAt.slice(0, 10), 'Same-day dispatch ' + o.orderNo, 2); });
+      if (sent.length && !mine.length) add(s.id, wk.to, 'Zero print mistakes', 20);
+    }
+    if (s.section === 'Media' || s.cats.indexOf('Media') >= 0) {
+      var media = rows_('Media').filter(function (m) { return m.staffId === s.id && inRange_(m.date, wk); }), ap = {};
+      media.forEach(function (m) {
+        var re = Number(m.reedits) || 0;
+        if (re) add(s.id, m.date, 'Re-edit × ' + re + ' · ' + m.title, -5 * re);
+        if (m.status === 'approved') { ap[m.date] = (ap[m.date] || 0) + 1; if (!re) add(s.id, m.date, 'Approved first time · ' + m.title, 3); }
+      });
+      var mmin = arenaNum_('mediaDailyMin');
+      Object.keys(ap).forEach(function (d) { if (ap[d] > mmin) add(s.id, d, (ap[d] - mmin) + ' videos above ' + mmin, (ap[d] - mmin) * 10); });
+    }
+    if (s.section === 'Accounts') {
+      var reps = {}; rows_('Accounts').forEach(function (r) { if (inRange_(r.date, wk)) reps[r.date] = r; });
+      var by = arenaSet_('accountsBy'), days = workDays_(wk.from > start ? wk.from : start, today < wk.to ? ad_(today, -1) : wk.to), miss = 0, onTime = 0, vend = false;
+      days.forEach(function (d) {
+        var r = reps[d];
+        if (!r) { miss++; add(s.id, d, 'Daily balance report missing', -5); return; }
+        if (r.submittedAt.slice(0, 10) === d && r.submittedAt.slice(11, 16) <= by) onTime++;
+      });
+      Object.keys(reps).forEach(function (d) { var r = reps[d]; if (r.mismatch === 'TRUE' && r.fixed === 'TRUE') add(s.id, d, 'Mismatch found and fixed', 10); if (r.vendors === 'TRUE') vend = true; });
+      if (days.length && !miss && onTime === days.length) add(s.id, wk.to, 'All reports before ' + by, 10);
+      if (vend) add(s.id, wk.to, 'Vendor balance report', 10);
+    }
+  });
+  if (best) add(best.id, wk.to, 'Best conversion of the week (' + Math.round(best.conv * 1000) / 10 + '%)', 20);
+  rows_('Happy').forEach(function (h) { if (inRange_(h.date, wk) && Number(h.count)) add(h.staffId, h.date, h.count + ' happy customer moment(s)', 5 * Number(h.count)); });
+  rows_('Bonus').forEach(function (x) { if (inRange_(x.date, wk)) add(x.staffId, x.date, x.note || 'Admin', Number(x.points) || 0); });
+  return res;
+}
+
+/* the whole board for one week + order targets for the month */
+function arenaBoard_(day, today) {
+  var wk = weekOf_(day), sc = arenaScore_(wk, today), people = arenaStaff_();
+  var month = day.slice(0, 7), orders = rows_('Orders');
+  var mt = arenaNum_('salesMonthTarget'), wt = arenaNum_('teamWeekTarget');
+  var mEnd = Utilities.formatDate(new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0), TZ, 'yyyy-MM-dd');
+  var left = workDays_(today > month + '-01' ? today : month + '-01', mEnd).length || 1;
+  var leads = {}; rows_('Sales').forEach(function (r) { if (r.date.indexOf(month) === 0) leads[r.staffId] = (leads[r.staffId] || 0) + (Number(r.leads) || 0); });
+  var board = people.map(function (s) {
+    var r = { id: s.id, name: s.name, section: s.section, pts: sc[s.id].pts, lines: sc[s.id].lines };
+    if (s.section === 'Sales') {
+      var mo = orders.filter(function (o) { return o.staffId === s.id && o.date.indexOf(month) === 0; }).length;
+      r.month = mo; r.target = mt; r.left = Math.max(0, mt - mo); r.perDay = Math.round(r.left / left * 10) / 10;
+      r.week = orders.filter(function (o) { return o.staffId === s.id && inRange_(o.date, wk); }).length;
+      r.leads = leads[s.id] || 0; r.conv = r.leads ? Math.round(mo / r.leads * 1000) / 10 : null;
+      r.incentive = Math.max(0, mo - mt);
+    }
+    return r;
+  }).sort(function (a, b) { return b.pts - a.pts; });
+  var teamWeek = orders.filter(function (o) { return inRange_(o.date, wk); }).length;
+  var teamMonth = orders.filter(function (o) { return o.date.indexOf(month) === 0; }).length;
+  var nSales = people.filter(function (s) { return s.section === 'Sales'; }).length;
+  return { week: wk, today: today, board: board, team: { week: teamWeek, weekTarget: wt, month: teamMonth, monthTarget: mt * nSales, daysLeft: left } };
+}
+
+/* actions any logged-in staff can do (staffId + PIN) */
+function arenaStaffAction_(b, n) {
+  var A = { arenaMe: 1, mediaAdd: 1, mediaLink: 1, designDone: 1, dispatchDone: 1, issueAdd: 1, happySave: 1, accountsSave: 1 };
+  if (!A[b.action]) return null;
+  var me = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
+  if (!me) return { ok: false, error: 'Staff not found' };
+  if (me.pin && String(me.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
+  var cats = cats_(me.role, me.sales), sec = arenaSection_(me), stamp = n.date + ' ' + n.time;
+  var can = function (c) { return cats.indexOf(c) >= 0 || (c === 'Accounts' && sec === 'Accounts'); };
+  var order = function () { return rows_('Orders').filter(function (o) { return o.id === b.orderId; })[0]; };
+  switch (b.action) {
+    case 'arenaMe': {
+      var bd = arenaBoard_(/^\d{4}-\d{2}-\d{2}$/.test(String(b.day)) ? String(b.day) : n.date, n.date), out = { ok: true, me: me.id, section: sec, cats: cats, arena: bd };
+      var recent = ad_(n.date, -30);
+      if (can('Media')) out.media = rows_('Media').filter(function (m) { return m.staffId === me.id && m.date >= recent; }).reverse();
+      if (can('Design') || can('Printing')) {
+        out.queue = rows_('Orders').filter(function (o) { return o.date >= recent && o.dispatched !== 'TRUE'; })
+          .map(function (o) { return { id: o.id, orderNo: o.orderNo, date: o.date, staffId: o.staffId, customer: o.customer, product: o.product, type: o.type, designDoneAt: o.designDoneAt || '' }; });
+      }
+      if (can('Printing') || can('Design')) out.issues = rows_('Issues').filter(function (x) { return x.date >= recent; }).reverse();
+      if (can('Accounts')) {
+        out.accounts = rows_('Accounts').filter(function (r) { return r.date >= recent; });
+        out.happy = rows_('Happy').filter(function (h) { return h.date >= ad_(n.date, -40); });
+        out.salesStaff = staffList_().filter(function (s) { return s.sales || s.id === 'foumidha'; }).map(function (s) { return { id: s.id, name: s.name, order: s.order, active: s.active }; });
+      }
+      out.staffNames = staffList_().map(function (s) { return { id: s.id, name: s.name, sales: s.sales, section: arenaSection_(s) }; });
+      return out;
+    }
+    case 'mediaAdd': {
+      if (!can('Media')) return { ok: false, error: 'Only media staff' };
+      var m = { id: 'm' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: /^\d{4}-\d{2}-\d{2}$/.test(String(b.date)) && b.date <= n.date && b.date >= ad_(n.date, -3) ? b.date : n.date, staffId: me.id,
+        product: String(b.product || '').trim(), concept: String(b.concept || '').trim(), title: String(b.title || '').trim(), status: 'pending', reedits: '0', igLink: '', createdAt: stamp, decidedAt: '' };
+      if (!m.product && !m.title) return { ok: false, error: 'Enter product or a name' };
+      upsert_('Media', m); return { ok: true, item: m };
+    }
+    case 'mediaLink': {
+      var mi = findRow_('Media', b.id);
+      if (!mi || mi.staffId !== me.id) return { ok: false, error: 'Video not found' };
+      var link = String(b.igLink || '').trim();
+      if (link && !/^https?:\/\/(www\.)?instagram\.com\//i.test(link)) return { ok: false, error: 'Paste the Instagram post link' };
+      mi.igLink = link; if (mi.status === 'reedit') mi.status = 'pending'; upsert_('Media', mi); return { ok: true, item: mi };
+    }
+    case 'designDone': {
+      if (!can('Design')) return { ok: false, error: 'Only design staff' };
+      var o = order(); if (!o) return { ok: false, error: 'Order not found' };
+      o.designDoneAt = b.undo ? '' : (o.designDoneAt || stamp); upsert_('Orders', o); return { ok: true, order: o };
+    }
+    case 'dispatchDone': {
+      if (!can('Printing')) return { ok: false, error: 'Only printing staff' };
+      var p = order(); if (!p) return { ok: false, error: 'Order not found' };
+      p.dispatched = 'TRUE'; p.dispatchedAt = p.dispatchedAt || stamp; upsert_('Orders', p); return { ok: true, order: p };
+    }
+    case 'issueAdd': {
+      var kinds = ['reprint', 'damage', 'rework'];
+      if (kinds.indexOf(b.kind) < 0) return { ok: false, error: 'Pick reprint, damage or rework' };
+      if (!String(b.orderNo || '').trim()) return { ok: false, error: 'Enter the order number' };
+      var x = { id: 'i' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: n.date, orderNo: String(b.orderNo).trim().toUpperCase(), kind: b.kind, blame: String(b.blame || ''), note: String(b.note || '').trim(), by: me.id, status: 'pending', createdAt: stamp };
+      upsert_('Issues', x); return { ok: true, issue: x };
+    }
+    case 'happySave': {
+      if (!can('Accounts') && !can('HR')) return { ok: false, error: 'Only accounts staff' };
+      var hd = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date)) && b.date <= n.date ? b.date : n.date, counts = b.counts || {};
+      Object.keys(counts).forEach(function (sid) {
+        var c = Math.max(0, Math.floor(Number(counts[sid]) || 0)), k = hd + '__' + sid, was = findRow_('Happy', k);
+        if (!c && !was) return;
+        upsert_('Happy', { key: k, date: hd, staffId: sid, count: String(c), by: me.id, updatedAt: stamp });
+      });
+      return { ok: true, happy: rows_('Happy').filter(function (h) { return h.date >= ad_(n.date, -40); }) };
+    }
+    case 'accountsSave': {
+      if (!can('Accounts')) return { ok: false, error: 'Only accounts staff' };
+      var ad = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date)) && b.date <= n.date ? b.date : n.date, k2 = ad + '__' + me.id, old = findRow_('Accounts', k2);
+      var r = { key: k2, date: ad, staffId: me.id, banks: JSON.stringify(b.banks || []), cash: String(Number(b.cash) || 0), expenses: String(Number(b.expenses) || 0),
+        mismatch: b.mismatch ? 'TRUE' : 'FALSE', fixed: b.fixed ? 'TRUE' : 'FALSE', vendors: b.vendors ? 'TRUE' : 'FALSE', note: String(b.note || '').trim(), submittedAt: old ? old.submittedAt : stamp };
+      upsert_('Accounts', r); return { ok: true, report: r };
+    }
+  }
+  return null;
+}
+
+/* admin-only arena actions (admin PIN already checked) */
+function arenaAdminAction_(b, n) {
+  switch (b.action) {
+    case 'arenaAdmin': {
+      var day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day)) ? String(b.day) : n.date;
+      var out = arenaBoard_(day, n.date);
+      out.ok = true;
+      out.pendingMedia = rows_('Media').filter(function (m) { return m.status === 'pending'; });
+      out.recentMedia = rows_('Media').filter(function (m) { return m.date >= ad_(n.date, -14); }).reverse();
+      out.pendingIssues = rows_('Issues').filter(function (x) { return x.status === 'pending'; });
+      out.accounts = rows_('Accounts').filter(function (r) { return r.date >= ad_(n.date, -14); }).reverse();
+      out.bonus = rows_('Bonus').filter(function (x) { return inRange_(x.date, out.week); });
+      out.settings = {}; Object.keys(ARENA_DEFAULTS).forEach(function (k) { out.settings[k] = arenaSet_(k); });
+      out.staffNames = staffList_().map(function (s) { return { id: s.id, name: s.name, sales: s.sales, section: arenaSection_(s) }; });
+      return out;
+    }
+    case 'mediaDecide': {
+      var m = findRow_('Media', b.id); if (!m) return { ok: false, error: 'Video not found' };
+      if (b.status === 'approved') m.status = 'approved';
+      else if (b.status === 'reedit') { m.status = 'reedit'; m.reedits = String((Number(m.reedits) || 0) + 1); }
+      else return { ok: false, error: 'Pick Approved or Re-edit' };
+      m.decidedAt = n.date + ' ' + n.time; upsert_('Media', m); return { ok: true, item: m };
+    }
+    case 'issueDecide': {
+      var x = findRow_('Issues', b.id); if (!x) return { ok: false, error: 'Not found' };
+      if (['approved', 'rejected'].indexOf(b.status) < 0) return { ok: false, error: 'Pick approve or reject' };
+      x.status = b.status; if (b.blame != null) x.blame = String(b.blame); upsert_('Issues', x); return { ok: true, issue: x };
+    }
+    case 'bonusAdd': {
+      var pts = Math.round(Number(b.points) || 0);
+      if (!b.staffId || !pts) return { ok: false, error: 'Pick staff and points' };
+      var bo = { id: 'b' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: /^\d{4}-\d{2}-\d{2}$/.test(String(b.date)) ? b.date : n.date, staffId: String(b.staffId), points: String(pts), note: String(b.note || '').trim(), createdAt: n.date + ' ' + n.time };
+      upsert_('Bonus', bo); return { ok: true, bonus: bo };
+    }
+    case 'bonusDelete': remove_('Bonus', b.id); return { ok: true };
+    case 'arenaSettings': {
+      var s = b.settings || {};
+      Object.keys(ARENA_DEFAULTS).forEach(function (k) { if (s[k] != null && String(s[k]).trim() !== '') upsert_('Settings', { key: 'arena_' + k, value: String(s[k]).trim() }); });
+      return { ok: true };
+    }
+  }
+  return null;
 }
