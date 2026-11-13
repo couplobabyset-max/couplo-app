@@ -182,7 +182,7 @@ function askAdminPin(){
     pinSheet({title:'Admin',sub:'Enter the admin PIN',onDone:async v=>{const c=await call('adminCheck',{adminPin:v});if(!c.valid)return false;adminPin=v;closeOv();openAdmin()}});
   }).catch(()=>toast('Cannot reach the sheet.'));
 }
-function openAdmin(){closeOv();show('admin');salesDate=ymd(new Date());loadMonth(ymOf(new Date()))}
+function openAdmin(){closeOv();show('admin');salesDate=ymd(new Date());call('reportSettings',{adminPin}).then(r=>{const h=Number(r&&r.minHours);if(h>0&&h!==adminMinH){adminMinH=h;if(adminMonth)renderAdmin()}}).catch(()=>{});loadMonth(ymOf(new Date()))}
 async function loadMonth(m){
   adminMonth=m;
   if(salesDate&&salesDate.slice(0,7)!==m)salesDate=m+'-01';
@@ -202,6 +202,9 @@ const activeStaff=()=>staff.filter(s=>s.active!==false).sort(byOrder);
 const salesStaff=()=>staff.filter(s=>s.sales).sort(byOrder);
 const payStaff=()=>staff.filter(s=>s.active!==false||s.sales).sort(byOrder);
 function ordersOn(ds,sid){const x=adminSales[ds+'__'+sid];return x?x.premium+x.affordable:0}
+/* overtime (admin only): time worked beyond the office minimum hours (Settings → minHours, default 8). Under 15 min is ignored. */
+let adminMinH=8;
+function otMin(r){if(!r||r.status==='leave'||r.status==='wfh')return 0;const a=toMin(r.in),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-adminMinH*60;return x>=15?x:0}
 function cellInfo(r){
   if(!r)return null;
   if(r.status==='leave')return{txt:'LEAVE',cls:'leave'};
@@ -213,14 +216,14 @@ function cellInfo(r){
    6h+ = full day, under 6h = half day; a sales person's WFH day is paid only if orders were entered for that day */
 function calcPay(m,s){
   const dates=monthDates(m), td=todayStr, nd=dates.length;
-  const val={}, info={full:0,half:0,leave:0,absent:0,wfhPaid:0,wfhUnpaid:0,sunPaid:0,sunCut:0,noOut:0,mins:0};
+  const val={}, info={full:0,half:0,leave:0,absent:0,wfhPaid:0,wfhUnpaid:0,sunPaid:0,sunCut:0,noOut:0,mins:0,ot:0};
   for(const d of dates){const ds=ymd(d);if(ds>td){val[ds]=null;continue}if(d.getDay()===0)continue;
     const r=adminRecs[ds+'__'+s.id];
     if(!r){val[ds]=ds===td?null:0;if(ds!==td)info.absent++;continue}
     if(r.status==='leave'){val[ds]=0;info.leave++;continue}
     if(r.status==='wfh'){if(s.sales){const ok=ordersOn(ds,s.id)>0;val[ds]=ok?1:0;ok?info.wfhPaid++:info.wfhUnpaid++}else{val[ds]=1;info.wfhPaid++}continue}
     const a=toMin(r.in),b=toMin(r.out);
-    if(a!=null&&b!=null){const h=b-a;info.mins+=h;if(h>=360){val[ds]=1;info.full++}else{val[ds]=.5;info.half++}}
+    if(a!=null&&b!=null){const h=b-a;info.mins+=h;info.ot=(info.ot||0)+otMin(r);if(h>=360){val[ds]=1;info.full++}else{val[ds]=.5;info.half++}}
     else if(a!=null){val[ds]=1;info.full++;if(ds!==td)info.noOut++}
     else{val[ds]=0;info.absent++}}
   for(const d of dates){if(d.getDay()!==0)continue;const ds=ymd(d);if(ds>td){val[ds]=null;continue}
@@ -269,14 +272,16 @@ function viewRegister(){
     const tr=el('tr',{class:sun?'sun':''},el('th',{},el('span',{class:'mono',text:pad2(d.getDate())}),' '+DAYS[d.getDay()].slice(0,3)));
     list.forEach(s=>{const r=adminRecs[ds+'__'+s.id];const ci=cellInfo(r);
       const c=el('td',{class:'cell',title:'Edit '+s.name+' on '+ds,onclick:()=>editCell(s,ds,r)});
-      if(ci){if(ci.cls)c.append(el('span',{class:'chip '+ci.cls,text:ci.txt}));else{c.append(el('span',{class:'mono'+(ci.noOut&&ds!==td?' flag':''),text:ci.txt}));if(ci.hrs!=null)c.append(el('div',{class:'c-hrs mono',text:fmtMin(ci.hrs)+(ci.hrs<360?' · half day':'')}));if(r.lateReason)c.append(el('div',{class:'c-hrs flag',text:'Late: '+r.lateReason}));if(r.earlyReason)c.append(el('div',{class:'c-hrs flag',text:'Early: '+r.earlyReason}))}}
+      if(ci){if(ci.cls)c.append(el('span',{class:'chip '+ci.cls,text:ci.txt}));else{c.append(el('span',{class:'mono'+(ci.noOut&&ds!==td?' flag':''),text:ci.txt}));if(ci.hrs!=null)c.append(el('div',{class:'c-hrs mono',text:fmtMin(ci.hrs)+(ci.hrs<360?' · half day':'')}));{const ot=otMin(r);if(ot)c.append(el('div',{class:'c-hrs mono',style:'color:#0a7a3d;font-weight:600',text:'OT '+fmtMin(ot)}))}if(r.lateReason)c.append(el('div',{class:'c-hrs flag',text:'Late: '+r.lateReason}));if(r.earlyReason)c.append(el('div',{class:'c-hrs flag',text:'Early: '+r.earlyReason}))}}
       else c.append(el('span',{class:'c-hrs',text:sun?'':'—'}));
       tr.append(c)});
     tbody.append(tr)});
+  const otTot=list.map(s=>dates.reduce((t,d)=>t+otMin(adminRecs[ymd(d)+'__'+s.id]),0));
+  const tfoot=el('tfoot',{},el('tr',{},el('th',{text:'OT total'}),...otTot.map(v=>el('td',{class:'mono',style:v?'color:#0a7a3d;font-weight:700':'',text:v?fmtMin(v):'—'}))));
   const reg=el('div',{class:'panel'},
     el('div',{class:'toolbar'},el('h3',{text:'Monthly register'}),el('button',{class:'btn primary',type:'button',text:'Download Excel',onclick:()=>exportXlsx(m)})),
-    el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped.'}),
-    list.length?el('div',{class:'scroll'},el('table',{},thead,tbody)):el('div',{class:'empty',text:'Add staff in the Staff tab to see the register.'}));
+    el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped. Green OT = overtime: time worked beyond '+adminMinH+' hours (only admin sees this).'}),
+    list.length?el('div',{class:'scroll'},el('table',{},thead,tbody,tfoot)):el('div',{class:'empty',text:'Add staff in the Staff tab to see the register.'}));
   return[todayPanel,reg];
 }
 function viewSales(){
@@ -330,17 +335,17 @@ function viewSalary(){
   const noSal=calc.filter(x=>!x.c.salary).map(x=>x.s.name);if(noSal.length)warn.push('No monthly salary set for: '+noSal.join(', ')+'. Add it in the Staff tab.');
   const miss=calc.filter(x=>x.c.noOut).map(x=>x.s.name+' ('+x.c.noOut+')');if(miss.length)warn.push('Missing OUT (counted as full day until fixed): '+miss.join(', ')+'.');
   if(calc[0]&&calc[0].c.future)warn.push('This month is not over yet. Days after today are not counted.');
-  const tbl=el('table',{},el('thead',{},el('tr',{},...['Name','Salary','Full','Half','WFH paid','WFH no order','Leave','Absent','Sun paid','Sun cut','Paid days','Earned','Bonus','Advance','Net pay',''].map(t=>el('th',{text:t})))),
+  const tbl=el('table',{},el('thead',{},el('tr',{},...['Name','Salary','Full','Half','WFH paid','WFH no order','Leave','Absent','Sun paid','Sun cut','OT hours','Paid days','Earned','Bonus','Advance','Net pay',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...calc.map(({s,c})=>el('tr',{},el('th',{text:s.name}),el('td',{class:'mono',text:rs(c.salary)}),
-      ...[c.full,c.half,c.wfhPaid,c.wfhUnpaid,c.leave,c.absent,c.sunPaid,c.sunCut].map(v=>el('td',{class:'mono',text:String(v)})),
+      ...[c.full,c.half,c.wfhPaid,c.wfhUnpaid,c.leave,c.absent,c.sunPaid,c.sunCut].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',style:c.ot?'color:#0a7a3d;font-weight:600':'',text:c.ot?fmtMin(c.ot):'—'}),
       el('td',{class:'mono',text:c.paid+' / '+c.nd}),el('td',{class:'mono',text:rs(c.earned)}),el('td',{class:'mono',text:c.extra?rs(c.extra):'—'}),el('td',{class:'mono',text:c.adv?'− '+rs(c.adv):'—'}),
       el('td',{class:'mono',style:'font-weight:700',text:rs(c.net)}),el('td',{},el('button',{class:'btn',type:'button',text:'Advance',onclick:()=>editPay(s,m)}))))),
-    el('tfoot',{},el('tr',{},el('th',{text:'Total'}),...Array(13).fill(0).map(()=>el('td')),el('td',{class:'mono',text:rs(total)}),el('td'))));
+    el('tfoot',{},el('tr',{},el('th',{text:'Total'}),...Array(9).fill(0).map(()=>el('td')),el('td',{class:'mono',text:(t=>t?fmtMin(t):'—')(calc.reduce((t,x)=>t+x.c.ot,0))}),...Array(4).fill(0).map(()=>el('td')),el('td',{class:'mono',text:rs(total)}),el('td'))));
   return[el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Salary · '+MON[mo-1]+' '+y}),el('div',{class:'row'},
       el('button',{class:'btn',type:'button',text:'Salary Excel',onclick:()=>exportSalary(m,calc)}),el('button',{class:'btn',type:'button',text:'Salary slips (PDF)',onclick:()=>exportSlips(m,calc)}),el('button',{class:'btn primary',type:'button',text:'Email slips',onclick:()=>emailSlips(m,calc)}))),
     ...warn.map(w=>el('div',{class:'banner',text:w})),
     el('div',{class:'scroll'},tbl),
-    el('p',{class:'hint',text:'Rules: per day = salary ÷ days in the month. Sundays are paid, but a Sunday with leave or absence on both the Saturday before and the Monday after is cut. 6 hours or more is a full day, less is a half day. A sales person\'s work-from-home day is paid only if orders were entered for that day in Sales.'}))];
+    el('p',{class:'hint',text:'Rules: per day = salary ÷ days in the month. Sundays are paid, but a Sunday with leave or absence on both the Saturday before and the Monday after is cut. 6 hours or more is a full day, less is a half day. A sales person\'s work-from-home day is paid only if orders were entered for that day in Sales. OT hours = time worked beyond '+adminMinH+' hours a day; shown for your information only, it does not change the pay and is not on the salary slip.'}))];
 }
 function editPay(s,m){
   const p=adminPay[s.id]||{};
@@ -736,7 +741,7 @@ function rpBuild(D){
   const products=Object.values(pg).sort((a,b)=>b.q-a.q);
   const att=all.filter(s=>s.active!==false||D.att.some(r=>r.staffId===s.id)).map(s=>{const l=D.att.filter(r=>r.staffId===s.id);
     return{s,present:l.filter(r=>r.in&&r.status!=='leave'&&r.status!=='wfh').length,wfh:l.filter(r=>r.status==='wfh').length,leave:l.filter(r=>r.status==='leave').length,
-      late:l.filter(r=>r.lateReason).length,early:l.filter(r=>r.earlyReason).length,noOut:l.filter(r=>r.in&&!r.out&&r.date<todayStr).length}});
+      late:l.filter(r=>r.lateReason).length,early:l.filter(r=>r.earlyReason).length,ot:l.reduce((t,r)=>t+otMin(r),0),noOut:l.filter(r=>r.in&&!r.out&&r.date<todayStr).length}});
   return{...D,sum,sales,work,products,att};
 }
 const workDetail=x=>x.parts?x.parts.map(([c,q])=>c.toLowerCase()+' '+q).join(', '):x.notes?x.notes.map(([d,v])=>dm(d)+': '+v).join(' · '):'';
@@ -777,7 +782,7 @@ function viewReports(){
       tbl(['Date','No.','Customer','Phone','District','Product','Type','Amount'],r.os.map(o=>[dm(o.date),o.orderNo||'',o.customer||'—',o.phone||'',o.district||'',o.product||'—',o.type==='affordable'?'Affordable':'Premium',amt0(o)?rs(amt0(o)):'—'])))));
   const prodP=el('div',{class:'panel'},el('h3',{text:'Products sold'}),R.products.length?tbl(['Product','Premium','Affordable','Total','Sales'],
     R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt?rs(r.amt):'—'])):el('div',{class:'empty',text:'No orders with a product in this period.'}));
-  const attP=el('div',{class:'panel'},el('h3',{text:'Attendance'}),tbl(['Name','Came','WFH','Leave','Late','Left early','No OUT'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut])));
+  const attP=el('div',{class:'panel'},el('h3',{text:'Attendance'}),tbl(['Name','Came','WFH','Leave','Late','Left early','No OUT','Overtime'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut,r.ot?fmtMin(r.ot):'—'])));
   return[head,summary,el('h2',{class:'sect',text:'Production & work'}),...workPanels,salesP,prodP,attP];
 }
 const pdfTxt=v=>String(v==null?'':v).replace(/₹/g,'Rs. ').replace(/[✓✗]/g,'').replace(/[–—]/g,'-').replace(/[^\x20-\x7E\xA0-\xFF\n]/g,'').trim();
@@ -814,7 +819,7 @@ function rpPdf(R){
     table(['Product','Pieces','Sales'],r.prods.map(x=>[CODE_NAMES[x.c]||x.c,x.q,x.amt?rsPlain(x.amt):'-']),[.5,.2,.3]);
     table(['Date','No.','Customer','District','Product','Type','Amount'],r.os.map(o=>[dm(o.date),o.orderNo||'',o.customer||'-',o.district||'',o.product||'-',o.type==='affordable'?'Affordable':'Premium',+o.amount?rsPlain(+o.amount):'-']),[.09,.11,.2,.17,.2,.11,.12])});
   if(R.products.length){title('Products sold');table(['Product','Premium','Affordable','Total','Sales'],R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt?rsPlain(r.amt):'-']),[.36,.14,.16,.14,.2])}
-  title('Attendance');table(['Name','Came','WFH','Leave','Late','Left early','No OUT'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut]),[.28,.12,.12,.12,.12,.12,.12]);
+  title('Attendance');table(['Name','Came','WFH','Leave','Late','Left early','No OUT','Overtime'],R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut,r.ot?fmtMin(r.ot):'-']),[.24,.1,.1,.1,.1,.12,.1,.14]);
   const pages=doc.getNumberOfPages();for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(140);doc.text('Page '+i+' of '+pages,W-M,H-18,{align:'right'})}
   saveFile('COUPLO_REPORT_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.pdf',doc.output('arraybuffer'),'application/pdf');
 }
@@ -828,7 +833,7 @@ function rpXlsx(R){
   add('ORDERS BY STAFF',[['STAFF','DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','TYPE','QTY','AMOUNT','DISPATCHED'],...R.sales.flatMap(r=>r.os.map(o=>[r.s.name,o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',o.type==='affordable'?'AFFORDABLE':'PREMIUM',+o.qty||1,+o.amount||0,o.dispatched==='TRUE'?'YES':'NO']))]);
   add('PRODUCTS BY STAFF',[['STAFF','PRODUCT','PIECES','SALES'],...R.sales.flatMap(r=>r.prods.map(x=>[r.s.name,CODE_NAMES[x.c]||x.c,x.q,x.amt]))]);
   add('PRODUCTS',[['PRODUCT','PREMIUM','AFFORDABLE','TOTAL','SALES'],...R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt])]);
-  add('ATTENDANCE',[['NAME','CAME','WFH','LEAVE','LATE','LEFT EARLY','NO OUT'],...R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut])]);
+  add('ATTENDANCE',[['NAME','CAME','WFH','LEAVE','LATE','LEFT EARLY','NO OUT','OVERTIME (H:MM)'],...R.att.map(r=>[r.s.name,r.present,r.wfh,r.leave,r.late,r.early,r.noOut,r.ot?Math.floor(r.ot/60)+':'+pad2(r.ot%60):''])]);
   saveFile('COUPLO_REPORT_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
 }
 
@@ -1294,28 +1299,28 @@ function exportXlsx(m){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
   const list=activeStaff(), dates=monthDates(m);const[y,mo]=m.split('-').map(Number);
   const r2=['DATE','DAY'],r3=['',''];
-  list.forEach(s=>{r2.push(s.name,'','','','');r3.push('CHECK IN','CHECK OUT','HOURS','STATUS','REASON')});
+  list.forEach(s=>{r2.push(s.name,'','','','','');r3.push('CHECK IN','CHECK OUT','HOURS','OT','STATUS','REASON')});
   const rows=[['ATTENDANCE REGISTER '+MON[mo-1].toUpperCase()+' '+y],r2,r3];
   dates.forEach(d=>{const ds=ymd(d);const row=[ds,DAYS[d.getDay()]];
     list.forEach(s=>{const r=adminRecs[ds+'__'+s.id];
-      if(!r){row.push('','','','','');return}
-      if(r.status==='leave'){row.push('LEAVE','LEAVE','','LEAVE',r.note||'');return}
-      if(r.status==='wfh'){row.push('WFH','WFH','','WFH',r.note||'');return}
+      if(!r){row.push('','','','','','');return}
+      if(r.status==='leave'){row.push('LEAVE','LEAVE','','','LEAVE',r.note||'');return}
+      if(r.status==='wfh'){row.push('WFH','WFH','','','WFH',r.note||'');return}
       const a=toMin(r.in),b=toMin(r.out);const h=(a!=null&&b!=null)?b-a:null;
-      row.push(r.in||'',r.out||'',h!=null?Math.floor(h/60)+':'+pad2(h%60):'',h==null?'NO OUT':h>=360?'FULL':'HALF',[r.lateReason?'Late: '+r.lateReason:'',r.earlyReason?'Early: '+r.earlyReason:'',r.note||''].filter(Boolean).join(' | '))});
+      const ot=otMin(r);row.push(r.in||'',r.out||'',h!=null?Math.floor(h/60)+':'+pad2(h%60):'',ot?Math.floor(ot/60)+':'+pad2(ot%60):'',h==null?'NO OUT':h>=360?'FULL':'HALF',[r.lateReason?'Late: '+r.lateReason:'',r.earlyReason?'Early: '+r.earlyReason:'',r.note||''].filter(Boolean).join(' | '))});
     rows.push(row)});
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}}].concat(list.map((_,i)=>({s:{r:1,c:2+i*5},e:{r:1,c:6+i*5}})));
-  ws['!cols']=[{wch:12},{wch:11}].concat(list.flatMap(()=>[{wch:9},{wch:10},{wch:7},{wch:8},{wch:22}]));
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}}].concat(list.map((_,i)=>({s:{r:1,c:2+i*6},e:{r:1,c:7+i*6}})));
+  ws['!cols']=[{wch:12},{wch:11}].concat(list.flatMap(()=>[{wch:9},{wch:10},{wch:7},{wch:6},{wch:8},{wch:22}]));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'ATTENDANCE');
   saveFile('ATTENDANCE_'+MON[mo-1].toUpperCase()+'_'+y+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
 }
 function exportSalary(m,calc){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
   const[y,mo]=m.split('-').map(Number);
-  const rows=[['SALARY '+MON[mo-1].toUpperCase()+' '+y],['NAME','ROLE','MONTHLY SALARY','FULL DAYS','HALF DAYS','WFH PAID','WFH NO ORDER','LEAVE','ABSENT','SUNDAYS PAID','SUNDAYS CUT','PAID DAYS','DAYS IN MONTH','PER DAY','EARNED','BONUS','ADVANCE','NET PAY','NOTE']];
-  calc.forEach(({s,c})=>rows.push([s.name,roleText(s.role),c.salary,c.full,c.half,c.wfhPaid,c.wfhUnpaid,c.leave,c.absent,c.sunPaid,c.sunCut,c.paid,c.nd,Math.round(c.perDay*100)/100,c.earned,c.extra,c.adv,c.net,c.note]));
-  rows.push(['TOTAL','',calc.reduce((t,x)=>t+x.c.salary,0),'','','','','','','','','','','',calc.reduce((t,x)=>t+x.c.earned,0),calc.reduce((t,x)=>t+x.c.extra,0),calc.reduce((t,x)=>t+x.c.adv,0),calc.reduce((t,x)=>t+x.c.net,0),'']);
+  const rows=[['SALARY '+MON[mo-1].toUpperCase()+' '+y],['NAME','ROLE','MONTHLY SALARY','FULL DAYS','HALF DAYS','WFH PAID','WFH NO ORDER','LEAVE','ABSENT','SUNDAYS PAID','SUNDAYS CUT','OT HOURS','PAID DAYS','DAYS IN MONTH','PER DAY','EARNED','BONUS','ADVANCE','NET PAY','NOTE']];
+  calc.forEach(({s,c})=>rows.push([s.name,roleText(s.role),c.salary,c.full,c.half,c.wfhPaid,c.wfhUnpaid,c.leave,c.absent,c.sunPaid,c.sunCut,c.ot?Math.floor(c.ot/60)+':'+pad2(c.ot%60):'',c.paid,c.nd,Math.round(c.perDay*100)/100,c.earned,c.extra,c.adv,c.net,c.note]));
+  rows.push(['TOTAL','',calc.reduce((t,x)=>t+x.c.salary,0),'','','','','','','','',(t=>t?Math.floor(t/60)+':'+pad2(t%60):'')(calc.reduce((t,x)=>t+x.c.ot,0)),'','','',calc.reduce((t,x)=>t+x.c.earned,0),calc.reduce((t,x)=>t+x.c.extra,0),calc.reduce((t,x)=>t+x.c.adv,0),calc.reduce((t,x)=>t+x.c.net,0),'']);
   const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=rows[1].map((h,i)=>({wch:i<2?14:Math.max(9,h.length+2)}));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'SALARY');
   saveFile('SALARY_'+MON[mo-1].toUpperCase()+'_'+y+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT);
