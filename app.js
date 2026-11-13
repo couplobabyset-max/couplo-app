@@ -7,6 +7,9 @@ const ymd=d=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
 const ymOf=d=>d.getFullYear()+'-'+pad2(d.getMonth()+1);
 const hm=d=>pad2(d.getHours())+':'+pad2(d.getMinutes());
 const toMin=t=>{if(!t)return null;const[a,b]=String(t).split(':').map(Number);return a*60+b};
+/* from 14 Nov 2026: working hours start at 9:30 AM — coming in earlier still counts from 9:30 (hours, half day, overtime).
+   Days before that keep their real IN time, so old records stay exactly as they were. */
+const WORK_START='09:30',RULE_FROM='2026-11-14';const inMin=(t,ds)=>{const m=toMin(t);return m==null?null:(ds||'')>=RULE_FROM?Math.max(m,toMin(WORK_START)):m};
 const fmtMin=m=>m==null?'':Math.floor(m/60)+'h '+pad2(m%60)+'m';
 const t12=t=>{if(!t)return '';let[h,m]=String(t).split(':').map(Number);const ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+pad2(m)+' '+ap};
 const rs=n=>'₹'+Math.round(n||0).toLocaleString('en-IN');
@@ -163,7 +166,7 @@ function reasonSheet(s,kind,time,inTime,send){
   const ok=el('button',{class:'btn primary big',type:'button',text:(late?'IN':'OUT')+'  ·  '+t12(time)});
   ok.onclick=async()=>{const r=txt.value.trim();if(r.length<3){toast('Please write the reason.');return}ok.disabled=true;ok.textContent='Saving…';
     try{await send(r)}catch(e){closeOv();toast('Could not save. Check the internet and try again.')}};
-  const worked=inTime?toMin(time)-toMin(inTime):0;
+  const worked=inTime?Math.max(0,toMin(time)-inMin(inTime,ymd(new Date()))):0;
   openOv(el('h2',{text:s.name}),
     el('p',{text:late?('You are coming in at '+t12(time)+'. Why are you late?'):('You came at '+t12(inTime)+' and worked '+fmtMin(worked)+' (less than '+kCfg.minHours+' hours). Why are you leaving early?')}),
     chips,txt,ok,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv}));
@@ -204,12 +207,12 @@ const payStaff=()=>staff.filter(s=>s.active!==false||s.sales).sort(byOrder);
 function ordersOn(ds,sid){const x=adminSales[ds+'__'+sid];return x?x.premium+x.affordable:0}
 /* overtime (admin only): time worked beyond the office minimum hours (Settings → minHours, default 8). Under 15 min is ignored. */
 let adminMinH=8;
-function otMin(r){if(!r||r.status==='leave'||r.status==='wfh')return 0;const a=toMin(r.in),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-adminMinH*60;return x>=15?x:0}
+function otMin(r){if(!r||r.status==='leave'||r.status==='wfh'||(r.date||'')<RULE_FROM)return 0;const a=inMin(r.in,r.date),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-adminMinH*60;return x>=15?x:0}
 function cellInfo(r){
   if(!r)return null;
   if(r.status==='leave')return{txt:'LEAVE',cls:'leave'};
   if(r.status==='wfh')return{txt:'WFH',cls:'wfh'};
-  const a=toMin(r.in),b=toMin(r.out);
+  const a=inMin(r.in,r.date),b=toMin(r.out);
   return{txt:(r.in?t12(r.in):'?')+' – '+(r.out?t12(r.out):'no OUT'),hrs:(a!=null&&b!=null)?b-a:null,noOut:!r.out};
 }
 /* Couplo salary rules: salary ÷ days in month; Sundays paid unless leave/absent on both the Saturday before and Monday after;
@@ -222,7 +225,7 @@ function calcPay(m,s){
     if(!r){val[ds]=ds===td?null:0;if(ds!==td)info.absent++;continue}
     if(r.status==='leave'){val[ds]=0;info.leave++;continue}
     if(r.status==='wfh'){if(s.sales){const ok=ordersOn(ds,s.id)>0;val[ds]=ok?1:0;ok?info.wfhPaid++:info.wfhUnpaid++}else{val[ds]=1;info.wfhPaid++}continue}
-    const a=toMin(r.in),b=toMin(r.out);
+    const a=inMin(r.in,r.date),b=toMin(r.out);
     if(a!=null&&b!=null){const h=b-a;info.mins+=h;info.ot=(info.ot||0)+otMin(r);if(h>=360){val[ds]=1;info.full++}else{val[ds]=.5;info.half++}}
     else if(a!=null){val[ds]=1;info.full++;if(ds!==td)info.noOut++}
     else{val[ds]=0;info.absent++}}
@@ -280,7 +283,7 @@ function viewRegister(){
   const tfoot=el('tfoot',{},el('tr',{},el('th',{text:'OT total'}),...otTot.map(v=>el('td',{class:'mono',style:v?'color:#0a7a3d;font-weight:700':'',text:v?fmtMin(v):'—'}))));
   const reg=el('div',{class:'panel'},
     el('div',{class:'toolbar'},el('h3',{text:'Monthly register'}),el('button',{class:'btn primary',type:'button',text:'Download Excel',onclick:()=>exportXlsx(m)})),
-    el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped. Green OT = overtime: time worked beyond '+adminMinH+' hours (only admin sees this).'}),
+    el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped. From 14 Nov: hours count from 9:30 AM even if someone comes earlier. Green OT = overtime: time worked beyond '+adminMinH+' hours (only admin sees this).'}),
     list.length?el('div',{class:'scroll'},el('table',{},thead,tbody,tfoot)):el('div',{class:'empty',text:'Add staff in the Staff tab to see the register.'}));
   return[todayPanel,reg];
 }
@@ -1081,7 +1084,47 @@ function viewDashboard(){
       el('tbody',{},...gDays.filter(ds=>ds<=todayStr||D.byDay[ds]).map(ds=>{const dt=new Date(ds+'T12:00:00'),b=D.byDay[ds]||{p:0,a:0};
         return el('tr',{class:isHoliday(ds)?'sun':''},el('th',{},el('span',{class:'mono',text:dm(ds)}),' '+DAYS[dt.getDay()].slice(0,3)+(holidays[ds]?' · '+holidays[ds]:'')),
           el('td',{class:'mono',text:String(b.p+b.a)}),el('td',{class:'mono',text:String(b.p)}),el('td',{class:'mono',text:String(b.a)}),el('td',{class:'mono',text:P.pDay[ds]?String(P.pDay[ds]):'—'}))})))))):null;
-  return[head,viewWeek(),head2,staffP,bucketP,gridP,timeP,dispP,printP,el('div',{class:'split'},prodP,distP),repP];
+  return[head,viewWeek(),head2,staffOne(R0),staffP,bucketP,gridP,timeP,dispP,printP,el('div',{class:'split'},prodP,distP),repP];
+}
+/* dashboard: one staff at a time — attendance, hours, overtime, orders/leads, work — for the chosen period */
+let dshStaff='';
+function staffOne(R0){
+  const B=rpBuild(R0);
+  const people=[...staff].sort(byOrder).filter(s=>s.active!==false||R0.att.some(r=>r.staffId===s.id)||R0.orders.some(o=>o.staffId===s.id)||R0.work.some(w=>w.staffId===s.id));
+  if(!people.length)return null;
+  if(!people.some(s=>s.id===dshStaff))dshStaff=people[0].id;
+  const s=people.find(x=>x.id===dshStaff);
+  const chips=el('div',{class:'fchips'},...people.map(x=>el('button',{type:'button',class:'fchip'+(x.id===dshStaff?' on':''),text:x.name,onclick:()=>{dshStaff=x.id;renderAdmin()}})));
+  const stat=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+  const att=R0.att.filter(r=>r.staffId===s.id), byDay={};att.forEach(r=>byDay[r.date]=r);
+  const past=R0.days.filter(ds=>ds<todayStr&&!isHoliday(ds));
+  const absent=past.filter(ds=>!byDay[ds]).length;
+  let mins=0,ot=0,full=0,half=0;att.forEach(r=>{if(r.status==='leave'||r.status==='wfh')return;const a=inMin(r.in,r.date),b=toMin(r.out);if(a!=null&&b!=null){mins+=b-a;b-a>=360?full++:half++}ot+=otMin(r)});
+  const A=B.att.find(x=>x.s.id===s.id)||{present:0,wfh:0,leave:0,late:0,early:0,noOut:0};
+  const attK=el('div',{class:'kpis'},stat(A.present,'Came',full+' full · '+half+' half'),stat(A.wfh,'Work from home'),stat(A.leave,'Leave'),stat(absent,'Absent','no IN, not leave',absent?'warnk':''),
+    stat(A.late,'Late',A.late?'gave a reason':'',A.late?'warnk':''),stat(A.early,'Left early','',A.early?'warnk':''),stat(fmtMin(mins)||'0h 00m','Hours worked',(full+half)?'avg '+fmtMin(Math.round(mins/(full+half)))+' / day':''),
+    stat(ot?fmtMin(ot):'—','Overtime','beyond '+adminMinH+' h a day'),A.noOut?stat(A.noOut,'No OUT','fix in Register','warnk'):null);
+  const S=B.sales.find(x=>x.s.id===s.id);
+  const os=R0.orders.filter(o=>o.staffId===s.id), sent=os.filter(o=>String(o.dispatched).toUpperCase()==='TRUE').length;
+  const salesK=S&&(S.n||S.leads||s.sales)?el('div',{},el('h3',{class:'sub',text:'Sales'}),el('div',{class:'kpis'},stat(S.n,'Orders',S.p+' premium · '+S.a+' affordable'),stat(rs(S.amt),'Sales',S.n?'avg '+rs(S.amt/S.n):''),
+    stat(S.leads||'—','Leads'),S.leads?stat(Math.round(S.n/S.leads*100)+'%','Conversion'):null,stat(sent+' / '+S.n,'Dispatched','',S.n-sent?'warnk':''),
+    stat(past.length?(S.n/Math.max(1,past.filter(ds=>byDay[ds]&&byDay[ds].status!=='leave').length)).toFixed(1):'—','Orders per working day')),
+    S.prods.length?el('p',{class:'hint',text:'Products: '+S.prods.slice(0,10).map(x=>(CODE_NAMES[x.c]||x.c).toLowerCase()+' '+x.q).join(', ')}):null):null;
+  const W=B.work.find(x=>x.s.id===s.id);
+  const workK=W&&W.totals.some(t=>t.total)?el('div',{},el('h3',{class:'sub',text:'Work done'}),el('div',{class:'kpis'},...W.totals.filter(t=>t.total&&t.t.kind!=='text').map(t=>stat(t.total,t.t.name,t.parts?t.parts.slice(0,4).map(([c,q])=>c.toLowerCase()+' '+q).join(', '):''))),
+    W.missing.length?el('p',{class:'hint',text:'Came but saved no work on: '+W.missing.map(dm).join(', ')}):null,
+    ...W.totals.filter(t=>t.notes&&t.notes.length).map(t=>el('details',{},el('summary',{text:t.t.name+' ('+t.notes.length+')'}),el('p',{class:'hint',text:t.notes.map(([d,v])=>dm(d)+': '+v).join(' · ')})))):null;
+  const wk={};R0.work.filter(w=>w.staffId===s.id&&w.value!=='').forEach(w=>{const t=tasks.find(x=>x.id===w.taskId);if(!t||t.kind==='text')return;const v=t.kind==='yesno'?(w.value==='TRUE'?'✓':''):(t.kind==='colours'||t.kind==='items')?colTotal(w.value):w.value;if(v!==''&&v!==0)(wk[w.date]=wk[w.date]||[]).push(t.name+' '+v)});
+  const rows=R0.days.filter(ds=>ds<=todayStr).slice().reverse().map(ds=>{const dt=new Date(ds+'T12:00:00'),r=byDay[ds],n=os.filter(o=>o.date===ds).length;let st,cls='',hrs='',o='';
+    if(!r){st=isHoliday(ds)?(holidays[ds]||'Sunday'):ds===todayStr?'Not in yet':'Absent';cls=isHoliday(ds)||ds===todayStr?'c-hrs':'flag'}
+    else if(r.status==='leave')st='Leave';else if(r.status==='wfh')st='Work from home';
+    else{const a=inMin(r.in,r.date),b=toMin(r.out);st=t12(r.in)+' – '+(r.out?t12(r.out):'no OUT');if(a!=null&&b!=null){hrs=fmtMin(b-a)+(b-a<360?' (half)':'')}else if(ds!==todayStr)cls='flag';const x=otMin(r);if(x)o=fmtMin(x)}
+    const why=r?[r.lateReason?'Late: '+r.lateReason:'',r.earlyReason?'Early: '+r.earlyReason:'',r.note||''].filter(Boolean).join(' · '):'';
+    return el('tr',{class:isHoliday(ds)?'sun':''},el('th',{},el('span',{class:'mono',text:dm(ds)}),' '+DAYS[dt.getDay()].slice(0,3)),el('td',{class:'mono '+cls,text:st}),el('td',{class:'mono',text:hrs}),
+      el('td',{class:'mono',style:o?'color:#0a7a3d;font-weight:600':'',text:o}),el('td',{class:'mono',text:n?String(n):''}),el('td',{class:'c-hrs',text:(wk[ds]||[]).join(', ')}),el('td',{class:'c-hrs',text:why}))});
+  const dayT=el('details',{open:R0.days.length<=7},el('summary',{text:'Day by day'}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','In – Out','Hours','OT','Orders','Work','Reason / note'].map(t=>el('th',{text:t})))),el('tbody',{},...rows))));
+  return el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Each staff · '+s.name}),el('span',{class:'c-hrs',text:catOf(s)+(s.active===false?' · not on check-in':'')})),
+    chips,el('h3',{class:'sub',text:'Attendance'}),attK,salesK,workK,dayT);
 }
 function dashXlsx(D){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
@@ -1178,12 +1221,12 @@ function myAttendance(d){
     if(!r){if(sun){st='Sunday';cls='c-hrs'}else if(ds===d.today){st='Not checked in yet';cls='c-hrs'}else{st='Absent';cls='flag';absent++}}
     else if(r.status==='leave'){st='Leave';leave++}
     else if(r.status==='wfh'){st='Work from home';wfh++}
-    else{const a=toMin(r.in),b=toMin(r.out);st=t12(r.in)+' – '+(r.out?t12(r.out):'no OUT');if(a!=null&&b!=null){const h=b-a;mins+=h;hrs=fmtMin(h);if(h>=360)full++;else half++}else if(ds!==d.today){cls='flag'}else full+=0;if(r.lateReason)late++;if(r.earlyReason)early++}
+    else{const a=inMin(r.in,r.date),b=toMin(r.out);st=t12(r.in)+' – '+(r.out?t12(r.out):'no OUT');if(a!=null&&b!=null){const h=b-a;mins+=h;hrs=fmtMin(h);if(h>=360)full++;else half++}else if(ds!==d.today){cls='flag'}else full+=0;if(r.lateReason)late++;if(r.earlyReason)early++}
     return el('tr',{class:sun?'sun':''},el('th',{},el('span',{class:'mono',text:pad2(x.getDate())}),' '+DAYS[x.getDay()].slice(0,3)),el('td',{class:'mono '+cls,text:st}),el('td',{class:'mono c-hrs',text:hrs}),
       el('td',{class:'c-hrs',text:r?[r.lateReason?'Late: '+r.lateReason:'',r.earlyReason?'Early: '+r.earlyReason:'',r.note||''].filter(Boolean).join(' · '):''}))});
   const stat=(n,l)=>el('div',{},el('b',{class:'mono',text:String(n)}),el('span',{text:l}));
   return[el('div',{class:'panel'},el('h3',{text:'Summary'}),el('div',{class:'stats'},stat(full,'Full days'),stat(half,'Half days'),stat(leave,'Leave'),stat(absent,'Absent'),stat(wfh,'WFH'),stat(late,'Late'),stat(early,'Left early'),stat(fmtMin(mins),'Total hours')),
-      el('p',{class:'hint',text:'Office rule: in by '+t12(d.lateAfter)+', at least '+d.minHours+' hours a day. Under 6 hours counts as a half day. If something is wrong, tell HR.'})),
+      el('p',{class:'hint',text:'Office rule: in by '+t12(d.lateAfter)+', at least '+d.minHours+' hours a day. From 14 Nov, hours count from 9:30 AM even if you come earlier. Under 6 hours counts as a half day. If something is wrong, tell HR.'})),
     el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','In – Out','Hours','Reason / note'].map(t=>el('th',{text:t})))),el('tbody',{},...rows))))];
 }
 function myOrdersView(edit,d){
@@ -1306,7 +1349,7 @@ function exportXlsx(m){
       if(!r){row.push('','','','','','');return}
       if(r.status==='leave'){row.push('LEAVE','LEAVE','','','LEAVE',r.note||'');return}
       if(r.status==='wfh'){row.push('WFH','WFH','','','WFH',r.note||'');return}
-      const a=toMin(r.in),b=toMin(r.out);const h=(a!=null&&b!=null)?b-a:null;
+      const a=inMin(r.in,r.date),b=toMin(r.out);const h=(a!=null&&b!=null)?b-a:null;
       const ot=otMin(r);row.push(r.in||'',r.out||'',h!=null?Math.floor(h/60)+':'+pad2(h%60):'',ot?Math.floor(ot/60)+':'+pad2(ot%60):'',h==null?'NO OUT':h>=360?'FULL':'HALF',[r.lateReason?'Late: '+r.lateReason:'',r.earlyReason?'Early: '+r.earlyReason:'',r.note||''].filter(Boolean).join(' | '))});
     rows.push(row)});
   const ws=XLSX.utils.aoa_to_sheet(rows);
