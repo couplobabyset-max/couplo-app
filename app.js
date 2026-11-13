@@ -1194,13 +1194,19 @@ function ring(pct,big,sub,col){const r=34,C=2*Math.PI*r,p=Math.max(0,Math.min(1,
   return svgBox('<svg viewBox="0 0 88 88" width="88" height="88"><circle cx="44" cy="44" r="'+r+'" fill="none" stroke="var(--sunk)" stroke-width="9"/><circle cx="44" cy="44" r="'+r+'" fill="none" stroke="'+(col||'var(--accent)')+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+(C*(1-p)).toFixed(1)+'" transform="rotate(-90 44 44)"/><text x="44" y="46" text-anchor="middle" font-size="17" font-weight="700" fill="var(--ink)">'+big+'</text><text x="44" y="61" text-anchor="middle" font-size="9.5" fill="var(--muted)">'+(sub||'')+'</text></svg>',big+' '+(sub||''))}
 function bar(n,t,col){const p=t?Math.min(100,Math.round(n/t*100)):0;return el('div',{style:'height:10px;background:var(--sunk);border-radius:6px;overflow:hidden;margin:6px 0'},el('div',{style:'height:100%;width:'+p+'%;background:'+(col||'var(--accent)')+';border-radius:6px'}))}
 const wkLabel=w=>dm(w.from)+' – '+dm(w.to);
+let arenaPeriod='week';
+const perWord=A=>A.period==='month'?'month':'week';
+const monFull=m=>MON[+m.slice(5)-1]+" "+m.slice(0,4);
+function periodSeg(onChange){return el('div',{class:'seg',role:'group','aria-label':'Week or month'},...[['week','This week'],['month','This month']].map(([v,t])=>el('button',{type:'button',class:'segbtn'+(arenaPeriod===v?' on':''),'aria-pressed':String(arenaPeriod===v),text:t,onclick:()=>{arenaPeriod=v;onChange()}})))}
 function arenaTeam(A){const t=A.team;
-  return el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'🏆 Weekly Arena · '+wkLabel(A.week)})),
-    el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:t.week+' / '+t.weekTarget}),el('span',{text:'Team orders this week'})),el('div',{},el('b',{class:'mono',text:t.month+' / '+t.monthTarget}),el('span',{text:'Team orders this month'})),el('div',{},el('b',{class:'mono',text:String(Math.max(0,t.weekTarget-t.week))}),el('span',{text:'Left for the week'}))),
-    bar(t.week,t.weekTarget,t.week>=t.weekTarget?'var(--ok)':'var(--c-aff)'))}
+  const mo=A.period==='month';
+  return el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'🏆 Arena · '+(mo?monFull(A.month):wkLabel(A.week))})),
+    mo?el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:t.month+' / '+t.monthTarget}),el('span',{text:'Team orders this month'})),el('div',{},el('b',{class:'mono',text:String(Math.max(0,t.monthTarget-t.month))}),el('span',{text:'Left for the month'})),el('div',{},el('b',{class:'mono',text:String(t.daysLeft)}),el('span',{text:'Working days left'})))
+      :el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:t.week+' / '+t.weekTarget}),el('span',{text:'Team orders this week'})),el('div',{},el('b',{class:'mono',text:t.month+' / '+t.monthTarget}),el('span',{text:'Team orders this month'})),el('div',{},el('b',{class:'mono',text:String(Math.max(0,t.weekTarget-t.week))}),el('span',{text:'Left for the week'}))),
+    mo?bar(t.month,t.monthTarget,t.month>=t.monthTarget?'var(--ok)':'var(--c-aff)'):bar(t.week,t.weekTarget,t.week>=t.weekTarget?'var(--ok)':'var(--c-aff)'))}
 function arenaBoardList(A,meId,admin){
   const open={};
-  const box=el('div',{class:'panel'},el('h3',{text:'Leaderboard · points this week'}));
+  const box=el('div',{class:'panel'},el('h3',{text:'Leaderboard · points this '+perWord(A)}));
   const list=el('div');
   const draw=()=>list.replaceChildren(...A.board.map((r,i)=>{
     const mine=r.id===meId, top=A.board[0]&&A.board[0].pts>0?A.board[0].pts:1;
@@ -1209,14 +1215,14 @@ function arenaBoardList(A,meId,admin){
       el('div',{style:'flex:1;min-width:0'},el('div',{style:'font-weight:600',text:r.name+(mine?' (you)':'')}),el('div',{class:'hint',style:'margin:0',text:SEC_LABEL[r.section]+(r.section==='Sales'?' · '+r.month+'/'+r.target+' orders this month':'')}),
         el('div',{style:'height:6px;background:var(--sunk);border-radius:4px;margin-top:4px;overflow:hidden'},el('div',{style:'height:100%;width:'+Math.max(0,Math.round(r.pts/top*100))+'%;background:var(--accent)'}))),
       el('b',{class:'mono',style:'font-size:18px',text:String(r.pts)}));
-    const lines=(open[r.id]&&(admin||mine||true))?el('div',{style:'margin:-2px 0 10px 40px'},...(r.lines.length?r.lines.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(l=>el('div',{class:'hint',style:'margin:2px 0;display:flex;gap:8px'},el('span',{class:'mono',text:dm(l.date)}),el('span',{style:'flex:1',text:l.why}),el('b',{class:'mono',style:'color:'+(l.pts<0?'#B3261E':'var(--ok)'),text:ptsTxt(l.pts)}))):[el('div',{class:'hint',text:'No points yet this week. Normal work = 0; points come for work above normal.'})])):null;
+    const lines=(open[r.id]&&(admin||mine||true))?el('div',{style:'margin:-2px 0 10px 40px'},...(r.lines.length?r.lines.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(l=>el('div',{class:'hint',style:'margin:2px 0;display:flex;gap:8px'},el('span',{class:'mono',text:dm(l.date)}),el('span',{style:'flex:1',text:l.why}),el('b',{class:'mono',style:'color:'+(l.pts<0?'#B3261E':'var(--ok)'),text:ptsTxt(l.pts)}))):[el('div',{class:'hint',text:'No points yet this '+perWord(A)+'. Normal work = 0; points come for work above normal.'})])):null;
     return el('div',{},head,lines)}));
   draw();box.append(list);return box}
 function arenaMine(A,meId){
   const r=A.board.find(x=>x.id===meId);if(!r)return el('div',{class:'panel'},el('p',{class:'hint',text:'You are not in the Arena yet. Ask admin to set your section.'}));
   const rank=A.board.indexOf(r);
   const kids=[el('div',{style:'display:flex;gap:16px;align-items:center;flex-wrap:wrap'},
-    el('div',{},el('div',{class:'hint',style:'margin:0',text:'My points this week'}),el('div',{style:'font:700 34px var(--f-display)',text:String(r.pts)}),el('div',{class:'hint',style:'margin:0',text:'Rank '+medal(rank)+' of '+A.board.length})),
+    el('div',{},el('div',{class:'hint',style:'margin:0',text:'My points this '+perWord(A)}),el('div',{style:'font:700 34px var(--f-display)',text:String(r.pts)}),el('div',{class:'hint',style:'margin:0',text:'Rank '+medal(rank)+' of '+A.board.length})),
     r.section==='Sales'?ring(r.month/r.target,String(r.month),'of '+r.target,r.month>=r.target?'var(--ok)':'var(--accent)'):null,
     r.section==='Sales'?el('div',{},el('div',{style:'font-weight:600',text:r.left?r.left+' orders left this month':'🔥 Incentive zone: '+r.incentive+' above target'}),el('div',{class:'hint',style:'margin:2px 0',text:r.left?'Need ~'+r.perDay+' orders a day ('+A.team.daysLeft+' working days left)':'Every order now counts for incentive.'}),el('div',{class:'hint',style:'margin:0',text:'This week: '+r.week+' orders'+(r.conv!=null?' · conversion '+r.conv+'%':'')})):null)];
   return el('div',{class:'panel'},...kids)}
@@ -1295,8 +1301,8 @@ function arenaAccounts(d,reload){
 /* ---- staff portal tab ---- */
 function myArenaView(){
   const box=el('div',{},el('div',{class:'empty',text:'Loading Arena…'}));
-  const load=async()=>{try{const d=await call('arenaMe',{staffId:me.id,pin:me.pin});const A=d.arena;
-    const parts=[arenaMine(A,d.me),arenaTeam(A)];
+  const load=async()=>{try{const d=await call('arenaMe',{staffId:me.id,pin:me.pin,period:arenaPeriod});const A=d.arena;
+    const parts=[periodSeg(load),arenaMine(A,d.me),arenaTeam(A)];
     if(d.media)parts.push(...arenaMedia(d,load));
     if(d.queue)parts.push(...arenaQueue(d,load));
     if(d.cats.includes('Design')||d.cats.includes('Printing'))parts.push(arenaIssueForm(d,load));
@@ -1310,11 +1316,12 @@ let arenaDay=null;
 function viewArena(){
   const box=el('div',{},el('div',{class:'empty',text:'Loading Arena…'}));
   arenaDay=arenaDay||ymd(new Date());
-  const load=async()=>{let A;try{A=await call('arenaAdmin',{adminPin,day:arenaDay})}catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message}));return}
+  const load=async()=>{let A;try{A=await call('arenaAdmin',{adminPin,day:arenaDay,period:arenaPeriod})}catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message}));return}
     const nm=id=>{const s=A.staffNames.find(x=>x.id===id);return s?s.name:id||'—'};
-    const nav=el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'← Week',onclick:()=>{arenaDay=addDays(A.week.from,-7);load()}}),el('b',{text:wkLabel(A.week)}),el('button',{class:'btn',type:'button',text:'Week →',onclick:()=>{arenaDay=addDays(A.week.from,7);load()}}));
+    const mo=A.period==='month',mStep=k=>{const d=new Date(A.month+'-01T12:00:00');d.setMonth(d.getMonth()+k);return ymd(d)};
+    const nav=el('div',{class:'row'},periodSeg(load),el('button',{class:'btn',type:'button',text:mo?'← Month':'← Week',onclick:()=>{arenaDay=mo?mStep(-1):addDays(A.week.from,-7);load()}}),el('b',{text:mo?monFull(A.month):wkLabel(A.week)}),el('button',{class:'btn',type:'button',text:mo?'Month →':'Week →',onclick:()=>{arenaDay=mo?mStep(1):addDays(A.week.from,7);load()}}));
     const sales=A.board.filter(r=>r.section==='Sales');
-    const tbl=el('div',{class:'panel'},el('h3',{text:'Sales targets · this month'}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Staff','Month','Target','Left','Per day','This week','Leads','Conv.','Incentive'].map(t=>el('th',{text:t})))),
+    const tbl=el('div',{class:'panel'},el('h3',{text:'Sales targets · '+monFull(A.month)}),el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Staff','Month','Target','Left','Per day','This week','Leads','Conv.','Incentive'].map(t=>el('th',{text:t})))),
       el('tbody',{},...sales.map(r=>el('tr',{},el('td',{text:r.name}),el('td',{class:'mono',text:String(r.month)}),el('td',{class:'mono',text:String(r.target)}),el('td',{class:'mono',text:String(r.left)}),el('td',{class:'mono',text:r.left?String(r.perDay):'✓'}),el('td',{class:'mono',text:String(r.week)}),el('td',{class:'mono',text:r.leads?String(r.leads):r.id==='fida'?'organic':'0'}),el('td',{class:'mono',text:r.conv!=null?r.conv+'%':'—'}),el('td',{class:'mono',text:r.incentive?'+'+r.incentive:''})))))),
       el('p',{class:'hint',text:'Fida works organic customers (no CRM leads), so she has no conversion.'}));
     /* approvals */
@@ -1327,7 +1334,7 @@ function viewArena(){
     /* bonus */
     const bs=el('select',{id:'bn-s'},...A.board.map(r=>el('option',{value:r.id,text:r.name}))),bp=el('input',{id:'bn-p',type:'number',value:'20',style:'width:90px'}),bnote=el('input',{id:'bn-n',type:'text',placeholder:'e.g. Top reel of the week'});
     const bonus=el('div',{class:'panel'},el('h3',{text:'Bonus / minus points'}),el('div',{class:'form2'},el('label',{class:'f',for:'bn-s'},'Staff',bs),el('label',{class:'f',for:'bn-p'},'Points (minus allowed)',bp),el('label',{class:'f',for:'bn-n'},'Reason',bnote)),
-      el('button',{class:'btn primary',type:'button',text:'Add',onclick:async()=>{try{await call('bonusAdd',{adminPin,staffId:bs.value,points:bp.value,note:bnote.value,date:todayStr<=A.week.to&&todayStr>=A.week.from?todayStr:A.week.to});toast('Added');load()}catch(e){toast(e.message)}}}),
+      el('button',{class:'btn primary',type:'button',text:'Add',onclick:async()=>{try{await call('bonusAdd',{adminPin,staffId:bs.value,points:bp.value,note:bnote.value,date:todayStr<=A.range.to&&todayStr>=A.range.from?todayStr:A.range.to});toast('Added');load()}catch(e){toast(e.message)}}}),
       ...A.bonus.map(x=>el('div',{class:'hint',style:'display:flex;gap:8px;align-items:center'},el('span',{style:'flex:1',text:dm(x.date)+' · '+nm(x.staffId)+' · '+ptsTxt(+x.points)+' · '+(x.note||'')}),el('button',{class:'btn',type:'button',text:'Delete',onclick:async()=>{await call('bonusDelete',{adminPin,id:x.id});load()}}))));
     /* media log + accounts */
     const media=el('div',{class:'panel'},el('h3',{text:'Videos · last 14 days'}),A.recentMedia.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','Staff','Video','Status','Instagram'].map(t=>el('th',{text:t})))),el('tbody',{},...A.recentMedia.map(m=>el('tr',{},el('td',{class:'mono',text:dm(m.date)}),el('td',{text:nm(m.staffId)}),el('td',{text:[m.product,m.concept,m.title].filter(Boolean).join(' · ')}),el('td',{text:m.status+(+m.reedits?' ×'+m.reedits:'')}),el('td',{},m.igLink?el('a',{href:m.igLink,target:'_blank',rel:'noopener',text:'Open'}):'')))))):el('div',{class:'empty',text:'No videos yet.'}));

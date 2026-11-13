@@ -983,10 +983,25 @@ function arenaScore_(wk, today) {
   return res;
 }
 
-/* the whole board for one week + order targets for the month */
-function arenaBoard_(day, today) {
-  var wk = weekOf_(day), sc = arenaScore_(wk, today), people = arenaStaff_();
-  var month = day.slice(0, 7), orders = rows_('Orders');
+/* month points = every week's points whose date falls in that month (week bonuses are dated on the week's Sunday) */
+function arenaMonthScore_(month, today) {
+  var from = month + '-01', to = Utilities.formatDate(new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0), TZ, 'yyyy-MM-dd'), res = {};
+  for (var w = weekOf_(from); w.from <= to; w = weekOf_(ad_(w.from, 7))) {
+    if (w.from > today) break;
+    var sc = arenaScore_(w, today);
+    Object.keys(sc).forEach(function (id) {
+      var r = res[id] = res[id] || { pts: 0, lines: [] };
+      sc[id].lines.forEach(function (l) { if (l.date >= from && l.date <= to) { r.pts += l.pts; r.lines.push(l); } });
+    });
+  }
+  return { range: { from: from, to: to }, sc: res };
+}
+/* the whole board for one week (or one month) + order targets for the month */
+function arenaBoard_(day, today, period) {
+  var month = day.slice(0, 7), wk = weekOf_(day), people = arenaStaff_(), sc, range;
+  if (period === 'month') { var ms = arenaMonthScore_(month, today); sc = ms.sc; range = ms.range; } else { sc = arenaScore_(wk, today); range = wk; }
+  people.forEach(function (s) { sc[s.id] = sc[s.id] || { pts: 0, lines: [] }; });
+  var orders = rows_('Orders');
   var mt = arenaNum_('salesMonthTarget'), wt = arenaNum_('teamWeekTarget');
   var mEnd = Utilities.formatDate(new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0), TZ, 'yyyy-MM-dd');
   var left = workDays_(today > month + '-01' ? today : month + '-01', mEnd).length || 1;
@@ -1005,7 +1020,7 @@ function arenaBoard_(day, today) {
   var teamWeek = orders.filter(function (o) { return inRange_(o.date, wk); }).length;
   var teamMonth = orders.filter(function (o) { return o.date.indexOf(month) === 0; }).length;
   var nSales = people.filter(function (s) { return s.section === 'Sales'; }).length;
-  return { week: wk, today: today, board: board, team: { week: teamWeek, weekTarget: wt, month: teamMonth, monthTarget: mt * nSales, daysLeft: left } };
+  return { period: period === 'month' ? 'month' : 'week', range: range, month: month, week: wk, today: today, board: board, team: { week: teamWeek, weekTarget: wt, month: teamMonth, monthTarget: mt * nSales, daysLeft: left } };
 }
 
 /* actions any logged-in staff can do (staffId + PIN) */
@@ -1020,7 +1035,7 @@ function arenaStaffAction_(b, n) {
   var order = function () { return rows_('Orders').filter(function (o) { return o.id === b.orderId; })[0]; };
   switch (b.action) {
     case 'arenaMe': {
-      var bd = arenaBoard_(/^\d{4}-\d{2}-\d{2}$/.test(String(b.day)) ? String(b.day) : n.date, n.date), out = { ok: true, me: me.id, section: sec, cats: cats, arena: bd };
+      var bd = arenaBoard_(/^\d{4}-\d{2}-\d{2}$/.test(String(b.day)) ? String(b.day) : n.date, n.date, b.period), out = { ok: true, me: me.id, section: sec, cats: cats, arena: bd };
       var recent = ad_(n.date, -30);
       if (can('Media')) out.media = rows_('Media').filter(function (m) { return m.staffId === me.id && m.date >= recent; }).reverse();
       if (can('Design') || can('Printing')) {
@@ -1093,13 +1108,13 @@ function arenaAdminAction_(b, n) {
   switch (b.action) {
     case 'arenaAdmin': {
       var day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day)) ? String(b.day) : n.date;
-      var out = arenaBoard_(day, n.date);
+      var out = arenaBoard_(day, n.date, b.period);
       out.ok = true;
       out.pendingMedia = rows_('Media').filter(function (m) { return m.status === 'pending'; });
       out.recentMedia = rows_('Media').filter(function (m) { return m.date >= ad_(n.date, -14); }).reverse();
       out.pendingIssues = rows_('Issues').filter(function (x) { return x.status === 'pending'; });
       out.accounts = rows_('Accounts').filter(function (r) { return r.date >= ad_(n.date, -14); }).reverse();
-      out.bonus = rows_('Bonus').filter(function (x) { return inRange_(x.date, out.week); });
+      out.bonus = rows_('Bonus').filter(function (x) { return inRange_(x.date, out.range); });
       out.settings = {}; Object.keys(ARENA_DEFAULTS).forEach(function (k) { out.settings[k] = arenaSet_(k); });
       out.staffNames = staffList_().map(function (s) { return { id: s.id, name: s.name, sales: s.sales, section: arenaSection_(s) }; });
       return out;
