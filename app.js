@@ -152,7 +152,7 @@ function punchSheet(s,pin){
   let label;
   if(!r||!r.in)label='IN  ·  '+t12(now);
   else if(!r.out){kids.push(el('p',{text:'You came in at '+t12(r.in)+'.'}));label='OUT  ·  '+t12(now)}
-  else{kids.push(el('p',{text:'Today: IN '+t12(r.in)+', OUT '+t12(r.out)+'. Leaving again later? Update your OUT time.'}));label='Update OUT to '+t12(now)}
+  else{kids.push(el('p',{text:'Today: IN '+t12(r.in)+', OUT '+t12(r.out)+'. OUT is already marked and cannot be changed here. If it is wrong, ask admin.'}),el('button',{class:'btn',type:'button',text:'Close',onclick:closeOv}));openOv(...kids);return}
   const b=el('button',{class:'btn primary big',type:'button',text:label});b.onclick=()=>go(b);
   kids.push(b,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv}));
   openOv(...kids);

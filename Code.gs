@@ -15,7 +15,8 @@ var SHEETS = {
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
   Settings:   ['key','value'],
-  Capi:       ['id','status','sentAt','orderNo','value','note']   // Meta Conversions API log — one row per order sent
+  Capi:       ['id','status','sentAt','orderNo','value','note'],   // Meta Conversions API log — one row per order sent
+  EditLog:    ['time','action','staff','date','before','after']    // every admin change to attendance / attendance settings (cannot be changed from the app)
 };
 /* daily work items. category = a staff category (Media, Production, Office) OR one staff id (e.g. jaseera).
    kind: count = a number, yesno = done / not done, colours = colour + how many, items = fixed list + how many, text = short note */
@@ -166,10 +167,43 @@ function dailyReport(forceDate) {
     '<h3 style="color:#511F52">Today\'s products</h3>' + table(['Product', 'Orders'], topOf('product')) +
     '<h3 style="color:#511F52">Today\'s districts</h3>' + table(['District', 'Orders'], topOf('district')) +
     '<h3 style="color:#511F52">Daily work (printing, accessories, media)</h3>' + table(['Staff', 'Work done'], workRows) +
+    editLogHtml_(day, esc, table) +
     '<h3 style="color:#511F52">Attendance</h3>' + (notIn.length ? '<p style="color:#9a5b00"><b>No attendance:</b> ' + notIn.join(', ') + '</p>' : '') + table(['Staff', 'In – Out', 'Reasons / notes'], attRows) +
     '<p style="color:#888;font-size:12px">Sent automatically by the Couplo Attendance app. Change the time or turn this off in Admin → Staff → Daily report.</p></div></div>';
   MailApp.sendEmail({ to: to, subject: 'Couplo daily report · ' + day + ' · ' + today.length + ' orders · ' + rs(tot), htmlBody: html, name: 'Couplo Attendance' });
   return { ok: true, to: to };
+}
+
+/* ---------- edit log: every admin change to attendance is written to the EditLog sheet and e-mailed
+   straight away to the owner (the Google account this script runs as — it cannot be changed from the app) ---------- */
+function attText_(r) {
+  if (!r) return 'nothing';
+  if (r.status === 'leave') return 'Leave' + (r.note ? ' (' + r.note + ')' : '');
+  if (r.status === 'wfh') return 'Work from home' + (r.note ? ' (' + r.note + ')' : '');
+  return 'IN ' + (r.in || '?') + ' – OUT ' + (r.out || 'none') + [r.lateReason ? ' · late: ' + r.lateReason : '', r.earlyReason ? ' · early: ' + r.earlyReason : '', r.note ? ' · note: ' + r.note : ''].join('');
+}
+function logEdit_(action, staffId, date, before, after) {
+  if (before === after && action.indexOf('changed') > 0) return; // saved without changing anything
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet(), sh = ss.getSheetByName('EditLog');
+    if (!sh) { sh = ss.insertSheet('EditLog'); sh.getRange(1, 1, 1, SHEETS.EditLog.length).setValues([SHEETS.EditLog]).setFontWeight('bold'); sh.setFrozenRows(1); }
+    var who = staffId ? ((staffList_().filter(function (x) { return x.id === staffId; })[0] || {}).name || staffId) : '';
+    var t = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, 6).setNumberFormat('@').setValues([[t, action, who, date || '', before || '', after || '']]);
+    var owner = Session.getEffectiveUser().getEmail();
+    if (owner) MailApp.sendEmail({ to: owner, name: 'Couplo Attendance', subject: 'Attendance edit: ' + action + (who ? ' · ' + who : '') + (date ? ' · ' + date : ''),
+      htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2630"><b>' + action + '</b> in the admin panel at ' + t + '<br><br>' +
+        (who ? 'Staff: <b>' + who + '</b><br>' : '') + (date ? 'Day: <b>' + date + '</b><br>' : '') +
+        (before ? 'Before: ' + before + '<br>' : '') + (after ? 'After: <b>' + after + '</b><br>' : '') +
+        '<br><span style="color:#888;font-size:12px">Every attendance change is also kept in the EditLog sheet of the attendance Google Sheet.</span></div>' });
+  } catch (e) { /* never block the save because of the log */ }
+}
+function editLogHtml_(day, esc, table) {
+  var sh = sh_('EditLog'); if (!sh || sh.getLastRow() < 2) return '';
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getDisplayValues().filter(function (r) { return String(r[0]).indexOf(day) === 0; });
+  if (!rows.length) return '';
+  return '<h3 style="color:#b42318">Changes made in the admin panel today (' + rows.length + ')</h3>' +
+    table(['Time', 'Change', 'Staff', 'Day', 'Before', 'After'], rows.map(function (r) { return [esc(r[0].slice(11)), esc(r[1]), esc(r[2]), esc(r[3]), esc(r[4]), '<b>' + esc(r[5]) + '</b>']; }));
 }
 
 /* ---------- helpers ---------- */
@@ -394,6 +428,8 @@ function handle_(b) {
       if (!rec || !rec.in) {
         if (toMin(n.time) > toMin(setting_('lateAfter') || '09:40') && !reason) return { ok: false, needReason: 'late', time: n.time };
         rec = { key: key, date: n.date, staffId: s.id, status: 'present', in: n.time, out: '', note: '', lateReason: reason, earlyReason: '' }; kind = 'in';
+      } else if (rec.out) {
+        return { ok: false, error: 'OUT already marked at ' + rec.out + '. Only admin can change it.' };
       } else {
         if (toMin(n.time) - toMin(rec.in) < Number(setting_('minHours') || 8) * 60 && !reason) return { ok: false, needReason: 'early', time: n.time, in: rec.in };
         rec.out = n.time; rec.earlyReason = reason; kind = 'out';
@@ -494,6 +530,7 @@ function handle_(b) {
       if (cur && String(b.adminPin) !== cur) return { ok: false, error: 'Wrong admin PIN' };
       if (!/^\d{4}$/.test(String(b.newPin))) return { ok: false, error: 'PIN must be 4 digits' };
       upsert_('Settings', { key: 'adminPin', value: String(b.newPin) });
+      if (cur) logEdit_('Admin PIN changed', '', '', '', '');
       return { ok: true };
     }
   }
@@ -533,8 +570,10 @@ function handle_(b) {
       if (!od) return { ok: false, error: 'Order not found' };
       od.dispatched = b.value ? 'TRUE' : 'FALSE'; upsert_('Orders', od); return { ok: true };
     }
-    case 'saveAtt': { var a = b.rec; a.key = a.date + '__' + a.staffId; upsert_('Attendance', a); return { ok: true }; }
-    case 'deleteAtt': remove_('Attendance', b.date + '__' + b.staffId); return { ok: true };
+    case 'saveAtt': { var a = b.rec; a.key = a.date + '__' + a.staffId; var was = findRow_('Attendance', a.key); was = was ? JSON.parse(JSON.stringify(was)) : null;
+      upsert_('Attendance', a); logEdit_(was ? 'Attendance changed' : 'Attendance added', a.staffId, a.date, attText_(was), attText_(a)); return { ok: true }; }
+    case 'deleteAtt': { var dk = b.date + '__' + b.staffId, dw = findRow_('Attendance', dk); dw = dw ? JSON.parse(JSON.stringify(dw)) : null;
+      remove_('Attendance', dk); if (dw) logEdit_('Attendance deleted', b.staffId, b.date, attText_(dw), 'nothing'); return { ok: true }; }
     case 'saveSales':
       var haveS = {}; rows_('Sales').forEach(function (x) { haveS[x.key] = x; });
       (b.rows || []).forEach(function (r) { r.key = r.date + '__' + r.staffId; var was = haveS[r.key] || {};
@@ -555,6 +594,7 @@ function handle_(b) {
       var has = { att: rows_('Attendance').filter(mineOf).length, orders: rows_('Orders').filter(mineOf).length,
         work: sh_('Work') ? rows_('Work').filter(mineOf).length : 0, sales: rows_('Sales').filter(mineOf).length, pay: rows_('Pay').filter(mineOf).length };
       if (!b.withData && (has.att + has.orders + has.work + has.sales + has.pay) > 0) return { ok: false, error: 'This staff has saved data', hasData: has };
+      if (has.att) logEdit_('Staff deleted with all data', did, '', has.att + ' attendance days, ' + has.orders + ' orders', 'deleted');
       ['Attendance', 'Orders', 'Work', 'Sales', 'Pay'].forEach(function (nm) { deleteWhere_(nm, mineOf); });
       deleteWhere_('Tasks', function (t) { return t.category === did; }); // work items only for this person
       remove_('Staff', did);
@@ -582,6 +622,10 @@ function handle_(b) {
     case 'deleteProduct': remove_('Products', b.id); return { ok: true, products: productList_() };
     case 'reportSettings': {
       if (b.set) {
+        var old = { on: String(setting_('reportOn')).toUpperCase() !== 'FALSE' ? 'on' : 'off', email: setting_('reportEmail'), lateAfter: setting_('lateAfter') || '09:40', minHours: String(setting_('minHours') || 8) };
+        var neu = { on: b.set.on ? 'on' : 'off', email: String(b.set.email || '').trim(), lateAfter: b.set.lateAfter ? String(b.set.lateAfter) : old.lateAfter, minHours: b.set.minHours ? String(b.set.minHours) : old.minHours };
+        var chg = Object.keys(old).filter(function (k) { return old[k] !== neu[k]; });
+        if (chg.length) logEdit_('Settings changed', '', '', chg.map(function (k) { return k + ': ' + old[k]; }).join(', '), chg.map(function (k) { return k + ': ' + neu[k]; }).join(', '));
         upsert_('Settings', { key: 'reportOn', value: b.set.on ? 'TRUE' : 'FALSE' });
         upsert_('Settings', { key: 'reportHour', value: String(Math.max(0, Math.min(23, Number(b.set.hour) || 19))) });
         upsert_('Settings', { key: 'reportEmail', value: String(b.set.email || '').trim() });
