@@ -906,7 +906,7 @@ function arenaSection_(s) {
   if (c.indexOf('Design') >= 0) return 'Design';
   if (c.indexOf('Printing') >= 0) return 'Printing';
   if (c.indexOf('Media') >= 0) return 'Media';
-  if (c.indexOf('Accounts') >= 0 || c.indexOf('Office') >= 0) return 'Accounts';
+  if (c.indexOf('Accounts') >= 0) return 'Accounts';
   return '';
 }
 function arenaStaff_() {
