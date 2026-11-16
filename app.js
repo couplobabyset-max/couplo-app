@@ -117,9 +117,13 @@ function statusOf(r){
   return{cls:'none',txt:'Not checked in'};
 }
 const byOrder=(a,b)=>(a.order??99)-(b.order??99)||a.name.localeCompare(b.name);
+/* SPEED: the last list is kept on the phone, so names show at once; fresh data comes in behind it */
+function kioskApply(j){kStaff=j.staff.sort(byOrder);kAtt=Object.assign({},j.att||{});for(const id in kPend)if(kPend[id].rec)kAtt[id]=kPend[id].rec;kCfg={lateAfter:j.lateAfter||'09:40',minHours:Number(j.minHours)||8}}
+let kPend={};
 async function loadKiosk(){
   clearTimeout(kTimer);
-  try{const j=await call('kiosk');kStaff=j.staff.sort(byOrder);kAtt=j.att||{};kCfg={lateAfter:j.lateAfter||'09:40',minHours:Number(j.minHours)||8};banner('');renderTiles()}
+  if(!kStaff.length){try{const c=JSON.parse(LS.get('couplo_kiosk')||'null');if(c&&c.staff){if(c.today!==ymd(new Date()))c.att={};kioskApply(c);renderTiles()}}catch(e){}}
+  try{const j=await call('kiosk');LS.set('couplo_kiosk',JSON.stringify(j));kioskApply(j);banner('');renderTiles()}
   catch(e){banner('Cannot reach the sheet. Check the internet connection.')}
   if(view==='kiosk')kTimer=setTimeout(loadKiosk,60000);
 }
@@ -127,12 +131,13 @@ function loadKioskStop(){clearTimeout(kTimer)}
 function renderTiles(){
   const g=$('#tiles');
   if(!kStaff.length){g.replaceChildren(el('div',{class:'empty',text:'No staff yet. Open Admin → Staff to add your team.'}));return}
-  g.replaceChildren(...kStaff.map(s=>{const st=statusOf(kAtt[s.id]);
+  g.replaceChildren(...kStaff.map(s=>{const st=kPend[s.id]?{cls:'wfh',txt:'Saving '+kPend[s.id].kind+'…'}:statusOf(kAtt[s.id]);
     return el('button',{class:'tile',type:'button',onclick:()=>startPunch(s)},
       el('div',{},el('div',{class:'nm',text:s.name}),s.role?el('div',{class:'role',text:roleText(s.role)}):null),
       el('span',{class:'chip '+st.cls,text:st.txt}))}));
 }
 function startPunch(s){
+  if(kPend[s.id]){toast(s.name+': still saving, wait a moment.');return}
   if(s.hasPin)pinSheet({title:s.name,sub:'Enter your 4-digit PIN',onDone:v=>{punchSheet(s,v)}});
   else punchSheet(s,'');
 }
@@ -140,15 +145,22 @@ function punchSheet(s,pin){
   const r=kAtt[s.id], now=hm(new Date());
   const kids=[el('h2',{text:s.name}),el('p',{text:'Time now: '+t12(now)})];
   if(r&&(r.status==='leave'||r.status==='wfh')){kids.push(el('p',{text:'Today is marked as '+(r.status==='leave'?'leave':'work from home')+'. Ask HR to change it if you are here.'}),el('button',{class:'btn',type:'button',text:'Close',onclick:closeOv}));openOv(...kids);return}
+  /* SPEED: the screen closes at once and the tile shows "Saving…"; the sheet is updated in the background.
+     If the PIN was wrong or the internet failed, the tile goes back and a message says so. */
   const send=async(reason)=>{
-    const j=await call('punch',{staffId:s.id,pin,reason:reason||''});
-    kAtt[s.id]=j.rec;renderTiles();closeOv();toast(s.name+' · '+(j.kind==='in'?'IN':'OUT')+' at '+t12(j.time)+(reason?' · reason saved':''));
+    const kind=(!r||!r.in)?'IN':'OUT', t=hm(new Date());
+    kPend[s.id]={kind};renderTiles();closeOv();toast(s.name+' · '+kind+' at '+t12(t)+' · saving…');
+    try{const j=await call('punch',{staffId:s.id,pin,reason:reason||''});
+      delete kPend[s.id];kAtt[s.id]=j.rec;renderTiles();toast('✓ '+s.name+' · '+(j.kind==='in'?'IN':'OUT')+' at '+t12(j.time)+' saved'+(reason?' · reason saved':''))}
+    catch(e){delete kPend[s.id];renderTiles();
+      if(e.need){reasonSheet(s,e.need,e.time,e.inTime,async rs=>{closeOv();await send(rs)});return}
+      toast(e.message==='Wrong PIN'?'✕ '+s.name+': wrong PIN. Not saved — try again.':'✕ '+s.name+': not saved. Check the internet and try again.')}
   };
-  const go=async(btn)=>{btn.disabled=true;btn.textContent='Saving…';
-    try{await send('')}
-    catch(e){
-      if(e.need){reasonSheet(s,e.need,e.time,e.inTime,send);return}
-      closeOv();toast(e.message==='Wrong PIN'?'Wrong PIN. Try again.':'Could not save. Check the internet and try again.')}};
+  /* late / early is checked on the phone, so there is no extra trip to the sheet */
+  const go=(btn)=>{btn.disabled=true;const t=hm(new Date());
+    if((!r||!r.in)&&toMin(t)>toMin(kCfg.lateAfter)){reasonSheet(s,'late',t,null,send);return}
+    if(r&&r.in&&!r.out&&toMin(t)-toMin(r.in)<kCfg.minHours*60){reasonSheet(s,'early',t,r.in,send);return}
+    send('')};
   let label;
   if(!r||!r.in)label='IN  ·  '+t12(now);
   else if(!r.out){kids.push(el('p',{text:'You came in at '+t12(r.in)+'.'}));label='OUT  ·  '+t12(now)}
