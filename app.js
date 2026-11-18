@@ -258,6 +258,10 @@ function calcPay(m,s){
 }
 function adminNav(){
   const views=ADMIN_TABS.filter(([v])=>can(v));
+  if(mgrAccess&&me){/* staff with given tabs: their own tabs and the given tabs sit in one bar, on one page */
+    const own=(me.portalTabs||[['arena','🏆 Arena'],['att','My attendance']]).map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>{portalTab=v;show('orders');ordersHome()}}));
+    return el('nav',{class:'tabs',role:'tablist'},...own,...views.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(adminView===v),text:t,onclick:()=>{adminView=v;renderAdmin()}})));
+  }
   return el('nav',{class:'tabs',role:'tablist'},...views.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(adminView===v),text:t,onclick:()=>{adminView=v;renderAdmin()}})));
 }
 function monthPicker(){
@@ -267,7 +271,7 @@ function monthPicker(){
 function renderAdmin(){
   if(!adminOpen)return;
   if(!can(adminView))adminView=(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];
-  const back=mgrAccess?el('button',{class:'btn',type:'button',text:'My page',onclick:()=>{show('orders');ordersHome()}}):null;
+  const back=null;
   const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),back,el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
   if(adminView==='dash')parts.push(...viewDashboard());
   else if(adminView==='arena')parts.push(...viewArena());
@@ -1395,7 +1399,7 @@ function viewArena(){
 function portalOut(){goHome()}
 async function ordersBoot(){show('orders');if(!me){goHome();return}ordersHome()}
 let myOrders=[];
-function openMgr(access){adminPin='m:'+me.id+':'+me.pin;mgrAccess=access.slice();adminView=(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];openAdmin();adminPin='m:'+me.id+':'+me.pin;mgrAccess=access.slice()}
+function openMgr(access,tab){adminPin='m:'+me.id+':'+me.pin;mgrAccess=access.slice();adminView=tab||(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];openAdmin();adminPin='m:'+me.id+':'+me.pin;mgrAccess=access.slice();document.querySelector('.brand h1').textContent=me.name}
 async function ordersHome(edit){
   const box=$('#orders');
   portalMonth=portalMonth||ymOf(new Date());
@@ -1406,13 +1410,15 @@ async function ordersHome(edit){
   myOrders=d.orders.sort((a,b)=>(b.createdAt||b.date).localeCompare(a.createdAt||a.date));
   const now=new Date(),opts=[0,1,2].map(i=>{const x=new Date(now.getFullYear(),now.getMonth()-i,1);return el('option',{value:ymOf(x),selected:ymOf(x)===portalMonth,text:MON[x.getMonth()]+' '+x.getFullYear()})});
   const head=el('div',{class:'toolbar'},el('div',{style:'font:600 22px var(--f-display)',text:me.name}),
-    el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),(d.access||[]).length?el('button',{class:'btn primary',type:'button',text:'Admin panel',onclick:()=>openMgr(d.access)}):null,el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
+    el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
   const tabList=[['arena','🏆 Arena'],['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
   if(portalTab==='auto')portalTab=me.sales?'orders':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
-  const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})));
+  me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>(d.access||[]).includes(v));
+  const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})),
+    ...given.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>openMgr(d.access,v)})));
   const body=portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
   box.replaceChildren(head,warn,tabs,...body);
