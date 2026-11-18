@@ -48,10 +48,16 @@ tick();setInterval(tick,15000);
 
 /* ---------- one site, one login: home (login) · kiosk (office IN/OUT) · orders (staff page) · admin ---------- */
 let adminOpen=false, adminPin=null, view='home';
+/* staff who were given some admin tabs (Staff → Edit → Admin tabs) open them with their own PIN. mgrAccess=null means the owner (admin PIN, everything) */
+let mgrAccess=null;
+const can=t=>!mgrAccess||mgrAccess.includes(t);
+/* drops the Leads column (index i) from a header/row list for people without the Leads tab */
+const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
+const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
-  if(v!=='kiosk')loadKioskStop();if(v!=='admin'){$('#admin').replaceChildren();adminPin=null}window.scrollTo(0,0)}
+  if(v!=='kiosk')loadKioskStop();if(v!=='admin'){$('#admin').replaceChildren();adminPin=null;mgrAccess=null}window.scrollTo(0,0)}
 function goHome(prefill){me=null;LS.del('couplo_me');show('home');renderHome(prefill)}
 function openKiosk(){show('kiosk');loadKiosk()}
 function renderHome(prefill){
@@ -72,7 +78,7 @@ function renderHome(prefill){
       if(id.toLowerCase()==='admin'){
         const c=await call('adminCheck',{adminPin:pin});
         if(c.needSetup){askAdminPin()}
-        else if(c.valid){adminPin=pin;LS.set('couplo_last_id','admin');openAdmin()}
+        else if(c.valid){adminPin=pin;mgrAccess=null;LS.set('couplo_last_id','admin');openAdmin()}
         else toast('Wrong admin PIN.');
       }else{
         if(!/^\d{4}$/.test(pin)&&pin!==''){toast('PIN is 4 digits.');}
@@ -250,7 +256,7 @@ function calcPay(m,s){
   return{...info,nd,paid,salary,perDay,earned,adv,extra,net:earned+extra-adv,note:p.note||'',future:dates.some(d=>ymd(d)>td)};
 }
 function adminNav(){
-  const views=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+  const views=ADMIN_TABS.filter(([v])=>can(v));
   return el('nav',{class:'tabs',role:'tablist'},...views.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(adminView===v),text:t,onclick:()=>{adminView=v;renderAdmin()}})));
 }
 function monthPicker(){
@@ -259,7 +265,9 @@ function monthPicker(){
 }
 function renderAdmin(){
   if(!adminOpen)return;
-  const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
+  if(!can(adminView))adminView=(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];
+  const back=mgrAccess?el('button',{class:'btn',type:'button',text:'My page',onclick:()=>{show('orders');ordersHome()}}):null;
+  const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),back,el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
   if(adminView==='dash')parts.push(...viewDashboard());
   else if(adminView==='arena')parts.push(...viewArena());
   else if(adminView==='reports')parts.push(...viewReports());
@@ -376,13 +384,14 @@ function viewStaff(){
   const all=[...staff].sort(byOrder);
   const staffPanel=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Staff'}),el('button',{class:'btn',type:'button',text:'+ Add staff',onclick:()=>editStaff(null)})),
     all.length?el('div',{},...all.map(s=>el('div',{class:'staffrow'},
-      el('div',{},el('div',{style:'font-weight:600',text:s.name+(s.active===false?' (not on check-in)':'')}),el('div',{class:'meta',text:['ID: '+s.id,catOf(s),(s.salary?rs(s.salary)+'/month':'No salary set'),(s.pin?'PIN set':'No PIN'),(s.email||'No email')].filter(Boolean).join(' · ')})),
+      el('div',{},el('div',{style:'font-weight:600',text:s.name+(s.active===false?' (not on check-in)':'')}),el('div',{class:'meta',text:['ID: '+s.id,catOf(s),can('salary')?(s.salary?rs(s.salary)+'/month':'No salary set'):null,((s.pin||s.hasPin)?'PIN set':'No PIN'),!mgrAccess&&(s.access||[]).length?'Admin tabs: '+s.access.map(a=>(ADMIN_TABS.find(t=>t[0]===a)||[a,a])[1]).join(', '):null,(s.email||'No email')].filter(Boolean).join(' · ')})),
       el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>editStaff(s)})))):el('div',{class:'empty',text:'No staff yet.'}));
   const setPanel=el('div',{class:'panel'},el('h3',{text:'Settings'}),
     el('p',{class:'hint',text:'The office phone opens the normal link and shows only check-in. Add #admin to the end of the link on the owner\'s or HR\'s phone to see these tabs. Everything is saved in your Google Sheet.'}),
     el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Change admin PIN',onclick:changeAdminPin}),
       el('button',{class:'btn',type:'button',text:'Change sheet link',onclick:askServer}),
       el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})));
+  if(mgrAccess)return[staffPanel];
   const rp=el('div',{class:'panel'},el('h3',{text:'Daily report & office rules'}),el('div',{class:'empty',text:'Loading…'}));
   call('reportSettings',{adminPin}).then(r=>{
     const on=el('select',{id:'r-on'},el('option',{value:'1',text:'On, send every day',selected:r.on}),el('option',{value:'0',text:'Off',selected:!r.on}));
@@ -436,14 +445,21 @@ function editStaff(s){
   const sl=el('div',{id:'s-sl',style:'display:flex;flex-direction:column;gap:6px;padding:4px 0'},...boxes.map(b=>el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,el('span',{},b.value,el('span',{class:'hint',text:CAT_NOTE[b.value]||''})))));
   const picked=()=>boxes.filter(b=>b.checked).map(b=>b.value);
   const ac=el('select',{id:'s-ac'},el('option',{value:'1',text:'Shown on check-in screen',selected:s?.active!==false}),el('option',{value:'0',text:'Not on check-in (left, or works outside)',selected:s?.active===false}));
+  /* admin tabs this person may open with their own PIN — only the owner sets this */
+  const curA=s?.access||[];
+  const aBoxes=ADMIN_TABS.map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
+  const accBox=mgrAccess?null:el('div',{class:'f'},el('span',{},'Admin tabs this person can open (with their own PIN)'),el('p',{class:'hint',text:'Leave all empty for normal staff. Ticked tabs open from an "Admin panel" button on their page, and they can edit there. Leads, Salary and Staff show money and private data.'}),
+    el('div',{style:'display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0'},...aBoxes));
   const save=async()=>{const name=nm.value.trim().toUpperCase();if(!name){toast('Enter a name.');return}
     const cats=picked();if(!cats.length){toast('Tick at least one category.');return}
     const pin=pn.value.trim();if(pin&&!/^\d{4}$/.test(pin)){toast('PIN must be exactly 4 digits.');return}
     const id=s?.id||name.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+Date.now().toString(36).slice(-4);
-    try{await call('saveStaff',{adminPin,staff:{id,name,role:cats.join(','),salary:Number(sal.value)||0,pin,order:od.value===''?null:Number(od.value),sales:cats.includes('Sales'),active:ac.value==='1',email:em.value.trim()}});closeOv();toast('Saved '+name);reload()}catch(e){toast('Could not save: '+e.message)}};
-  openOv(el('h2',{text:s?'Edit staff':'Add staff'}),el('label',{class:'f',for:'s-nm'},'Name',nm),el('label',{class:'f',for:'s-sal'},'Monthly salary (₹)',sal),el('label',{class:'f',for:'s-em'},'Email (for salary slips)',em),
-    el('label',{class:'f',for:'s-pn'},'PIN (4 digits). Leave empty so the staff can create their own PIN',pn),el('div',{class:'f'},el('span',{},'Category (tick one or more)'),sl),el('label',{class:'f',for:'s-od'},'Order on screen',od),el('label',{class:'f',for:'s-ac'},'Check-in',ac),
-    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}),s?delStaffBtn(s):null,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})));
+    const access=mgrAccess?(s?.access||[]):aBoxes.map(l=>l.firstChild).filter(b=>b.checked).map(b=>b.value);
+    try{await call('saveStaff',{adminPin,staff:{id,name,role:cats.join(','),salary:Number(sal.value)||0,pin,order:od.value===''?null:Number(od.value),sales:cats.includes('Sales'),active:ac.value==='1',email:em.value.trim(),access}});closeOv();toast('Saved '+name);reload()}catch(e){toast('Could not save: '+e.message)}};
+  openOv(el('h2',{text:s?'Edit staff':'Add staff'}),el('label',{class:'f',for:'s-nm'},'Name',nm),can('salary')?el('label',{class:'f',for:'s-sal'},'Monthly salary (₹)',sal):null,el('label',{class:'f',for:'s-em'},'Email (for salary slips)',em),
+    mgrAccess?el('p',{class:'hint',text:s?((s.hasPin||s.pin)?'PIN is set. Only the owner can reset a PIN.':'No PIN yet: the staff makes their own PIN at first login.'):'The new staff makes their own PIN at first login.'}):el('label',{class:'f',for:'s-pn'},'PIN (4 digits). Leave empty so the staff can create their own PIN',pn),
+    el('div',{class:'f'},el('span',{},'Category (tick one or more)'),sl),el('label',{class:'f',for:'s-od'},'Order on screen',od),el('label',{class:'f',for:'s-ac'},'Check-in',ac),accBox,
+    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}),s&&!mgrAccess?delStaffBtn(s):null,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})));
 }
 /* Delete: staff with no saved data go straight away; staff with data get a second screen (hide instead, or delete everything) */
 function delStaffBtn(s){
@@ -776,7 +792,7 @@ function viewReports(){
   if(D.tooLong)return[head,el('div',{class:'empty',text:'Pick up to 12 months at a time.'})];
   if(!ready)return[head,el('div',{class:'empty',text:'Loading the report…'})];
   const stat=(v,l)=>el('div',{},el('b',{class:'mono',text:String(v)}),el('span',{text:l}));
-  const summary=el('div',{class:'panel'},el('h3',{text:'Summary'}),el('div',{class:'stats'},stat(R.sum.orders,'Orders'),stat(rs(R.sum.amount),'Sales'),stat(R.sum.premium,'Premium'),stat(R.sum.affordable,'Affordable'),stat(R.sum.leads,'Leads')),
+  const summary=el('div',{class:'panel'},el('h3',{text:'Summary'}),el('div',{class:'stats'},stat(R.sum.orders,'Orders'),stat(rs(R.sum.amount),'Sales'),stat(R.sum.premium,'Premium'),stat(R.sum.affordable,'Affordable'),can('sales')?stat(R.sum.leads,'Leads'):null),
     R.sum.noAmt?el('p',{class:'hint',text:R.sum.noAmt+' orders have no amount written, so sales ₹ is lower than real.'}):null);
   const tbl=(cols,rows,foot)=>el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...cols.map(c=>el('th',{text:c})))),
     el('tbody',{},...rows.map(r=>el('tr',{},...r.map((c,i)=>i?el('td',{class:typeof c==='number'?'mono':'',text:String(c)}):el('th',{text:String(c)}))))),
@@ -791,8 +807,8 @@ function viewReports(){
       multi&&w.dates.length&&dayCols.length?el('details',{},el('summary',{text:'Day by day'}),tbl(['Date',...dayCols.map(t=>t.name)],
         w.dates.map(ds=>[dm(ds)+' '+DAYS[new Date(ds+'T12:00:00').getDay()].slice(0,3),...dayCols.map(t=>{const x=w.mine.find(m=>m.date===ds&&m.taskId===t.id);return x?fmtWork(t,x.value):''})]))):null,
       w.missing.length?el('p',{class:'hint',style:'color:var(--accent)',text:'Came but did not fill work on: '+w.missing.map(dm).join(', ')}):null)});
-  const salesP=el('div',{class:'panel'},el('h3',{text:'Sales staff'}),R.sales.length?tbl(['Name','Leads','Premium','Affordable','Orders','Sales'],
-    R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rs(r.amt)]),['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rs(R.sum.amount)]):el('div',{class:'empty',text:'No sales staff.'}),
+  const salesP=el('div',{class:'panel'},el('h3',{text:'Sales staff'}),R.sales.length?tbl(xL(['Name','Leads','Premium','Affordable','Orders','Sales'],1),
+    R.sales.map(r=>xL([r.s.name,r.leads,r.p,r.a,r.n,rs(r.amt)],1)),xL(['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rs(R.sum.amount)],1)):el('div',{class:'empty',text:'No sales staff.'}),
     ...R.sales.filter(r=>r.n).map(r=>el('details',{},el('summary',{text:r.s.name+' · '+r.n+' orders · '+rs(r.amt)}),
       el('p',{class:'hint',text:'Products: '+r.prods.map(x=>(CODE_NAMES[x.c]||x.c).toLowerCase()+' '+x.q).join(', ')}),
       tbl(['Date','No.','Customer','Phone','District','Product','Type','Amount'],r.os.map(o=>[dm(o.date),o.orderNo||'',o.customer||'—',o.phone||'',o.district||'',o.product||'—',o.type==='affordable'?'Affordable':'Premium',amt0(o)?rs(amt0(o)):'—'])))));
@@ -819,7 +835,7 @@ function rpPdf(R){
       lines.forEach((l,i)=>doc.text(l,xs[i]+4,y+11.5));doc.setDrawColor(222);doc.line(M,y+h,M+TW,y+h);y+=h};
     if(y+40>H-40)newPage();row(cols,true,[243,235,243]);rows.forEach(r=>row(r,false));if(foot)row(foot,true,[248,244,248]);y+=14};
   header();
-  title('Summary');table(['Orders','Premium','Affordable','Sales','Leads'],[[R.sum.orders,R.sum.premium,R.sum.affordable,rsPlain(R.sum.amount),R.sum.leads]]);
+  title('Summary');table(xL(['Orders','Premium','Affordable','Sales','Leads'],4),[xL([R.sum.orders,R.sum.premium,R.sum.affordable,rsPlain(R.sum.amount),R.sum.leads],4)]);
   if(R.sum.noAmt)note(R.sum.noAmt+' orders have no amount written, so sales is lower than real.');
   const multi=R.days.length>1;
   title('Production & work');y+=2;
@@ -830,7 +846,7 @@ function rpPdf(R){
     const dayCols=w.list.filter(t=>t.kind!=='text');
     if(multi&&w.dates.length&&dayCols.length){const n=dayCols.length;table(['Date',...dayCols.map(t=>t.name)],w.dates.map(ds=>[dm(ds),...dayCols.map(t=>{const x=w.mine.find(m=>m.date===ds&&m.taskId===t.id);return x?(t.kind==='yesno'?(x.value==='TRUE'?'Done':'Not done'):(t.kind==='colours'||t.kind==='items')?colTotal(x.value):x.value):''})]),[.1,...dayCols.map(()=>.9/n)])}
     if(w.missing.length)note('Came but did not fill work on: '+w.missing.map(dm).join(', '),true)});
-  title('Sales staff');table(['Name','Leads','Premium','Affordable','Orders','Sales'],R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,rsPlain(r.amt)]),[.26,.12,.14,.16,.12,.2],['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rsPlain(R.sum.amount)]);
+  title('Sales staff');table(xL(['Name','Leads','Premium','Affordable','Orders','Sales'],1),R.sales.map(r=>xL([r.s.name,r.leads,r.p,r.a,r.n,rsPlain(r.amt)],1)),can('sales')?[.26,.12,.14,.16,.12,.2]:[.3,.16,.18,.14,.22],xL(['Total',R.sum.leads,R.sum.premium,R.sum.affordable,R.sum.orders,rsPlain(R.sum.amount)],1));
   R.sales.filter(r=>r.n).forEach(r=>{title(r.s.name+'  |  '+r.n+' orders  |  '+rsPlain(r.amt));
     table(['Product','Pieces','Sales'],r.prods.map(x=>[CODE_NAMES[x.c]||x.c,x.q,x.amt?rsPlain(x.amt):'-']),[.5,.2,.3]);
     table(['Date','No.','Customer','District','Product','Type','Amount'],r.os.map(o=>[dm(o.date),o.orderNo||'',o.customer||'-',o.district||'',o.product||'-',o.type==='affordable'?'Affordable':'Premium',+o.amount?rsPlain(+o.amount):'-']),[.09,.11,.2,.17,.2,.11,.12])});
@@ -842,10 +858,10 @@ function rpPdf(R){
 function rpXlsx(R){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
   const wb=XLSX.utils.book_new(),add=(name,rows,w)=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=(w||rows[1]||rows[0]).map((_,i)=>({wch:i?14:22}));XLSX.utils.book_append_sheet(wb,ws,name)};
-  add('SUMMARY',[['COUPLO REPORT '+rpLabel(R.f,R.t)],['ORDERS','PREMIUM','AFFORDABLE','SALES','LEADS'],[R.sum.orders,R.sum.premium,R.sum.affordable,R.sum.amount,R.sum.leads]]);
+  add('SUMMARY',[['COUPLO REPORT '+rpLabel(R.f,R.t)],xL(['ORDERS','PREMIUM','AFFORDABLE','SALES','LEADS'],4),xL([R.sum.orders,R.sum.premium,R.sum.affordable,R.sum.amount,R.sum.leads],4)]);
   const wt=[['STAFF','CATEGORY','WORK','TOTAL','DETAILS']];R.work.forEach(w=>w.totals.filter(x=>x.total).forEach(x=>wt.push([w.s.name,catOf(w.s),x.t.name,x.total,workDetail(x)])));add('WORK TOTALS',wt);
   const wd=[['DATE','STAFF','WORK','VALUE']];R.work.forEach(w=>w.mine.slice().sort((a,b)=>a.date.localeCompare(b.date)).forEach(m=>{const t=w.list.find(x=>x.id===m.taskId)||{name:m.taskId,kind:'count'};wd.push([m.date,w.s.name,t.name,pdfTxt(fmtWork(t,m.value))])}));add('WORK DAY BY DAY',wd);
-  add('SALES',[['NAME','LEADS','PREMIUM','AFFORDABLE','ORDERS','SALES'],...R.sales.map(r=>[r.s.name,r.leads,r.p,r.a,r.n,r.amt])]);
+  add('SALES',[xL(['NAME','LEADS','PREMIUM','AFFORDABLE','ORDERS','SALES'],1),...R.sales.map(r=>xL([r.s.name,r.leads,r.p,r.a,r.n,r.amt],1))]);
   add('ORDERS BY STAFF',[['STAFF','DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','TYPE','QTY','AMOUNT','DISPATCHED'],...R.sales.flatMap(r=>r.os.map(o=>[r.s.name,o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',o.type==='affordable'?'AFFORDABLE':'PREMIUM',+o.qty||1,+o.amount||0,o.dispatched==='TRUE'?'YES':'NO']))]);
   add('PRODUCTS BY STAFF',[['STAFF','PRODUCT','PIECES','SALES'],...R.sales.flatMap(r=>r.prods.map(x=>[r.s.name,CODE_NAMES[x.c]||x.c,x.q,x.amt]))]);
   add('PRODUCTS',[['PRODUCT','PREMIUM','AFFORDABLE','TOTAL','SALES'],...R.products.map(r=>[CODE_NAMES[r.c]||r.c,r.p,r.a,r.q,r.amt])]);
@@ -969,11 +985,11 @@ function viewWeek(){
     stat(os.filter(isP).length+' · '+os.filter(o=>!isP(o)).length,'Premium · Affordable'),
     stat(work.length,'Working days',passed+' done · '+left+' left'),stat(hol.length,'Holidays',hol.map(ds=>holName(ds)+' '+(+ds.slice(8))).join(', ')));
   const M=weekMissed(days,J);
-  const mi=M.out.length||M.noLeads.length||M.oldPend.length;
+  const mi=M.out.length||(can('sales')&&M.noLeads.length)||M.oldPend.length;
   const missP=el('div',{class:'missbox'},el('h3',{class:'sub',text:M.past.length?'Missed this week (till yesterday)':'Nothing to check yet — the week has just started'}),
     M.past.length&&!mi?el('p',{class:'hint',style:'color:var(--ok)',text:'✓ Nothing missed. Everyone checked in, orders and work are filled.'}):null,
     ...M.out.map(r=>el('div',{class:'missrow'},el('b',{text:r.s.name}),el('div',{class:'misslist'},...r.items.map(([ds,t,c])=>el('span',{class:'chip '+(c==='lv'?'leave':'miss'),text:dm(ds)+' · '+t}))))),
-    M.noLeads.length?el('div',{class:'missrow'},el('b',{text:'Leads (HR)'}),el('div',{class:'misslist'},...M.noLeads.map(ds=>el('span',{class:'chip miss',text:dm(ds)+' · Leads not entered'})))):null,
+    M.noLeads.length&&can('sales')?el('div',{class:'missrow'},el('b',{text:'Leads (HR)'}),el('div',{class:'misslist'},...M.noLeads.map(ds=>el('span',{class:'chip miss',text:dm(ds)+' · Leads not entered'})))):null,
     M.oldPend.length?el('div',{class:'missrow'},el('b',{text:'Dispatch'}),el('div',{class:'misslist'},el('span',{class:'chip miss',text:M.oldPend.length+' orders older than 3 days not dispatched'}))):null);
   const nav=el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'◀ Previous week',onclick:()=>weekStep(-1)}),
     isNow?null:el('button',{class:'btn',type:'button',text:'This week',onclick:()=>{wkSel=null;renderAdmin()}}),
@@ -1362,6 +1378,7 @@ function viewArena(){
 function portalOut(){goHome()}
 async function ordersBoot(){show('orders');if(!me){goHome();return}ordersHome()}
 let myOrders=[];
+function openMgr(access){adminPin='m:'+me.id+':'+me.pin;mgrAccess=access.slice();adminView=(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];openAdmin();adminPin='m:'+me.id+':'+me.pin;mgrAccess=access.slice()}
 async function ordersHome(edit){
   const box=$('#orders');
   portalMonth=portalMonth||ymOf(new Date());
@@ -1372,7 +1389,7 @@ async function ordersHome(edit){
   myOrders=d.orders.sort((a,b)=>(b.createdAt||b.date).localeCompare(a.createdAt||a.date));
   const now=new Date(),opts=[0,1,2].map(i=>{const x=new Date(now.getFullYear(),now.getMonth()-i,1);return el('option',{value:ymOf(x),selected:ymOf(x)===portalMonth,text:MON[x.getMonth()]+' '+x.getFullYear()})});
   const head=el('div',{class:'toolbar'},el('div',{style:'font:600 22px var(--f-display)',text:me.name}),
-    el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
+    el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),(d.access||[]).length?el('button',{class:'btn primary',type:'button',text:'Admin panel',onclick:()=>openMgr(d.access)}):null,el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
   const tabList=[['arena','🏆 Arena'],['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);

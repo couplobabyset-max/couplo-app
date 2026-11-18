@@ -6,7 +6,7 @@
  */
 var TZ = 'Asia/Kolkata';
 var SHEETS = {
-  Staff:      ['id','name','role','salary','pin','sales','active','order','email'],
+  Staff:      ['id','name','role','salary','pin','sales','active','order','email','access'],  // access = admin tabs this person may open with their own PIN (e.g. orders,register,staff)
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
@@ -270,7 +270,8 @@ function bool_(v) { return String(v).toUpperCase() === 'TRUE'; }
 function staffList_() {
   return rows_('Staff').map(function (s) {
     return { id: s.id, name: s.name, role: s.role, salary: Number(s.salary) || 0, pin: s.pin,
-             sales: bool_(s.sales), active: s.active === '' ? true : bool_(s.active), order: s.order === '' ? null : Number(s.order), email: s.email || '' };
+             sales: bool_(s.sales), active: s.active === '' ? true : bool_(s.active), order: s.order === '' ? null : Number(s.order), email: s.email || '',
+             access: String(s.access || '').split(',').map(function (x) { return x.trim(); }).filter(String) };
   });
 }
 /* Printing = printing production, Add-ons = bows / socks / boots…, HR = enters daily leads for sales staff, Regular = does every kind of work (attendance only, no work list) */
@@ -413,6 +414,7 @@ function doPost(e) {
 function handle_(b) {
   migrate_();
   arenaSetup_();
+  accessSetup_();
   var n = now_();
   switch (b.action) {
     case 'kiosk': {
@@ -463,14 +465,14 @@ function handle_(b) {
       if (!p) return { ok: false, error: 'Staff ID not found' };
       if (!p.pin) return { ok: false, needPin: true, staffId: p.id, name: p.name };
       if (String(p.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
-      if (b.action === 'portalLogin') return { ok: true, staffId: p.id, name: p.name, sales: p.sales };
+      if (b.action === 'portalLogin') return { ok: true, staffId: p.id, name: p.name, sales: p.sales, access: p.access };
       var myCats = cats_(p.role, p.sales), myCat = myCats.join(' + ');
       var mm = /^\d{4}-\d{2}$/.test(String(b.month)) ? String(b.month) : n.date.slice(0, 7);
       return { ok: true, today: n.date, month: mm, name: p.name, sales: p.sales, products: productList_().filter(function (x) { return x.active; }), lateAfter: setting_('lateAfter') || '09:40', minHours: Number(setting_('minHours') || 8),
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
         category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
-        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null };
+        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access };
     }
     case 'hrSaveLeads': { // HR staff type the daily lead count for each sales person (same rows the admin Leads tab saves)
       var hr = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
@@ -546,16 +548,28 @@ function handle_(b) {
   var ar = arenaStaffAction_(b, n); if (ar) return ar;
   /* everything below needs the admin PIN */
   var pin = setting_('adminPin');
-  if (!pin || String(b.adminPin) !== pin) return { ok: false, error: 'Admin PIN needed' };
+  var mgr = null; // null = owner with the admin PIN (everything). Otherwise a staff member opening only the tabs ticked for them.
+  if (!pin || String(b.adminPin) !== pin) {
+    mgr = mgrOf_(b.adminPin);
+    if (!mgr) return { ok: false, error: 'Admin PIN needed' };
+    var need = ACTION_TAB[b.action];
+    if (b.action === 'reportSettings' && b.set) need = null;           // only the owner changes office rules
+    if (!need || (need !== '*' && mgr.access.indexOf(need) < 0)) return { ok: false, error: 'No access for ' + mgr.name };
+  }
+  var can = function (tab) { return !mgr || mgr.access.indexOf(tab) >= 0; };
   var aa = arenaAdminAction_(b, n); if (aa) return aa;
   switch (b.action) {
     case 'month': {
       var m = String(b.month); // yyyy-MM
-      return { ok: true, today: n.date, staff: staffList_(), products: productList_(), tasks: taskList_(), work: workRows_(m),
+      var stf = staffList_();
+      if (mgr) stf = stf.map(function (x) { var c = JSON.parse(JSON.stringify(x)); c.hasPin = !!c.pin; c.pin = ''; c.access = [];
+        if (!can('salary')) c.salary = 0; return c; });
+      return { ok: true, today: n.date, staff: stf, products: productList_(), tasks: taskList_(), work: workRows_(m),
         att: rows_('Attendance').filter(function (r) { return r.date.indexOf(m) === 0; }),
-        sales: rows_('Sales').filter(function (r) { return r.date.indexOf(m) === 0; }),
-        pay: rows_('Pay').filter(function (r) { return r.month === m; }),
-        orders: rows_('Orders').filter(function (r) { return r.date.indexOf(m) === 0; }), holidays: holidays_() };
+        sales: can('sales') ? rows_('Sales').filter(function (r) { return r.date.indexOf(m) === 0; }) : [],
+        pay: can('salary') ? rows_('Pay').filter(function (r) { return r.month === m; }) : [],
+        orders: rows_('Orders').filter(function (r) { return r.date.indexOf(m) === 0; }), holidays: holidays_(),
+        me: mgr ? { id: mgr.id, name: mgr.name, access: mgr.access } : null };
     }
     case 'saveHoliday': { // office holidays: { 'yyyy-MM-dd': 'name' } — Sundays are holidays anyway
       var h = holidays_(), d = String(b.date || '');
@@ -593,10 +607,19 @@ function handle_(b) {
       return { ok: true };
     case 'savePay': { var p = b.pay; p.key = p.month + '__' + p.staffId; upsert_('Pay', p); return { ok: true }; }
     case 'saveStaff': {
-      var st = b.staff;
+      var st = b.staff, prev = staffList_().filter(function (x) { return x.id === st.id; })[0];
+      var acc = Array.isArray(st.access) ? st.access : String(st.access || '').split(',');
+      acc = acc.map(function (x) { return String(x).trim(); }).filter(function (x) { return TABS.indexOf(x) >= 0; });
+      if (mgr) { // a staff manager cannot change PINs, salary (without Salary access), tab access, or their own categories
+        st.pin = prev ? prev.pin : '';
+        acc = prev ? prev.access : [];
+        if (!can('salary')) st.salary = prev ? prev.salary : 0;
+        if (prev && prev.id === mgr.id) { st.role = prev.role; st.sales = prev.sales; }
+      }
       upsert_('Staff', { id: st.id, name: st.name, role: cats_(st.role, st.sales).join(','), salary: st.salary, pin: st.pin || '',
         sales: st.sales ? 'TRUE' : 'FALSE', active: st.active ? 'TRUE' : 'FALSE', order: st.order == null ? '' : st.order,
-        email: String(st.email || '').trim() });
+        email: String(st.email || '').trim(), access: acc.join(',') });
+      if (mgr) logEdit_('Staff changed by ' + mgr.name, st.id, n.date, prev ? prev.name : 'new', st.name);
       return { ok: true };
     }
     case 'deleteStaff': {
@@ -1145,4 +1168,44 @@ function arenaAdminAction_(b, n) {
     }
   }
   return null;
+}
+
+
+/* ---------- tab access for staff (Nov 2026) ----------
+   The owner keeps the admin PIN and sees everything. A staff member can be given some admin tabs
+   (Admin → Staff → Edit → "Admin tabs this person can open"). They log in with their own name + PIN
+   and only those tabs open; the server also refuses every other action, so hidden data never leaves the sheet. */
+var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff'];
+var ACTION_TAB = {
+  month: '*', reportSettings: '*',
+  allOrders: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
+  saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
+  saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
+  saveStaff: 'staff',
+  saveProduct: 'products', deleteProduct: 'products',
+  saveWork: 'work', saveTask: 'work', deleteTask: 'work',
+  arenaAdmin: 'arena', mediaDecide: 'arena', issueDecide: 'arena', bonusAdd: 'arena', bonusDelete: 'arena', arenaSettings: 'arena'
+  /* not listed = owner only: deleteStaff, sendReportNow, setAdminPin, changing report settings */
+};
+/* token sent by a staff manager in place of the admin PIN: "m:<staffId>:<pin>" */
+function mgrOf_(tok) {
+  var p = String(tok || '').split(':');
+  if (p[0] !== 'm' || p.length !== 3) return null;
+  var s = staffList_().filter(function (x) { return x.id === p[1]; })[0];
+  if (!s || !s.pin || String(s.pin) !== p[2] || !s.access.length) return null;
+  return s;
+}
+/* adds the "access" column to the Staff sheet once, and gives Mashida her tabs (orders + dispatch, attendance, staff, reports, products, work) */
+function accessSetup_() {
+  if (setting_('accessVersion') === '1') return;
+  var st = sh_('Staff'), col = SHEETS.Staff.indexOf('access') + 1;
+  st.getRange(1, col).setValue('access').setFontWeight('bold');
+  st.getRange(2, col, Math.max(1, st.getMaxRows() - 1), 1).setNumberFormat('@');
+  forget_('Staff');
+  rows_('Staff').forEach(function (r) {
+    if (String(r.name).trim().toLowerCase().indexOf('mashida') === 0 && !r.access)
+      st.getRange(r._row, col).setValue('orders,register,staff,reports,products,work');
+  });
+  forget_('Staff');
+  upsert_('Settings', { key: 'accessVersion', value: '1' });
 }
