@@ -191,6 +191,7 @@ function reasonSheet(s,kind,time,inTime,send){
 }
 
 /* ---------- admin ---------- */
+let adminAd={}; /* Meta ad spend per day (owner only) */
 let adminMonth=null, adminView='dash', salesDate=null, staff=[], adminRecs={}, adminSales={}, adminPay={}, drafts={}, todayStr=ymd(new Date());
 function askAdminPin(){
   call('adminCheck',{adminPin:''}).then(j=>{
@@ -212,7 +213,7 @@ async function loadMonth(m){
     adminRecs={};j.att.forEach(r=>adminRecs[r.date+'__'+r.staffId]=r);
     adminSales={};const sx=k=>adminSales[k]=adminSales[k]||{leads:0,premium:0,affordable:0,amount:0};
     j.sales.forEach(r=>{const x=sx(r.date+'__'+r.staffId);x.leads=+r.leads||0;x.calls=+r.calls||0;x.answered=+r.answered||0;x.missed=+r.missed||0;x.called=+r.called||0});
-    adminOrders=j.orders||[];adminOrders.forEach(o=>{const x=sx(o.date+'__'+o.staffId);if(o.type==='affordable')x.affordable++;else x.premium++;x.amount+=(+o.amount||0)});
+    adminAd={};(j.adspend||[]).forEach(r=>adminAd[r.date]=+r.amount||0);adminOrders=j.orders||[];adminOrders.forEach(o=>{const x=sx(o.date+'__'+o.staffId);if(o.type==='affordable')x.affordable++;else x.premium++;x.amount+=(+o.amount||0)});
     rpCache[m]=j;adminPay={};j.pay.forEach(r=>adminPay[r.staffId]={advance:+r.advance||0,extra:+r.extra||0,note:r.note||''});
     renderAdmin()}
   catch(e){$('#admin').replaceChildren(el('div',{class:'empty',text:'Could not load: '+e.message}))}
@@ -314,24 +315,40 @@ function viewSales(){
   const dInp=el('input',{id:'sdate',type:'date',value:salesDate,min:m+'-01',max:ymd(monthDates(m).slice(-1)[0]),onchange:e=>{salesDate=e.target.value;renderAdmin()}});
   const rows=list.map(s=>{const x=adminSales[salesDate+'__'+s.id]||{};const id='sl-'+salesDate+'-'+s.id;
     return{s,x,leads:el('input',{id,type:'number',min:'0',inputmode:'numeric',placeholder:'0',value:(id in drafts?drafts[id]:(x.leads||'')),style:'width:100%',oninput:e=>{drafts[id]=e.target.value}})}});
+  /* Meta ad spend — only the owner (admin PIN) sees or types it. Each day's spend is split over the sales staff by their share of that day's leads */
+  const owner=!mgrAccess;
+  const dayLeads=ds=>list.reduce((t,s)=>t+((adminSales[ds+'__'+s.id]||{}).leads||0),0);
+  const share=(ds,sid)=>{const sp=adminAd[ds]||0,L=dayLeads(ds);return sp&&L?sp*((adminSales[ds+'__'+sid]||{}).leads||0)/L:0};
+  const per=(a,b)=>b?rs(a/b):'—', roas=(sales,sp)=>sp?(sales/sp).toFixed(1)+'x':'—';
+  const spI=owner?el('input',{id:'sl-spend',type:'number',min:'0',step:'any',inputmode:'decimal',placeholder:'e.g. 850',value:adminAd[salesDate]!=null?adminAd[salesDate]:'',style:'max-width:160px'}):null;
   const saveBtn=el('button',{class:'btn primary',type:'button',text:'Save leads for this day'});
   saveBtn.onclick=async()=>{const out=rows.filter(r=>r.leads.value!=='').map(r=>({staffId:r.s.id,date:salesDate,leads:Number(r.leads.value)||0,premium:'',affordable:'',amount:''}));
-    if(!out.length){toast('Type the lead numbers first.');return}
+    const spChanged=owner&&String(spI.value)!==String(adminAd[salesDate]!=null?adminAd[salesDate]:'');
+    if(!out.length&&!spChanged){toast('Type the lead numbers first.');return}
     saveBtn.disabled=true;saveBtn.textContent='Saving…';
-    try{await call('saveSales',{adminPin,rows:out});drafts={};toast('Leads saved for '+salesDate);reload()}catch(e){toast('Could not save: '+e.message);saveBtn.disabled=false;saveBtn.textContent='Save leads for this day'}};
+    try{if(out.length)await call('saveSales',{adminPin,rows:out});if(spChanged)await call('saveAdSpend',{adminPin,date:salesDate,amount:spI.value});drafts={};toast('Saved for '+salesDate);reload()}catch(e){toast('Could not save: '+e.message);saveBtn.disabled=false;saveBtn.textContent='Save leads for this day'}};
+  const head=['Name','Leads','Orders (auto)','Sales ₹ (auto)'].concat(owner?['Ad spend','Cost / lead','Cost / order','ROAS']:[]);
   const entry=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Daily leads'}),dInp),
-    el('p',{class:'hint',text:'HR types how many new leads each sales person got. Orders and sales amount come in automatically from the orders staff enter in the app.'}),
-    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Name','Leads','Orders (auto)','Sales ₹ (auto)'].map(t=>el('th',{text:t})))),
-      el('tbody',{},...rows.map(r=>el('tr',{},el('th',{text:r.s.name}),el('td',{},r.leads),el('td',{class:'mono',text:String((r.x.premium||0)+(r.x.affordable||0))}),el('td',{class:'mono',text:rs(r.x.amount||0)})))))),
+    el('p',{class:'hint',text:'HR types how many new leads each sales person got. Orders and sales amount come in automatically from the orders staff enter in the app.'+(owner?' Ad spend is only shown to you (admin): type the day\'s total Meta spend, and it is split by each person\'s share of the leads.':'')}),
+    owner?el('label',{class:'f',for:'sl-spend'},'Meta ad spend this day (₹)',spI):null,
+    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...head.map(t=>el('th',{text:t})))),
+      el('tbody',{},...rows.map(r=>{const o=(r.x.premium||0)+(r.x.affordable||0),sp=share(salesDate,r.s.id);
+        return el('tr',{},el('th',{text:r.s.name}),el('td',{},r.leads),el('td',{class:'mono',text:String(o)}),el('td',{class:'mono',text:rs(r.x.amount||0)}),
+          ...(owner?[el('td',{class:'mono',text:sp?rs(sp):'—'}),el('td',{class:'mono',text:sp?per(sp,r.x.leads||0):'—'}),el('td',{class:'mono',text:sp?per(sp,o):'—'}),el('td',{class:'mono',text:roas(r.x.amount||0,sp)})]:[]))})))),
     el('div',{class:'row'},saveBtn));
   const dates=monthDates(m);
-  const tot=list.map(s=>{let L=0,P=0,Af=0,Am=0;dates.forEach(d=>{const x=adminSales[ymd(d)+'__'+s.id];if(x){L+=x.leads;P+=x.premium;Af+=x.affordable;Am+=x.amount}});return{s,L,P,Af,O:P+Af,Am}});
+  const tot=list.map(s=>{let L=0,P=0,Af=0,Am=0,Sp=0;dates.forEach(d=>{const ds=ymd(d),x=adminSales[ds+'__'+s.id];if(x){L+=x.leads;P+=x.premium;Af+=x.affordable;Am+=x.amount}Sp+=share(ds,s.id)});return{s,L,P,Af,O:P+Af,Am,Sp}});
   const all=tot.reduce((a,t)=>({L:a.L+t.L,O:a.O+t.O,Am:a.Am+t.Am}),{L:0,O:0,Am:0});
+  const spMonth=dates.reduce((t,d)=>t+(adminAd[ymd(d)]||0),0);
   const pct=(o,l)=>l?Math.round(o/l*100)+'%':'—';
+  const stat2=(v,t)=>el('div',{},el('b',{class:'mono',text:v}),el('span',{text:t}));
   const report=el('div',{class:'panel'},el('h3',{text:'This month'}),
-    el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(all.L)}),el('span',{text:'Leads'})),el('div',{},el('b',{class:'mono',text:String(all.O)}),el('span',{text:'Orders'})),el('div',{},el('b',{class:'mono',text:pct(all.O,all.L)}),el('span',{text:'Conversion'})),el('div',{},el('b',{class:'mono',text:rs(all.Am)}),el('span',{text:'Sales'}))),
-    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Name','Leads','Premium','Affordable','Orders','Conversion','Sales'].map(t=>el('th',{text:t})))),
-      el('tbody',{},...tot.map(t=>el('tr',{},el('th',{text:t.s.name}),...[t.L,t.P,t.Af,t.O].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',text:pct(t.O,t.L)}),el('td',{class:'mono',text:rs(t.Am)})))))));
+    el('div',{class:'stats'},stat2(String(all.L),'Leads'),stat2(String(all.O),'Orders'),stat2(pct(all.O,all.L),'Conversion'),stat2(rs(all.Am),'Sales'),
+      ...(owner?[stat2(rs(spMonth),'Ad spend'),stat2(per(spMonth,all.O),'Cost / order'),stat2(roas(all.Am,spMonth),'ROAS')]:[])),
+    owner?el('p',{class:'hint',text:'Ad spend per person = each day\'s Meta spend split by their share of that day\'s leads. Orders often come from leads of earlier days, so read cost and ROAS over the month, not one day.'}):null,
+    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Name','Leads','Premium','Affordable','Orders','Conversion','Sales'].concat(owner?['Ad spend','Cost / lead','Cost / order','ROAS']:[]).map(t=>el('th',{text:t})))),
+      el('tbody',{},...tot.map(t=>el('tr',{},el('th',{text:t.s.name}),...[t.L,t.P,t.Af,t.O].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',text:pct(t.O,t.L)}),el('td',{class:'mono',text:rs(t.Am)}),
+        ...(owner?[el('td',{class:'mono',text:t.Sp?rs(t.Sp):'—'}),el('td',{class:'mono',text:t.Sp?per(t.Sp,t.L):'—'}),el('td',{class:'mono',text:t.Sp?per(t.Sp,t.O):'—'}),el('td',{class:'mono',text:roas(t.Am,t.Sp)})]:[])))))));
   const days=dates.filter(d=>list.some(s=>adminSales[ymd(d)+'__'+s.id]));
   const daily=el('div',{class:'panel'},el('h3',{text:'Day by day (orders · sales)'}),days.length?el('div',{class:'scroll'},el('table',{},
     el('thead',{},el('tr',{},el('th',{text:'Date'}),...list.map(s=>el('th',{text:s.name})),el('th',{text:'Total'}))),

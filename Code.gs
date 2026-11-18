@@ -22,7 +22,8 @@ var SHEETS = {
   Happy:      ['key','date','staffId','count','by','updatedAt'],   // happy customer moments per sales person per day (Mashida enters)
   Accounts:   ['key','date','staffId','banks','cash','expenses','mismatch','fixed','vendors','note','submittedAt'], // Mashida's daily balance report
   Issues:     ['id','date','orderNo','kind','blame','note','by','status','createdAt'],  // reprint / damage / rework; blame = staff id; status pending | approved | rejected
-  Bonus:      ['id','date','staffId','points','note','createdAt']   // admin +/- points (top reel, mistakes…)
+  Bonus:      ['id','date','staffId','points','note','createdAt'],  // admin +/- points (top reel, mistakes…)
+  AdSpend:    ['date','amount','note']   // Meta ad spend per day (owner only) — split over sales staff by their leads in the Leads tab
 };
 /* daily work items. category = a staff category (Media, Production, Office) OR one staff id (e.g. jaseera).
    kind: count = a number, yesno = done / not done, colours = colour + how many, items = fixed list + how many, text = short note */
@@ -569,6 +570,7 @@ function handle_(b) {
         sales: can('sales') ? rows_('Sales').filter(function (r) { return r.date.indexOf(m) === 0; }) : [],
         pay: can('salary') ? rows_('Pay').filter(function (r) { return r.month === m; }) : [],
         orders: rows_('Orders').filter(function (r) { return r.date.indexOf(m) === 0; }), holidays: holidays_(),
+        adspend: mgr ? [] : (sh_('AdSpend') ? rows_('AdSpend').filter(function (r) { return r.date.indexOf(m) === 0; }) : []),
         me: mgr ? { id: mgr.id, name: mgr.name, access: mgr.access } : null };
     }
     case 'saveHoliday': { // office holidays: { 'yyyy-MM-dd': 'name' } — Sundays are holidays anyway
@@ -605,6 +607,14 @@ function handle_(b) {
       (b.rows || []).forEach(function (r) { r.key = r.date + '__' + r.staffId; var was = haveS[r.key] || {};
         ['calls', 'answered', 'missed', 'called'].forEach(function (c) { if (r[c] == null) r[c] = was[c] || ''; }); upsert_('Sales', r); });
       return { ok: true };
+    case 'saveAdSpend': { // owner only (not in ACTION_TAB): one total per day
+      var ad = String(b.date || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ad)) return { ok: false, error: 'Pick a date' };
+      if (!sh_('AdSpend')) adSetup_();
+      if (b.amount === '' || b.amount == null) remove_('AdSpend', ad);
+      else upsert_('AdSpend', { date: ad, amount: String(Math.max(0, Math.round(Number(b.amount) * 100) / 100)), note: String(b.note || '') });
+      return { ok: true };
+    }
     case 'savePay': { var p = b.pay; p.key = p.month + '__' + p.staffId; upsert_('Pay', p); return { ok: true }; }
     case 'saveStaff': {
       var st = b.staff, prev = staffList_().filter(function (x) { return x.id === st.id; })[0];
@@ -717,13 +727,20 @@ function syncLeadvyneLeads() {
       if (!id) { unknown[String(r[cWho])] = (unknown[String(r[cWho])] || 0) + 1; return; }
       var k = day + '__' + id; count[k] = (count[k] || 0) + 1;
     });
+    /* SPEED: all changes are written in one go (not row by row), so the lock is held for a moment
+       and check-ins / order saves don't wait behind the hourly sync */
     var have = {}; rows_('Sales').forEach(function (r) { have[r.key] = r; });
+    var cols = SHEETS.Sales, sh = sh_('Sales'), cL = cols.indexOf('leads') + 1, adds = [];
+    var lastRow = sh.getLastRow(), leadCol = lastRow >= 2 ? sh.getRange(2, cL, lastRow - 1, 1).getValues() : [], changed = false;
     Object.keys(count).forEach(function (k) {
-      var old = have[k] || {}, p = k.split('__');
-      if (String(old.leads) === String(count[k])) return;
-      upsert_('Sales', { key: k, date: p[0], staffId: p[1], leads: count[k], premium: old.premium || '', affordable: old.affordable || '', amount: old.amount || '',
-        calls: old.calls || '', answered: old.answered || '', missed: old.missed || '', called: old.called || '' });
+      var old = have[k], p = k.split('__');
+      if (old) { if (String(old.leads) !== String(count[k])) { leadCol[old._row - 2][0] = String(count[k]); changed = true; } return; }
+      var o = { key: k, date: p[0], staffId: p[1], leads: count[k] };
+      adds.push(cols.map(function (c) { return o[c] == null ? '' : String(o[c]); }));
     });
+    if (changed) sh.getRange(2, cL, leadCol.length, 1).setNumberFormat('@').setValues(leadCol);
+    if (adds.length) sh.getRange(lastRow + 1, 1, adds.length, cols.length).setNumberFormat('@').setValues(adds);
+    forget_('Sales');
     upsert_('Settings', { key: 'leadSyncLast', value: now_().date + ' ' + now_().time });
     return { ok: true, days: Object.keys(count).length, notMatched: unknown };
   } finally { lock.releaseLock(); }
@@ -1207,5 +1224,13 @@ function accessSetup_() {
       st.getRange(r._row, col).setValue('orders,register,staff,reports,products,work');
   });
   forget_('Staff');
+  adSetup_();
   upsert_('Settings', { key: 'accessVersion', value: '1' });
+}
+function adSetup_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getSheetByName('AdSpend')) return;
+  var sh = ss.insertSheet('AdSpend');
+  sh.getRange(1, 1, sh.getMaxRows(), 3).setNumberFormat('@');
+  sh.getRange(1, 1, 1, 3).setValues([SHEETS.AdSpend]).setFontWeight('bold'); sh.setFrozenRows(1);
 }
