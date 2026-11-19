@@ -1248,3 +1248,67 @@ function adSetup_() {
   sh.getRange(1, 1, sh.getMaxRows(), 3).setNumberFormat('@');
   sh.getRange(1, 1, 1, 3).setValues([SHEETS.AdSpend]).setFontWeight('bold'); sh.setFrozenRows(1);
 }
+
+/* ---------- Meta ad spend — filled in automatically every morning ----------
+   One-time setup — Apps Script editor → Project Settings (gear) → Script properties → add:
+     META_ADS_TOKEN  = a Meta token with the ads_read permission for the ad account
+                       (Business settings → System users → Generate token → tick ads_read)
+     META_AD_ACCOUNT = 1035098181891166   (the "print and trend" ad account; several = comma separated)
+   Then run adSpendSetup() once from the editor. Every morning at 7 it writes the last 3 days' spend
+   (yesterday included) into the AdSpend sheet, which the Leads tab already reads.
+   A day you typed by hand in the app is never overwritten — only rows marked "auto" are updated.
+   The token is kept only in Script properties — never paste it into this file (it is in the GitHub repo). */
+function adSpendProps_() {
+  var p = PropertiesService.getScriptProperties();
+  return { token: String(p.getProperty('META_ADS_TOKEN') || '').trim(),
+           accounts: String(p.getProperty('META_AD_ACCOUNT') || '').split(',').map(function (s) { return s.trim().replace(/^act_/, ''); }).filter(String),
+           version: String(p.getProperty('META_API_VERSION') || CAPI_VERSION).trim() };
+}
+function ymd_(d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
+/* reads spend per day for since..until (yyyy-MM-dd, both included) from every ad account, added up */
+function metaSpendByDay_(since, until) {
+  var c = adSpendProps_();
+  if (!c.token || !c.accounts.length) throw new Error('Add META_ADS_TOKEN and META_AD_ACCOUNT in Script properties first');
+  var out = {};
+  c.accounts.forEach(function (acc) {
+    var url = 'https://graph.facebook.com/' + c.version + '/act_' + acc + '/insights?fields=spend&level=account&time_increment=1&limit=100' +
+              '&time_range=' + encodeURIComponent(JSON.stringify({ since: since, until: until })) + '&access_token=' + encodeURIComponent(c.token);
+    while (url) {
+      var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true }), j = JSON.parse(res.getContentText() || '{}');
+      if (res.getResponseCode() !== 200) throw new Error('Meta (act_' + acc + '): ' + ((j.error && j.error.message) || res.getResponseCode()));
+      (j.data || []).forEach(function (r) { out[r.date_start] = (out[r.date_start] || 0) + (Number(r.spend) || 0); });
+      url = j.paging && j.paging.next ? j.paging.next : '';
+    }
+  });
+  return out;
+}
+/* writes since..until into AdSpend; days typed by hand (note not "auto") are left as they are */
+function fillAdSpend_(since, until) {
+  if (since > until) return [];
+  if (!sh_('AdSpend')) adSetup_();
+  var spend = metaSpendByDay_(since, until), have = {}, done = [];
+  rows_('AdSpend').forEach(function (r) { have[r.date] = r; });
+  for (var d = new Date(since + 'T12:00:00'); ymd_(d) <= until; d.setDate(d.getDate() + 1)) {
+    var day = ymd_(d), was = have[day];
+    if (was && was.note !== 'auto') continue;
+    var amt = Math.round((spend[day] || 0) * 100) / 100;
+    if (!was && !amt) continue;
+    upsert_('AdSpend', { date: day, amount: String(amt), note: 'auto' }); done.push(day + ' ₹' + amt);
+  }
+  upsert_('Settings', { key: 'adSpendSyncLast', value: now_().date + ' ' + now_().time });
+  return done;
+}
+/* runs every morning: the last 3 days, so Meta's late corrections are picked up too */
+function syncAdSpend() {
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  var from = new Date(); from.setDate(from.getDate() - 3);
+  return fillAdSpend_(ymd_(from), ymd_(y));
+}
+/* run once: fills from the 1st of this month to yesterday and starts the 7 am daily run */
+function adSpendSetup() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncAdSpend') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('syncAdSpend').timeBased().atHour(7).everyDays(1).inTimezone(TZ).create();
+  var y = new Date(); y.setDate(y.getDate() - 1);
+  var done = fillAdSpend_(ymd_(new Date()).slice(0, 8) + '01', ymd_(y));
+  Logger.log('Ad spend filled: ' + (done.join(', ') || 'nothing new')); return done;
+}

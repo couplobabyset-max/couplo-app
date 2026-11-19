@@ -338,7 +338,7 @@ function viewSales(){
     try{if(out.length)await call('saveSales',{adminPin,rows:out});if(spChanged)await call('saveAdSpend',{adminPin,date:salesDate,amount:spI.value});drafts={};toast('Saved for '+salesDate);reload()}catch(e){toast('Could not save: '+e.message);saveBtn.disabled=false;saveBtn.textContent='Save leads for this day'}};
   const head=['Name','Leads','Orders (auto)','Sales ₹ (auto)'].concat(owner?['Ad spend','Cost / lead','Cost / order','ROAS']:[]);
   const entry=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Daily leads'}),dInp),
-    el('p',{class:'hint',text:'HR types how many new leads each sales person got. Orders and sales amount come in automatically from the orders staff enter in the app.'+(owner?' Ad spend is only shown to you (admin): type the day\'s total Meta spend, and it is split by each person\'s share of the leads.':'')}),
+    el('p',{class:'hint',text:'HR types how many new leads each sales person got. Orders and sales amount come in automatically from the orders staff enter in the app.'+(owner?' Ad spend is only shown to you (admin): it fills in automatically from Meta every morning at 7 (you can still type over it), and it is split by each person\'s share of the leads.':'')}),
     owner?el('label',{class:'f',for:'sl-spend'},'Meta ad spend this day (₹)',spI):null,
     el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...head.map(t=>el('th',{text:t})))),
       el('tbody',{},...rows.map(r=>{const o=(r.x.premium||0)+(r.x.affordable||0),sp=share(salesDate,r.s.id);
