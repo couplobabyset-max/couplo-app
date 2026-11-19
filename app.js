@@ -1684,10 +1684,6 @@ function boot(){
 }
 window.addEventListener('hashchange',()=>{if(location.hash==='#admin'){history.replaceState(null,'',location.pathname);goHome('admin')}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&view==='kiosk'&&API)loadKiosk()});
-if('serviceWorker' in navigator){const hadSW=!!navigator.serviceWorker.controller;let reloaded=false;
-  navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
-  /* a new version just took over: reload once so it shows now (not on the next open) — but never in the middle of typing */
-  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadSW||reloaded)return;reloaded=true;
-    const busy=()=>document.querySelector('.ov,input:focus,textarea:focus');if(!busy())location.reload();else toast('App updated — it will refresh next time you open it.')})}
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).catch(()=>{});
 boot();
 })();
