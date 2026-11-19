@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','codAt'],  // COD: codStatus = shipped / delivered / paid / returned, codAt = when it last changed  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -595,6 +595,17 @@ function handle_(b) {
       return { ok: true, order: so };
     }
     case 'deleteOrder': remove_('Orders', b.id); return { ok: true };
+    case 'setCod': { // COD tracking: courier, tracking no., status (shipped / delivered / paid / returned)
+      var co = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
+      if (!co) return { ok: false, error: 'Order not found' };
+      var stt = String(b.codStatus || '').toLowerCase();
+      if (['', 'shipped', 'delivered', 'paid', 'returned'].indexOf(stt) < 0) return { ok: false, error: 'Unknown status' };
+      ordersHeader_();
+      if (stt !== String(co.codStatus || '')) co.codAt = stt ? n.date + ' ' + n.time : '';
+      co.codStatus = stt; co.courier = String(b.courier || '').trim().slice(0, 40); co.awb = String(b.awb || '').trim().toUpperCase().slice(0, 40);
+      if (stt && co.dispatched !== 'TRUE') { co.dispatched = 'TRUE'; co.dispatchedAt = co.dispatchedAt || n.date + ' ' + n.time; }  // shipped = dispatched
+      upsert_('Orders', co); return { ok: true, order: co };
+    }
     case 'setDispatched': {
       var od = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
       if (!od) return { ok: false, error: 'Order not found' };
@@ -926,6 +937,7 @@ function arenaSetup_() {
 /* when an order is edited, keep the design / dispatch times it already had */
 function keepStages_(o, old, n) {
   o.designDoneAt = old ? (old.designDoneAt || '') : '';
+  ['codStatus', 'courier', 'awb', 'codAt'].forEach(function (k) { o[k] = old ? (old[k] || '') : ''; });  // editing an order never wipes its COD tracking
   var was = old ? old.dispatchedAt || '' : '';
   o.dispatchedAt = o.dispatched === 'TRUE' ? (was || n.date + ' ' + n.time) : '';
 }
@@ -1197,7 +1209,7 @@ function arenaAdminAction_(b, n) {
 var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
-  allOrders: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
+  allOrders: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders', setCod: 'orders',
   saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
   saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
   saveStaff: 'staff',

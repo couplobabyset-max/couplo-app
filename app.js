@@ -51,11 +51,11 @@ let adminOpen=false, adminPin=null, view='home';
 /* staff who were given some admin tabs (Staff → Edit → Admin tabs) open them with their own PIN. mgrAccess=null means the owner (admin PIN, everything) */
 let mgrAccess=null;
 /* Dispatch tab opens for anyone who has Orders (or Dispatch) — ticking dispatched is an Orders action on the server */
-const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily')&&(acc||[]).includes('orders'));
+const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily'||t==='cod')&&(acc||[]).includes('orders'));
 const can=t=>!mgrAccess||hasTab(mgrAccess,t);
 /* drops the Leads column (index i) from a header/row list for people without the Leads tab */
 const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
-const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['daily','Daily sold'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
@@ -282,6 +282,7 @@ function renderAdmin(){
   else if(adminView==='orders')parts.push(...viewOrders());
   else if(adminView==='dispatch')parts.push(...viewDashboard(true));
   else if(adminView==='daily')parts.push(...viewDailySold());
+  else if(adminView==='cod')parts.push(...viewCod());
   else if(adminView==='products')parts.push(...viewProducts());
   else if(adminView==='work')parts.push(...viewWork());
   else if(adminView==='sales')parts.push(...viewSales());
@@ -472,7 +473,7 @@ function editStaff(s){
   const ac=el('select',{id:'s-ac'},el('option',{value:'1',text:'Shown on check-in screen',selected:s?.active!==false}),el('option',{value:'0',text:'Not on check-in (left, or works outside)',selected:s?.active===false}));
   /* admin tabs this person may open with their own PIN — only the owner sets this */
   const curA=s?.access||[];
-  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch'&&v!=='daily').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
+  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch'&&v!=='daily'&&v!=='cod').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
   const accBox=mgrAccess?null:el('div',{class:'f'},el('span',{},'Admin tabs this person can open (with their own PIN)'),el('p',{class:'hint',text:'Leave all empty for normal staff. Ticked tabs open from an "Admin panel" button on their page, and they can edit there. Leads, Salary and Staff show money and private data.'}),
     el('div',{style:'display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0'},...aBoxes));
   const save=async()=>{const name=nm.value.trim().toUpperCase();if(!name){toast('Enter a name.');return}
@@ -1032,6 +1033,73 @@ function viewWeek(){
     strip,kp,missP,nav);
 }
 
+/* COD — only cash-on-delivery orders: courier, tracking no., shipped → delivered → cash received (or returned) */
+let codF={preset:'month',from:'',to:'',show:'open',q:''};
+const COD_ST=[['','Not shipped'],['shipped','Shipped'],['delivered','Delivered (cash pending)'],['paid','Cash received'],['returned','Returned (RTO)']];
+const codSt=o=>o.codStatus||(String(o.dispatched).toUpperCase()==='TRUE'?'shipped':'');
+function viewCod(){
+  const R0=rpData(codF);
+  const presets=[['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['custom','Pick dates']];
+  const ps=el('select',{id:'cod-p','aria-label':'Period',onchange:e=>{codF.preset=e.target.value;if(codF.preset==='custom'&&!codF.from){codF.from=R0.f;codF.to=R0.t}renderAdmin()}},...presets.map(([v,t])=>el('option',{value:v,text:t,selected:codF.preset===v})));
+  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders · '+rpLabel(R0.f,R0.t)}),el('div',{class:'row'},ps,
+      el('button',{class:'btn',type:'button',text:'Reload',onclick:()=>{rpMonths(R0.f,R0.t).forEach(m=>delete rpCache[m]);renderAdmin()}}))),
+    codF.preset==='custom'?el('div',{class:'form2'},
+      el('label',{class:'f',for:'cod-f'},'From',el('input',{id:'cod-f',type:'date',value:codF.from,max:todayStr,onchange:e=>{codF.from=e.target.value;renderAdmin()}})),
+      el('label',{class:'f',for:'cod-t'},'To',el('input',{id:'cod-t',type:'date',value:codF.to,max:todayStr,onchange:e=>{codF.to=e.target.value;renderAdmin()}}))):null);
+  if(R0.tooLong)return[head,el('div',{class:'empty',text:'Pick up to 12 months at a time.'})];
+  if(R0.loading)return[head,el('div',{class:'empty',text:'Loading…'})];
+  const all=(R0.orders||[]).filter(o=>o.payment==='cod'), amt=o=>+o.amount||0, sum=a=>a.reduce((t,o)=>t+amt(o),0);
+  const by=st=>all.filter(o=>codSt(o)===st);
+  const nm=id=>(staff.find(s=>s.id===id)||{name:id||'—'}).name;
+  const stat=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+  const pendCash=all.filter(o=>['shipped','delivered'].includes(codSt(o)));
+  const kpis=el('div',{class:'panel'},el('div',{class:'kpis'},
+    stat(all.length,'COD orders',rs(sum(all))),
+    stat(by('').length,'Not shipped',rs(sum(by(''))),by('').length?'warnk':''),
+    stat(by('shipped').length,'On the way',rs(sum(by('shipped')))),
+    stat(by('delivered').length,'Delivered, cash pending',rs(sum(by('delivered'))),by('delivered').length?'warnk':''),
+    stat(by('paid').length,'Cash received',rs(sum(by('paid')))),
+    stat(by('returned').length,'Returned (RTO)',rs(sum(by('returned'))),by('returned').length?'warnk':''),
+    stat(rs(sum(pendCash)),'Cash still to come',pendCash.length+' orders')),
+    !all.length?el('p',{class:'hint',text:'Orders show here once staff pick "COD" in the order form.'}):null);
+  /* courier-wise money still to come */
+  const cg={};pendCash.forEach(o=>{const k=o.courier||'(no courier yet)';cg[k]=cg[k]||{n:0,a:0};cg[k].n++;cg[k].a+=amt(o)});
+  const courP=Object.keys(cg).length?el('div',{class:'panel'},el('h3',{text:'Cash to collect, by courier'}),el('div',{class:'scroll'},el('table',{},
+    el('thead',{},el('tr',{},...['Courier','Orders','Amount'].map(t=>el('th',{text:t})))),
+    el('tbody',{},...Object.entries(cg).sort((a,b)=>b[1].a-a[1].a).map(([k,v])=>el('tr',{},el('td',{text:k}),el('td',{class:'mono',text:String(v.n)}),el('td',{class:'mono',text:rs(v.a)}))))))):null;
+  /* list */
+  const box=el('div');
+  const draw=()=>{
+    const q=codF.q.trim().toUpperCase();
+    const base=all.filter(o=>!q||[o.orderNo,o.customer,o.phone,o.district,o.pincode,o.awb,o.courier].some(v=>String(v||'').toUpperCase().includes(q)));
+    const groups={open:o=>['','shipped','delivered'].includes(codSt(o)),'':o=>codSt(o)==='',shipped:o=>codSt(o)==='shipped',delivered:o=>codSt(o)==='delivered',paid:o=>codSt(o)==='paid',returned:o=>codSt(o)==='returned',all:()=>true};
+    const rows=base.filter(groups[codF.show]).sort((a,b)=>a.date.localeCompare(b.date));
+    const chip=(k,t)=>el('button',{type:'button',class:'fchip'+(codF.show===k?' on':''),text:t+' ('+base.filter(groups[k]).length+')',onclick:()=>{codF.show=k;draw()}});
+    const chips=el('div',{class:'fchips'},chip('open','All open'),chip('','Not shipped'),chip('shipped','On the way'),chip('delivered','Cash pending'),chip('paid','Cash received'),chip('returned','Returned'),chip('all','All'));
+    const qI=el('input',{id:'cod-q',type:'search',placeholder:'Search order no, customer, phone, tracking…',value:codF.q,oninput:e=>{codF.q=e.target.value;clearTimeout(draw._t);draw._t=setTimeout(()=>{draw();const i=$('#cod-q');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},250)}});
+    const xl=el('button',{class:'btn',type:'button',text:'Download Excel ('+rows.length+')',disabled:!rows.length,onclick:()=>{
+      const aoa=[['DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','QTY','COD AMOUNT','STAFF','COURIER','TRACKING NO','STATUS']].concat(rows.map(o=>[o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',+o.qty||1,amt(o),nm(o.staffId),o.courier||'',o.awb||'',(COD_ST.find(x=>x[0]===codSt(o))||['',''])[1]]));
+      const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(()=>({wch:16}));XLSX.utils.book_append_sheet(wb,ws,'COD');
+      saveFile('COUPLO_COD_'+R0.f+'_to_'+R0.t+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT)}});
+    const tbl=rows.length?el('div',{class:'scroll'},el('table',{class:'disptbl'},
+      el('thead',{},el('tr',{},...['Date','No.','Customer','Phone','Place','Staff','Amount','Courier','Tracking no.','Status',''].map(t=>el('th',{text:t})))),
+      el('tbody',{},...rows.slice(0,400).map(o=>{
+        const cr=el('input',{type:'text',value:o.courier||'',placeholder:'Courier',list:'dl-cour','aria-label':'Courier '+(o.orderNo||''),style:'min-width:110px'});
+        const aw=el('input',{type:'text',value:o.awb||'',placeholder:'Tracking no.','aria-label':'Tracking '+(o.orderNo||''),style:'min-width:120px;text-transform:uppercase'});
+        const st=el('select',{'aria-label':'Status '+(o.orderNo||'')},...COD_ST.map(([v,t])=>el('option',{value:v,text:t,selected:codSt(o)===v})));
+        const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
+          if(st.value&&st.value!=='returned'&&!cr.value.trim()){toast('Type the courier name.');cr.focus();return}
+          sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:st.value,courier:cr.value,awb:aw.value});Object.assign(o,j.order||{codStatus:st.value,courier:cr.value.trim(),awb:aw.value.trim().toUpperCase()});toast((o.orderNo||'Order')+' saved');draw()}
+          catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);sv.disabled=false}}});
+        return el('tr',{class:codSt(o)==='paid'?'sent':''},el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
+          el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
+          el('td',{},cr),el('td',{},aw),el('td',{},st),el('td',{},sv))})))):el('div',{class:'empty',text:'No COD orders here.'});
+    const cours=[...new Set(all.map(o=>o.courier).filter(Boolean))];
+    box.replaceChildren(el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null)};
+  draw();
+  const list=el('div',{class:'panel'},el('h3',{text:'COD orders'}),el('p',{class:'hint',text:'Type the courier and tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
+  return[head,kpis,courP,list].filter(Boolean);
+}
 /* Daily sold — which products were sold on a day and by whom (for Mashida's daily count; admin sees it too) */
 let dslDay=null;
 function viewDailySold(){
