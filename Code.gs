@@ -475,7 +475,7 @@ function handle_(b) {
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
         category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
-        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access };
+        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access, myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
     }
     case 'hrSaveLeads': { // HR staff type the daily lead count for each sales person (same rows the admin Leads tab saves)
       var hr = staffList_().filter(function (x) { return x.id === b.staffId; })[0];

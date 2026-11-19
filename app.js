@@ -1556,7 +1556,17 @@ function myDayView(d){
         return el('div',{style:'flex:1;min-width:58px;text-align:center;padding:8px 4px;border-radius:12px;border:1px solid var(--line);background:'+(ok?'var(--ok-soft)':isT?'var(--surface)':'var(--sunk)')},
           el('div',{class:'hint',style:'margin:0',text:DAYS[x.getDay()].slice(0,3)+' '+x.getDate()}),el('div',{style:'font:700 20px var(--f-display)',text:String(n)}),el('div',{style:'font-size:13px',text:ok?'✓':isT?'today':'—'}))})),
       el('div',{class:'hint',style:'margin:0',text:'✓ = '+base+' or more orders (normal day). '+(streak>=2?'🔥 '+streak+' days in a row!':'')}));
-    box.replaceChildren(el('div',{style:'font:600 18px var(--f-display);margin:2px 0',text:hi[0]}),todayCard,monthMsg,ringRow,strip);
+    /* my leads: today / this week (Mon–Sun) / this month — leads come from the Leads tab (HR / CRM sync) */
+    let leadsP=null;
+    if(d.myLeads){const L={};d.myLeads.forEach(x=>L[x.date]=(L[x.date]||0)+x.leads);
+      const t=new Date(td+'T12:00:00'),mon=new Date(t);mon.setDate(t.getDate()-((t.getDay()+6)%7));const wFrom=ymd(mon);
+      const sumL=f=>Object.keys(L).filter(f).reduce((a,k)=>a+L[k],0);
+      const lT=L[td]||0,lW=sumL(k=>k>=wFrom&&k<=td),lM=sumL(k=>k.slice(0,7)===td.slice(0,7)&&k<=td);
+      const pc=(o,l)=>l?Math.round(o/l*1000)/10+'% conversion':'';
+      const tile=(n,lbl,o)=>el('div',{class:'kpi'},el('span',{text:lbl}),el('b',{class:'mono',text:String(n)}),el('small',{text:o+' order'+(o===1?'':'s')+(n?' · '+pc(o,n):'')}));
+      leadsP=el('div',{class:'panel'},el('h3',{text:'My leads'}),el('div',{class:'kpis'},tile(lT,'Today',todayN),tile(lW,'This week',r.week),tile(lM,'This month',r.month)),
+        el('p',{class:'hint',style:'margin:0',text:'Leads are added through the day, so today\'s number can still go up.'}))}
+    box.replaceChildren(el('div',{style:'font:600 18px var(--f-display);margin:2px 0',text:hi[0]}),todayCard,monthMsg,leadsP,ringRow,strip);
   }catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load'}))}})();
   return[box]}
 function myArenaView(){
