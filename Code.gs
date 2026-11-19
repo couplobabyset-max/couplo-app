@@ -1264,7 +1264,7 @@ function adSpendProps_() {
            accounts: String(p.getProperty('META_AD_ACCOUNT') || '').split(',').map(function (s) { return s.trim().replace(/^act_/, ''); }).filter(String),
            version: String(p.getProperty('META_API_VERSION') || CAPI_VERSION).trim() };
 }
-function ymd_(d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
+function adYmd_(d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
 /* reads spend per day for since..until (yyyy-MM-dd, both included) from every ad account, added up */
 function metaSpendByDay_(since, until) {
   var c = adSpendProps_();
@@ -1288,8 +1288,8 @@ function fillAdSpend_(since, until) {
   if (!sh_('AdSpend')) adSetup_();
   var spend = metaSpendByDay_(since, until), have = {}, done = [];
   rows_('AdSpend').forEach(function (r) { have[r.date] = r; });
-  for (var d = new Date(since + 'T12:00:00'); ymd_(d) <= until; d.setDate(d.getDate() + 1)) {
-    var day = ymd_(d), was = have[day];
+  for (var d = new Date(since + 'T12:00:00'); adYmd_(d) <= until; d.setDate(d.getDate() + 1)) {
+    var day = adYmd_(d), was = have[day];
     if (was && was.note !== 'auto') continue;
     var amt = Math.round((spend[day] || 0) * 100) / 100;
     if (!was && !amt) continue;
@@ -1302,13 +1302,13 @@ function fillAdSpend_(since, until) {
 function syncAdSpend() {
   var y = new Date(); y.setDate(y.getDate() - 1);
   var from = new Date(); from.setDate(from.getDate() - 3);
-  return fillAdSpend_(ymd_(from), ymd_(y));
+  return fillAdSpend_(adYmd_(from), adYmd_(y));
 }
 /* run once: fills from the 1st of this month to yesterday and starts the 7 am daily run */
 function adSpendSetup() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncAdSpend') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('syncAdSpend').timeBased().atHour(7).everyDays(1).inTimezone(TZ).create();
   var y = new Date(); y.setDate(y.getDate() - 1);
-  var done = fillAdSpend_(ymd_(new Date()).slice(0, 8) + '01', ymd_(y));
+  var done = fillAdSpend_(adYmd_(new Date()).slice(0, 8) + '01', adYmd_(y));
   Logger.log('Ad spend filled: ' + (done.join(', ') || 'nothing new')); return done;
 }
