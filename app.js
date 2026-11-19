@@ -359,7 +359,50 @@ function viewAds(){
     el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{class:'mono',text:rs(T.Sp)}),el('td',{class:'mono',text:String(T.L)}),el('td',{class:'mono',text:per(T.Sp,T.L)}),
       el('td',{class:'mono',text:String(T.O)}),el('td',{class:'mono',text:per(T.Sp,T.O)}),el('td',{class:'mono',text:rs(T.Am)}),el('td',{class:'mono',text:roas(T.Am,T.Sp)}))))),
     el('p',{class:'hint',text:'Ad spend comes from Meta ("print and trend" account) every morning at 7. Leads come from the Leads tab; orders and sales from the orders entered in the app. Orders often come from leads of earlier days, so judge cost and ROAS over a week or month, not one day.'}));
-  return[month,week,...charts,table];
+  return[m===td.slice(0,7)?actionPlan(day,last7,prev7,T,list):null,month,week,...charts,table].filter(Boolean);
+}
+/* 🎯 Action plan (owner, current month): what each sales person must do and what ad budget the target needs.
+   Worked out from the numbers (targets from Arena, leads/orders from the Leads tab, spend from Meta) — no AI cost. */
+function actionPlan(day,last7,prev7,T,list){
+  const box=el('div',{class:'panel',style:'border:2px solid var(--accent)'},el('h3',{text:'🎯 Action plan'}),el('div',{class:'hint',text:'Working it out…'}));
+  (async()=>{try{
+    const A=await call('arenaAdmin',{adminPin,day:todayStr,period:'month'});
+    const sales=A.board.filter(r=>r.section==='Sales'), dl=Math.max(1,A.team.daysLeft||1);
+    const tLeft=Math.max(0,A.team.monthTarget-A.team.month), needDay=tLeft/dl;
+    const last7days=day.slice(-7).map(r=>r.ds), f1=x=>Math.round(x*10)/10;
+    const pace=id=>last7days.reduce((t,ds)=>{const x=adminSales[ds+'__'+id];return t+(x?(x.premium||0)+(x.affordable||0):0)},0)/Math.max(1,last7days.length);
+    const teamPace=sales.reduce((t,r)=>t+pace(r.id),0);
+    const li=(icon,txt,sub)=>el('div',{style:'display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)'},el('span',{style:'font-size:18px;line-height:1.3',text:icon}),
+      el('div',{},el('div',{style:'font-weight:600',text:txt}),sub?el('div',{class:'hint',style:'margin:0',text:sub}):null));
+    const items=[];
+    /* team */
+    items.push(tLeft?li(teamPace>=needDay?'✅':'⚠️','Team: '+tLeft+' orders left in '+dl+' working days → need '+f1(needDay)+' a day',
+        'Last 7 days the team did '+f1(teamPace)+' a day. '+(teamPace>=needDay?'On track — keep this speed.':'Short by '+f1(needDay-teamPace)+' orders a day.'))
+      :li('🏆','Team target crossed: '+A.team.month+' of '+A.team.monthTarget+' orders','Everything from here is incentive.'));
+    /* each sales person, biggest gap first */
+    sales.map(r=>({r,need:r.left/dl,p:pace(r.id)})).sort((x,y)=>(y.need-y.p)-(x.need-x.p)).forEach(({r,need,p})=>{
+      items.push(!r.left?li('🔥',r.name+': target crossed (+'+r.incentive+')','Last 7 days: '+f1(p)+' orders a day.')
+        :li(p>=need?'✅':'👉',r.name+': '+r.left+' orders left → '+f1(need)+' a day',
+          'Doing '+f1(p)+' a day now'+(p>=need?' — on track.':' — needs +'+f1(need-p)+' a day.')+(r.conv!=null?' Conversion '+r.conv+'% of '+r.leads+' leads.':'')))});
+    /* ads budget */
+    const conv=T.L?T.O/T.L:0, cpl7=last7.L?last7.Sp/last7.L:0, spDay=last7.Sp/Math.max(1,last7days.length);
+    if(tLeft&&conv&&cpl7){
+      const leadsNeed=Math.ceil(tLeft/conv), budDay=leadsNeed*cpl7/dl, chg=budDay-spDay;
+      items.push(li(chg>spDay*0.1?'📈':chg<-spDay*0.1?'💰':'👌',
+        chg>spDay*0.1?'Ads: raise the daily budget from '+rs(spDay)+' to about '+rs(budDay)+' (+'+rs(chg)+' a day)'
+          :chg<-spDay*0.1?'Ads: the current '+rs(spDay)+' a day is more than the target needs ('+rs(budDay)+')'
+          :'Ads: keep the daily budget at about '+rs(spDay),
+        'To get '+tLeft+' more orders at '+f1(conv*100)+'% conversion you need ~'+leadsNeed+' leads; at '+rs(cpl7)+' a lead that is '+rs(leadsNeed*cpl7)+' over '+dl+' days.'+(chg<-spDay*0.1?' Keep it if you want to beat the target.':'')+(budDay>spDay*1.5?' That is a big jump — raise it step by step (about +25% every 3 days) and push conversion at the same time; better conversion lowers the budget needed.':'')));
+    }
+    const aov=T.O?T.Am/T.O:0, cpo=T.O?T.Sp/T.O:0;
+    if(aov&&cpo)items.push(li(cpo<=aov*0.3?'💵':'⚠️','Each order costs '+rs(cpo)+' in ads and brings '+rs(aov)+' in sales',
+      cpo<=aov*0.3?'Ads are paying back well ('+Math.round(cpo/aov*100)+'% of sales).':'Ads take '+Math.round(cpo/aov*100)+'% of each sale — work on conversion before raising budget.'));
+    const cplP=prev7.L?prev7.Sp/prev7.L:0;
+    if(cpl7&&cplP&&cpl7>cplP*1.2)items.push(li('🔎','Cost per lead went up '+Math.round((cpl7/cplP-1)*100)+'% this week ('+rs(cplP)+' → '+rs(cpl7)+')','Try a fresh creative or check which ad set got costlier.'));
+    if(last7days.length&&!(adminAd[last7days[last7days.length-1]]))items.push(li('⛔','No ad spend yesterday','Check if the Meta ads are paused or the payment failed.'));
+    box.replaceChildren(el('h3',{text:'🎯 Action plan'}),...items,el('p',{class:'hint',style:'margin:0',text:'Worked out from this month\'s targets, leads, orders and Meta spend. Refresh after new orders.'}));
+  }catch(e){box.replaceChildren(el('h3',{text:'🎯 Action plan'}),el('div',{class:'hint',text:'Could not work it out: '+e.message}))}})();
+  return box;
 }
 function viewSales(){
   const list=salesStaff(), m=adminMonth;
