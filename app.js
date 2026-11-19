@@ -1513,6 +1513,52 @@ function arenaAccounts(d,reload){
       el('p',{class:'hint',text:'This month: '+hs.map(s=>s.name+' '+(tot[s.id]||0)).join(' · ')}))]}
 
 /* ---- staff portal tab ---- */
+/* ---- sales staff: first screen after login — today and this month against target, in plain words ----
+   Today's target = what is still needed for the month ÷ working days left (so it goes up when behind).
+   Uses the Arena month numbers (orders, target, leads) and the person's own orders for the day-by-day strip. */
+function myDayView(d){
+  const box=el('div',{style:'display:flex;flex-direction:column;gap:14px'},el('div',{class:'empty',text:'Loading your day…'}));
+  (async()=>{try{
+    const a=await call('arenaMe',{staffId:me.id,pin:me.pin,period:'month'}),A=a.arena,td=A.today||d.today;
+    const r=A.board.find(x=>x.id===a.me);
+    if(!r||r.section!=='Sales'){box.replaceChildren(el('div',{class:'empty',text:'No sales target set for you yet.'}));return}
+    const mine=d.month===td.slice(0,7)?d.orders:[];
+    const cnt={};mine.forEach(o=>cnt[o.date]=(cnt[o.date]||0)+1);
+    const todayN=cnt[td]||0, daysLeft=Math.max(1,A.team.daysLeft||1);
+    const mDates=monthDates(td.slice(0,7)), work=mDates.filter(x=>x.getDay()!==0), totalW=work.length||1;
+    const base=Math.max(1,Math.ceil(r.target/totalW));                       /* normal day */
+    const needToday=r.month>=r.target?base:Math.max(base,Math.ceil((r.left+todayN)/daysLeft)); /* goes up when behind */
+    const doneW=work.filter(x=>ymd(x)<td).length, expected=Math.round(r.target*doneW/totalW);
+    const sales=A.board.filter(x=>x.section==='Sales').sort((x,y)=>y.month-x.month), rank=sales.findIndex(x=>x.id===r.id)+1;
+    const teamL=sales.reduce((t,x)=>t+(x.leads||0),0), teamO=sales.reduce((t,x)=>t+(x.leads?x.month:0),0), teamConv=teamL?Math.round(teamO/teamL*1000)/10:null;
+    const card=(tone,big,line,sub)=>el('div',{class:'panel',style:'border-width:2px;border-color:'+(tone==='ok'?'var(--ok)':tone==='warn'?'var(--c-aff)':'var(--line)')+';background:'+(tone==='ok'?'var(--ok-soft)':tone==='warn'?'var(--warn-soft)':'var(--surface)')},
+      el('div',{style:'font:700 26px var(--f-display);line-height:1.2',text:big}),el('div',{style:'font-weight:600;font-size:16px',text:line}),sub?el('div',{class:'hint',style:'margin:0',text:sub}):null);
+    const hi=['Hi '+r.name.split(' ')[0]+' 👋'];
+    /* today */
+    const todayCard=todayN>=needToday+3?card('ok','🔥 Outstanding day!',todayN+' orders today, target was '+needToday+'.','You are way above today\'s target. Superb work!')
+      :todayN>=needToday?card('ok','🎉 Today\'s target done!',todayN+' of '+needToday+' orders today.','Excellent performance today. Every extra order is a bonus.')
+      :card(todayN?'':'warn','Today: '+todayN+' of '+needToday+' orders',(needToday-todayN)+' more order'+(needToday-todayN>1?'s':'')+' to hit today\'s target 💪',needToday>base?'Today\'s target is higher because the month is behind.':'You can do it!');
+    /* month */
+    const monthMsg=r.month>=r.target?card('ok','🏆 Monthly target crossed!',r.month+' orders this month (target '+r.target+').','+'+r.incentive+' orders in the incentive zone. Amazing work, keep going!')
+      :r.month>=expected?card('ok','✅ On track this month',r.month+' of '+r.target+' orders · '+r.left+' left.',(r.month>expected?'Ahead of plan by '+(r.month-expected)+'. ':'')+'Keep ~'+Math.ceil(r.left/daysLeft)+' a day for '+daysLeft+' working days.')
+      :card('warn','⚠️ Behind your target',r.month+' of '+r.target+' orders · '+(expected-r.month)+' behind plan.','You need ~'+Math.ceil(r.left/daysLeft)+' orders a day for the next '+daysLeft+' working days to finish the target.');
+    const ringRow=el('div',{class:'panel'},el('div',{style:'display:flex;gap:18px;align-items:center;flex-wrap:wrap'},
+      ring(r.month/r.target,String(r.month),'of '+r.target,r.month>=r.target?'var(--ok)':'var(--accent)'),
+      el('div',{style:'display:flex;flex-direction:column;gap:4px'},
+        el('div',{style:'font-weight:600',text:'#'+rank+' in the sales team this month'+(rank===1?' 🥇':rank===2?' 🥈':rank===3?' 🥉':'')}),
+        el('div',{class:'hint',style:'margin:0',text:'This week: '+r.week+' orders'}),
+        r.conv!=null?el('div',{class:'hint',style:'margin:0',text:'Conversion: '+r.conv+'% of '+r.leads+' leads'+(teamConv!=null?' (team '+teamConv+'%)':'')+(teamConv!=null&&r.conv>=teamConv?' 👍':'')}):null)));
+    /* last 7 working days */
+    const last=work.filter(x=>ymd(x)<=td).slice(-7);let streak=0;
+    for(let i=last.length-1;i>=0;i--){const ds=ymd(last[i]);if(ds===td&&(cnt[ds]||0)<base)continue;if((cnt[ds]||0)>=base)streak++;else break}
+    const strip=el('div',{class:'panel'},el('h3',{text:'Last 7 working days'}),
+      el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},...last.map(x=>{const ds=ymd(x),n=cnt[ds]||0,ok=n>=base,isT=ds===td;
+        return el('div',{style:'flex:1;min-width:58px;text-align:center;padding:8px 4px;border-radius:12px;border:1px solid var(--line);background:'+(ok?'var(--ok-soft)':isT?'var(--surface)':'var(--sunk)')},
+          el('div',{class:'hint',style:'margin:0',text:DAYS[x.getDay()].slice(0,3)+' '+x.getDate()}),el('div',{style:'font:700 20px var(--f-display)',text:String(n)}),el('div',{style:'font-size:13px',text:ok?'✓':isT?'today':'—'}))})),
+      el('div',{class:'hint',style:'margin:0',text:'✓ = '+base+' or more orders (normal day). '+(streak>=2?'🔥 '+streak+' days in a row!':'')}));
+    box.replaceChildren(el('div',{style:'font:600 18px var(--f-display);margin:2px 0',text:hi[0]}),todayCard,monthMsg,ringRow,strip);
+  }catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load'}))}})();
+  return[box]}
 function myArenaView(){
   const box=el('div',{},el('div',{class:'empty',text:'Loading Arena…'}));
   const load=async()=>{try{const d=await call('arenaMe',{staffId:me.id,pin:me.pin,period:arenaPeriod});const A=d.arena;
@@ -1578,13 +1624,13 @@ async function ordersHome(edit){
     el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
-  const tabList=[['arena','🏆 Arena'],['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
-  if(portalTab==='auto')portalTab=me.sales?'orders':myTasks.length?'work':'att';
+  const tabList=(me.sales?[['day','⭐ My day']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
+  if(portalTab==='auto')portalTab=me.sales?'day':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
   me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>hasTab(d.access,v));
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})),
     ...given.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>openMgr(d.access,v)})));
-  const body=portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
+  const body=portalTab==='day'?myDayView(d):portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
   box.replaceChildren(head,warn,tabs,...body);
 }
