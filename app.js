@@ -52,10 +52,10 @@ let adminOpen=false, adminPin=null, view='home';
 let mgrAccess=null;
 /* Dispatch tab opens for anyone who has Orders (or Dispatch) — ticking dispatched is an Orders action on the server */
 const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily'||t==='cod')&&(acc||[]).includes('orders'));
-const can=t=>!mgrAccess||hasTab(mgrAccess,t);
+const can=t=>!mgrAccess||(t!=='ads'&&hasTab(mgrAccess,t)); /* Ads (spend) is owner only */
 /* drops the Leads column (index i) from a header/row list for people without the Leads tab */
 const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
-const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['ads','Ads'],['salary','Salary'],['staff','Staff']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
@@ -286,6 +286,7 @@ function renderAdmin(){
   else if(adminView==='products')parts.push(...viewProducts());
   else if(adminView==='work')parts.push(...viewWork());
   else if(adminView==='sales')parts.push(...viewSales());
+  else if(adminView==='ads')parts.push(...viewAds());
   else if(adminView==='salary')parts.push(...viewSalary());
   else parts.push(...viewStaff());
   $('#admin').replaceChildren(...parts);
@@ -317,6 +318,42 @@ function viewRegister(){
     el('p',{class:'hint',text:'Tap any cell to fix a time or mark leave / work from home. Under 6 hours shows as a half day. Red means OUT was not tapped. From 14 Nov: hours count from 9:30 AM even if someone comes earlier. Green OT = overtime: time worked beyond '+adminMinH+' hours.'}),
     list.length?el('div',{class:'scroll'},el('table',{},thead,tbody,tfoot)):el('div',{class:'empty',text:'Add staff in the Staff tab to see the register.'}));
   return[todayPanel,reg];
+}
+/* Ads dashboard (owner only): Meta spend (AdSpend sheet, filled every morning) against leads, orders and sales of the month */
+function viewAds(){
+  const m=adminMonth, list=salesStaff(), td=todayStr;
+  const dates=monthDates(m).filter(d=>ymd(d)<td); /* till yesterday: today's spend comes in tomorrow morning */
+  if(!dates.length)return[el('div',{class:'empty',text:'Nothing yet for this month — numbers show from the 2nd (till yesterday).'})];
+  const day=dates.map(d=>{const ds=ymd(d);let L=0,O=0,Am=0;list.forEach(s=>{const x=adminSales[ds+'__'+s.id];if(x){L+=x.leads||0;O+=(x.premium||0)+(x.affordable||0);Am+=x.amount||0}});return{d,ds,Sp:adminAd[ds]||0,L,O,Am}});
+  const sum=a=>a.reduce((t,r)=>({Sp:t.Sp+r.Sp,L:t.L+r.L,O:t.O+r.O,Am:t.Am+r.Am}),{Sp:0,L:0,O:0,Am:0});
+  const T=sum(day), last7=sum(day.slice(-7)), prev7=sum(day.slice(-14,-7));
+  const per=(a,b)=>a&&b?rs(a/b):'—', roas=(am,sp)=>sp?(am/sp).toFixed(1)+'x':'—';
+  /* good: 1 = higher is better, -1 = lower is better, 0 = neither */
+  const chg=(a,b,good)=>{if(!a||!b)return'';const p=Math.round((a-b)/b*100);return(p>=0?'▲ ':'▼ ')+Math.abs(p)+'% vs week before'+(good&&p&&(p>0)===(good>0)?' 👍':'')};
+  const kpi=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+  const cpl7=last7.L?last7.Sp/last7.L:0, cplP=prev7.L?prev7.Sp/prev7.L:0;
+  const month=el('div',{class:'panel'},el('h3',{text:'This month · '+monFull(m)}),el('div',{class:'kpis'},
+    kpi(rs(T.Sp),'Ad spend',m===td.slice(0,7)?'till yesterday':''),kpi(T.L,'Leads'),kpi(per(T.Sp,T.L),'Cost / lead'),kpi(T.O,'Orders',T.L?Math.round(T.O/T.L*100)+'% of leads':''),
+    kpi(per(T.Sp,T.O),'Cost / order'),kpi(rs(T.Am),'Sales'),kpi(roas(T.Am,T.Sp),'ROAS','sales ÷ ad spend')));
+  const week=el('div',{class:'panel'},el('h3',{text:'Last 7 days'+(m===td.slice(0,7)?' (till yesterday)':' of the month')}),el('div',{class:'kpis'},
+    kpi(rs(last7.Sp),'Ad spend',chg(last7.Sp,prev7.Sp,0)),kpi(last7.L,'Leads',chg(last7.L,prev7.L,1)),kpi(cpl7?rs(cpl7):'—','Cost / lead',chg(cpl7,cplP,-1)),
+    kpi(last7.O,'Orders',chg(last7.O,prev7.O,1)),kpi(per(last7.Sp,last7.O),'Cost / order'),kpi(roas(last7.Am,last7.Sp),'ROAS')));
+  const lbl=r=>({label:String(r.d.getDate()),sun:r.d.getDay()===0});
+  const ch=(t,cols,note)=>el('div',{class:'panel'},el('h3',{text:t}),note?el('p',{class:'hint',text:note}):null,el('div',{class:'scroll chartscroll'},colChart(cols,true)));
+  const charts=[
+    ch('Ad spend per day (₹)',day.map(r=>({...lbl(r),p:Math.round(r.Sp),a:0,tip:r.ds+': '+rs(r.Sp)}))),
+    ch('Leads per day',day.map(r=>({...lbl(r),p:r.L,a:0,tip:r.ds+': '+r.L+' leads'}))),
+    ch('Cost per lead per day (₹)',day.map(r=>({...lbl(r),p:r.Sp&&r.L?Math.round(r.Sp/r.L):0,a:0,tip:r.ds+': '+per(r.Sp,r.L)})),'Lower is better.')];
+  const rows=day.slice().reverse();
+  const table=el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('div',{class:'scroll'},el('table',{},
+    el('thead',{},el('tr',{},...['Date','Ad spend','Leads','Cost / lead','Orders','Cost / order','Sales','ROAS'].map(t=>el('th',{text:t})))),
+    el('tbody',{},...rows.map(r=>el('tr',{},el('th',{},el('span',{class:'mono',text:pad2(r.d.getDate())}),' '+DAYS[r.d.getDay()].slice(0,3)),
+      el('td',{class:'mono',text:r.Sp?rs(r.Sp):'—'}),el('td',{class:'mono',text:String(r.L)}),el('td',{class:'mono',text:per(r.Sp,r.L)}),
+      el('td',{class:'mono',text:String(r.O)}),el('td',{class:'mono',text:per(r.Sp,r.O)}),el('td',{class:'mono',text:rs(r.Am)}),el('td',{class:'mono',text:roas(r.Am,r.Sp)})))),
+    el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{class:'mono',text:rs(T.Sp)}),el('td',{class:'mono',text:String(T.L)}),el('td',{class:'mono',text:per(T.Sp,T.L)}),
+      el('td',{class:'mono',text:String(T.O)}),el('td',{class:'mono',text:per(T.Sp,T.O)}),el('td',{class:'mono',text:rs(T.Am)}),el('td',{class:'mono',text:roas(T.Am,T.Sp)}))))),
+    el('p',{class:'hint',text:'Ad spend comes from Meta ("print and trend" account) every morning at 7. Leads come from the Leads tab; orders and sales from the orders entered in the app. Orders often come from leads of earlier days, so judge cost and ROAS over a week or month, not one day.'}));
+  return[month,week,...charts,table];
 }
 function viewSales(){
   const list=salesStaff(), m=adminMonth;
@@ -473,7 +510,7 @@ function editStaff(s){
   const ac=el('select',{id:'s-ac'},el('option',{value:'1',text:'Shown on check-in screen',selected:s?.active!==false}),el('option',{value:'0',text:'Not on check-in (left, or works outside)',selected:s?.active===false}));
   /* admin tabs this person may open with their own PIN — only the owner sets this */
   const curA=s?.access||[];
-  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch'&&v!=='daily'&&v!=='cod').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
+  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch'&&v!=='daily'&&v!=='cod'&&v!=='ads').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
   const accBox=mgrAccess?null:el('div',{class:'f'},el('span',{},'Admin tabs this person can open (with their own PIN)'),el('p',{class:'hint',text:'Leave all empty for normal staff. Ticked tabs open from an "Admin panel" button on their page, and they can edit there. Leads, Salary and Staff show money and private data.'}),
     el('div',{style:'display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0'},...aBoxes));
   const save=async()=>{const name=nm.value.trim().toUpperCase();if(!name){toast('Enter a name.');return}
