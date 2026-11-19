@@ -50,10 +50,12 @@ tick();setInterval(tick,15000);
 let adminOpen=false, adminPin=null, view='home';
 /* staff who were given some admin tabs (Staff → Edit → Admin tabs) open them with their own PIN. mgrAccess=null means the owner (admin PIN, everything) */
 let mgrAccess=null;
-const can=t=>!mgrAccess||mgrAccess.includes(t);
+/* Dispatch tab opens for anyone who has Orders (or Dispatch) — ticking dispatched is an Orders action on the server */
+const hasTab=(acc,t)=>(acc||[]).includes(t)||(t==='dispatch'&&(acc||[]).includes('orders'));
+const can=t=>!mgrAccess||hasTab(mgrAccess,t);
 /* drops the Leads column (index i) from a header/row list for people without the Leads tab */
 const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
-const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
@@ -278,6 +280,7 @@ function renderAdmin(){
   else if(adminView==='reports')parts.push(...viewReports());
   else if(adminView==='register')parts.push(...viewRegister());
   else if(adminView==='orders')parts.push(...viewOrders());
+  else if(adminView==='dispatch')parts.push(...viewDashboard(true));
   else if(adminView==='products')parts.push(...viewProducts());
   else if(adminView==='work')parts.push(...viewWork());
   else if(adminView==='sales')parts.push(...viewSales());
@@ -468,7 +471,7 @@ function editStaff(s){
   const ac=el('select',{id:'s-ac'},el('option',{value:'1',text:'Shown on check-in screen',selected:s?.active!==false}),el('option',{value:'0',text:'Not on check-in (left, or works outside)',selected:s?.active===false}));
   /* admin tabs this person may open with their own PIN — only the owner sets this */
   const curA=s?.access||[];
-  const aBoxes=ADMIN_TABS.map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
+  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
   const accBox=mgrAccess?null:el('div',{class:'f'},el('span',{},'Admin tabs this person can open (with their own PIN)'),el('p',{class:'hint',text:'Leave all empty for normal staff. Ticked tabs open from an "Admin panel" button on their page, and they can edit there. Leads, Salary and Staff show money and private data.'}),
     el('div',{style:'display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0'},...aBoxes));
   const save=async()=>{const name=nm.value.trim().toUpperCase();if(!name){toast('Enter a name.');return}
@@ -1021,17 +1024,17 @@ function viewWeek(){
     strip,kp,missP,nav);
 }
 
-function viewDashboard(){
+function viewDashboard(onlyDisp){
   const R0=rpData(dsh);
   const presets=[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['lastyear','Last year'],['custom','Pick dates']];
   const ps=el('select',{id:'ds-p','aria-label':'Period',onchange:e=>{dsh.preset=e.target.value;if(dsh.preset==='custom'&&!dsh.from){dsh.from=R0.f;dsh.to=R0.t}renderAdmin()}},...presets.map(([v,t])=>el('option',{value:v,text:t,selected:dsh.preset===v})));
   const ready=!R0.loading&&!R0.tooLong, D=ready?dashData(R0):null;
-  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Dashboard · '+rpLabel(R0.f,R0.t)}),el('div',{class:'row'},ps,
+  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:(onlyDisp?'Dispatch · ':'Dashboard · ')+rpLabel(R0.f,R0.t)}),el('div',{class:'row'},ps,
       el('button',{class:'btn',type:'button',text:'Reload',onclick:()=>{rpMonths(R0.f,R0.t).forEach(m=>delete rpCache[m]);renderAdmin()}}))),
     dsh.preset==='custom'?el('div',{class:'form2'},
       el('label',{class:'f',for:'ds-f'},'From',el('input',{id:'ds-f',type:'date',value:dsh.from,max:todayStr,onchange:e=>{dsh.from=e.target.value;renderAdmin()}})),
       el('label',{class:'f',for:'ds-t'},'To',el('input',{id:'ds-t',type:'date',value:dsh.to,max:todayStr,onchange:e=>{dsh.to=e.target.value;renderAdmin()}}))):null,
-    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Download Excel',disabled:!ready,onclick:()=>dashXlsx(D)})));
+    onlyDisp?null:el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Download Excel',disabled:!ready,onclick:()=>dashXlsx(D)})));
   if(R0.tooLong)return[head,el('div',{class:'empty',text:'Pick up to 12 months at a time.'})];
   if(!ready)return[head,el('div',{class:'empty',text:'Loading…'})];
   const pc=(a,b)=>b?Math.round(a/b*100)+'%':'';
@@ -1134,6 +1137,7 @@ function viewDashboard(){
       el('tbody',{},...gDays.filter(ds=>ds<=todayStr||D.byDay[ds]).map(ds=>{const dt=new Date(ds+'T12:00:00'),b=D.byDay[ds]||{p:0,a:0};
         return el('tr',{class:isHoliday(ds)?'sun':''},el('th',{},el('span',{class:'mono',text:dm(ds)}),' '+DAYS[dt.getDay()].slice(0,3)+(holidays[ds]?' · '+holidays[ds]:'')),
           el('td',{class:'mono',text:String(b.p+b.a)}),el('td',{class:'mono',text:String(b.p)}),el('td',{class:'mono',text:String(b.a)}),el('td',{class:'mono',text:P.pDay[ds]?String(P.pDay[ds]):'—'}))})))))):null;
+  if(onlyDisp)return[head,dispP];
   return[head,viewWeek(),head2,staffOne(R0),staffP,bucketP,gridP,timeP,dispP,printP,el('div',{class:'split'},prodP,distP),repP];
 }
 /* dashboard: one staff at a time — attendance, hours, overtime, orders/leads, work — for the chosen period */
@@ -1416,7 +1420,7 @@ async function ordersHome(edit){
   const tabList=[['arena','🏆 Arena'],['att','My attendance']].concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
   if(portalTab==='auto')portalTab=me.sales?'orders':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
-  me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>(d.access||[]).includes(v));
+  me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>hasTab(d.access,v));
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})),
     ...given.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>openMgr(d.access,v)})));
   const body=portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
