@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','codAt'],  // COD: codStatus = shipped / delivered / paid / returned, codAt = when it last changed  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -342,8 +342,7 @@ function cleanOrder_(o) {
   var t = function (v) { return String(v == null ? '' : v).trim(); };
   var r = { type: t(o.type) === 'affordable' ? 'affordable' : 'premium', customer: t(o.customer).toUpperCase(),
     phone: phoneNorm_(o.phone), district: t(o.district).toUpperCase(), pincode: t(o.pincode).replace(/\D/g, '').slice(0, 6),
-    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '',
-    payment: ['cod', 'prepaid'].indexOf(t(o.payment).toLowerCase()) >= 0 ? t(o.payment).toLowerCase() : '' };
+    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '' };
   /* several products in one order: keep the list, and product / qty / amount become the joined name and the totals */
   var it = Array.isArray(o.items) ? o.items : [];
   if (typeof o.items === 'string') { try { it = JSON.parse(o.items || '[]'); } catch (e) { it = []; } }
@@ -366,9 +365,8 @@ function orderItems_(o) {
 }
 /* adds the "items" heading to the Orders sheet the first time it is needed */
 function ordersHeader_() {
-  var sh = sh_('Orders'), cols = SHEETS.Orders; if (!sh) return;
-  var head = sh.getRange(1, 1, 1, cols.length).getValues()[0];  // adds any new column name (items, payment, …) once
-  cols.forEach(function (c, i) { if (!head[i]) sh.getRange(1, i + 1).setValue(c).setFontWeight('bold'); });
+  var sh = sh_('Orders'), col = SHEETS.Orders.length;
+  if (sh && !sh.getRange(1, col).getValue()) sh.getRange(1, col).setValue('items');
 }
 /* delete every row of a sheet that matches — bottom first so row numbers stay right */
 function deleteWhere_(name, fn) {
@@ -595,17 +593,6 @@ function handle_(b) {
       return { ok: true, order: so };
     }
     case 'deleteOrder': remove_('Orders', b.id); return { ok: true };
-    case 'setCod': { // COD tracking: courier, tracking no., status (shipped / delivered / paid / returned)
-      var co = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
-      if (!co) return { ok: false, error: 'Order not found' };
-      var stt = String(b.codStatus || '').toLowerCase();
-      if (['', 'shipped', 'delivered', 'paid', 'returned'].indexOf(stt) < 0) return { ok: false, error: 'Unknown status' };
-      ordersHeader_();
-      if (stt !== String(co.codStatus || '')) co.codAt = stt ? n.date + ' ' + n.time : '';
-      co.codStatus = stt; co.courier = String(b.courier || '').trim().slice(0, 40); co.awb = String(b.awb || '').trim().toUpperCase().slice(0, 40);
-      if (stt && co.dispatched !== 'TRUE') { co.dispatched = 'TRUE'; co.dispatchedAt = co.dispatchedAt || n.date + ' ' + n.time; }  // shipped = dispatched
-      upsert_('Orders', co); return { ok: true, order: co };
-    }
     case 'setDispatched': {
       var od = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
       if (!od) return { ok: false, error: 'Order not found' };
@@ -832,7 +819,28 @@ function capiTime_(o) {
   var t = Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 12), +(m[5] || 0)) / 1000) - 330 * 60; // IST = UTC+5:30
   return t > now ? now : t;
 }
-function capiEvent_(o) {
+/* CTWA Click IDs from the Leadvyne CRM sheet ("CTWA Click ID" / "Ad ID" columns), by full phone number.
+   When an order's phone has a Click ID, the Purchase goes to Meta as a WhatsApp (business_messaging)
+   event carrying that ctwa_clid, so Meta can tie the sale to the exact click-to-WhatsApp ad.
+   Leads from WhatsApp Status ads and leads that did not come from an ad have no Click ID — those
+   orders are still sent the old way (action_source "chat"). Newest lead row wins. */
+function ctwaMap_() {
+  var map = {};
+  try {
+    var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
+    var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
+    var cPh = head.indexOf('phone'), cClid = head.indexOf('ctwa click id'), cAd = head.indexOf('ad id'), cDate = head.indexOf('date');
+    if (cPh < 0 || cClid < 0) return map;
+    data.forEach(function (r) {
+      var clid = String(r[cClid] || '').trim(); if (!clid) return;
+      var full = phoneInfo_(r[cPh]).full; if (!full) return;
+      var d = cDate >= 0 ? String(r[cDate] instanceof Date ? r[cDate].toISOString() : r[cDate] || '') : '';
+      if (!map[full] || d > map[full].date) map[full] = { clid: clid, ad: cAd >= 0 ? String(r[cAd] || '').trim() : '', date: d };
+    });
+  } catch (e) { Logger.log('ctwaMap_: ' + e); }
+  return map;
+}
+function capiEvent_(o, ctwa) {
   var pi = phoneInfo_(o.phone);
   var ud = { country: [sha256_(pi.country)] };
   var st = pi.country === 'in' ? stateOf_(o.district) : '';
@@ -845,19 +853,40 @@ function capiEvent_(o) {
   var pin = String(o.pincode || '').replace(/\D/g, '');
   if (pin.length === 6) ud.zp = [sha256_(pin)];
   var qty = Number(o.qty) || 1, value = Number(o.amount) || 0;
-  return {
+  var hit = ctwa && pi.full ? ctwa[pi.full] : null;
+  var ev = {
     event_name: 'Purchase', event_time: capiTime_(o), event_id: 'order_' + o.id, action_source: 'chat', user_data: ud,
     custom_data: { currency: 'INR', value: value, order_id: String(o.orderNo || o.id), content_type: 'product',
       content_name: String(o.product || ''), content_category: o.type === 'affordable' ? 'affordable' : 'premium',
       contents: orderItems_(o).map(function (x) { var q = Number(x.qty) || 1; return { id: String(x.product || 'order').toLowerCase().replace(/[^a-z0-9]+/g, '-'), quantity: q, item_price: Math.round((Number(x.amount) || 0) / q) }; }),
       num_items: qty }
   };
+  if (hit) {   // came from a click-to-WhatsApp ad → WhatsApp business-messaging event with the Click ID (not hashed)
+    ev.action_source = 'business_messaging';
+    ev.messaging_channel = 'whatsapp';
+    ud.ctwa_clid = hit.clid;
+  }
+  return ev;
 }
 /* sends orders to Meta; returns { sent, failed, error } */
 function capiPost_(orders) {
   var c = capiProps_();
   if (!c.pixel || !c.token) return { sent: 0, failed: orders.length, error: 'META_PIXEL_ID / META_CAPI_TOKEN not set in Script properties' };
-  var payload = { data: orders.map(capiEvent_), access_token: c.token };
+  var ctwa = ctwaMap_();
+  orders.forEach(function (o) { o._ctwa = !!ctwa[phoneInfo_(o.phone).full]; });
+  var r = capiSend_(c, orders, ctwa);
+  /* safety net: if Meta refuses the WhatsApp (ctwa_clid) events, send the same orders the old way
+     so no Purchase is lost; the Capi sheet note says why */
+  if (r.error && orders.some(function (o) { return o._ctwa; })) {
+    var why = r.error;
+    orders.forEach(function (o) { o._ctwa = false; });
+    r = capiSend_(c, orders, null);
+    if (!r.error) r.note = 'ctwa refused, sent as chat: ' + why;
+  }
+  return r;
+}
+function capiSend_(c, orders, ctwa) {
+  var payload = { data: orders.map(function (o) { return capiEvent_(o, ctwa); }), access_token: c.token };
   if (c.test) payload.test_event_code = c.test;
   var res = UrlFetchApp.fetch('https://graph.facebook.com/' + c.version + '/' + c.pixel + '/events',
     { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
@@ -869,7 +898,7 @@ function capiPost_(orders) {
 function capiLog_(o, r) {
   var n = now_();
   upsert_('Capi', { id: o.id, status: r.error ? 'error' : (r.test ? 'test' : 'sent'), sentAt: n.date + ' ' + n.time,
-    orderNo: o.orderNo, value: o.amount, note: r.error ? String(r.error).slice(0, 300) : '' });
+    orderNo: o.orderNo, value: o.amount, note: r.error ? String(r.error).slice(0, 300) : (o._ctwa ? 'whatsapp ad (ctwa_clid)' : String(r.note || '').slice(0, 300)) });
 }
 /* hourly: send orders entered 2+ hours ago (and within 7 days) that are not yet "sent" in the Capi sheet */
 function capiSweep() {
@@ -937,7 +966,6 @@ function arenaSetup_() {
 /* when an order is edited, keep the design / dispatch times it already had */
 function keepStages_(o, old, n) {
   o.designDoneAt = old ? (old.designDoneAt || '') : '';
-  ['codStatus', 'courier', 'awb', 'codAt'].forEach(function (k) { o[k] = old ? (old[k] || '') : ''; });  // editing an order never wipes its COD tracking
   var was = old ? old.dispatchedAt || '' : '';
   o.dispatchedAt = o.dispatched === 'TRUE' ? (was || n.date + ' ' + n.time) : '';
 }
@@ -1209,7 +1237,7 @@ function arenaAdminAction_(b, n) {
 var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
-  allOrders: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders', setCod: 'orders',
+  allOrders: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
   saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
   saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
   saveStaff: 'staff',
@@ -1248,6 +1276,7 @@ function adSetup_() {
   sh.getRange(1, 1, sh.getMaxRows(), 3).setNumberFormat('@');
   sh.getRange(1, 1, 1, 3).setValues([SHEETS.AdSpend]).setFontWeight('bold'); sh.setFrozenRows(1);
 }
+
 
 /* ---------- Meta ad spend — filled in automatically every morning ----------
    One-time setup — Apps Script editor → Project Settings (gear) → Script properties → add:
@@ -1312,3 +1341,4 @@ function adSpendSetup() {
   var done = fillAdSpend_(adYmd_(new Date()).slice(0, 8) + '01', adYmd_(y));
   Logger.log('Ad spend filled: ' + (done.join(', ') || 'nothing new')); return done;
 }
+
