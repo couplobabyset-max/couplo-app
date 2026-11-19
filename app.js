@@ -514,6 +514,7 @@ const DISTRICTS=['MALAPPURAM','KOZHIKODE','PALAKKAD','THRISSUR','ERNAKULAM','KAN
 let products=[['FULL ROMBER','premium',1350],['HALF ROMBER','premium',899],['PANT TYPE ROMBER','premium',1050],['SKIRTS','premium',1500],['CODSET','premium',800],['T SHIRT','premium',650],
   ['FULL ROMBER','affordable',810],['HALF ROMBER','affordable',650],['CODSET','affordable',0]].map(([name,type,price],i)=>({id:(type[0])+'-'+i,name,type,price,active:true,order:i+1}));
 const pkey=v=>String(v||'').trim().toUpperCase();
+const payTxt=o=>o.payment==='cod'?'COD':o.payment==='prepaid'?'Prepaid':'—';
 /* one order can hold several products (e.g. HALF + FULL + PANT). They are kept in o.items as JSON;
    old orders have only product/qty/amount. linesOf gives one entry per product so product reports count each piece. */
 const itemsOf=o=>{let it=o&&o.items;if(typeof it==='string'){try{it=JSON.parse(it||'[]')}catch(e){it=[]}}return Array.isArray(it)?it.filter(x=>x&&x.product):[]};
@@ -575,6 +576,10 @@ function orderForm(o,onSave,extra){
   const addBtn=el('button',{class:'btn',type:'button',text:'+ Add product',onclick:()=>addLine({},true)});
   const drawType=()=>tyBox.replaceChildren(...[['premium','Premium'],['affordable','Affordable']].map(([v,t])=>el('button',{type:'button',role:'radio','aria-checked':String(type===v),class:'segbtn'+(type===v?' on':''),text:t,onclick:()=>{if(type===v)return;type=v;drawType();lines.forEach(fillLine)}})));
   drawType();
+  let pay=o.payment==='cod'||o.payment==='prepaid'?o.payment:'';
+  const payBox=el('div',{class:'seg',role:'radiogroup','aria-label':'Payment'});
+  const drawPay=()=>payBox.replaceChildren(...[['prepaid','Prepaid'],['cod','COD (cash on delivery)']].map(([v,t])=>el('button',{type:'button',role:'radio','aria-checked':String(pay===v),class:'segbtn'+(pay===v?' on':''),text:t,onclick:()=>{pay=v;drawPay()}})));
+  drawPay();
   const lpr=el('div',{class:'f',style:'grid-column:1/-1'},'Products',linesBox,addBtn,
     el('div',{style:'display:flex;justify-content:space-between;align-items:center;margin-top:4px'},el('span',{text:'Total amount'}),totalEl));
   const [nt,lnt]=f('o-nt','Note (optional)',{type:'text',value:o.note||''});
@@ -591,7 +596,8 @@ function orderForm(o,onSave,extra){
     if(!items.length){toast('Add at least one product.');return}
     if(items.some(i=>!i.product)){toast('Choose the product in every line (or remove the empty one).');return}
     const data={...o,orderNo:on.value.trim().toUpperCase(),dispatched:dp.checked,customer:nm.value.trim(),phone:fullPhone(),district:di.value.trim().toUpperCase(),pincode:pc.value.replace(/\D/g,''),
-      product:items.map(i=>i.product).join(' + '),qty:items.reduce((t,i)=>t+i.qty,0),amount:items.reduce((t,i)=>t+i.amount,0),items:items.length>1?items:[],type,note:nt.value.trim()};
+      product:items.map(i=>i.product).join(' + '),qty:items.reduce((t,i)=>t+i.qty,0),amount:items.reduce((t,i)=>t+i.amount,0),items:items.length>1?items:[],type,payment:pay,note:nt.value.trim()};
+    if(!pay){toast('Choose Prepaid or COD.');return}
     if(!data.customer&&!data.phone){toast('Enter the customer name or phone.');return}
     if(data.phone===null){const c=CC.find(c=>c[0]===ccs.value);toast('Phone number needs '+c[2]+' digits for '+c[1].split(' ')[1]+'.');return}
     if(data.pincode&&data.pincode.length!==6){toast('Pincode needs 6 digits.');return}
@@ -600,6 +606,7 @@ function orderForm(o,onSave,extra){
   };
   return el('div',{class:'panel'},el('h3',{text:o.id?'Edit order '+(o.orderNo||''):'New order'}),
     el('div',{class:'f'},'Type',tyBox),
+    el('div',{class:'f'},'Payment',payBox),
     el('div',{class:'form2'},lpr,lon,lnm,lph,ldi,lpc),lnt,ldp,btn);
 }
 
@@ -1048,7 +1055,7 @@ function viewDailySold(){
   const rowT=k=>sids.reduce((t,id)=>t+(g[k][id]||0),0), colT=id=>prods.reduce((t,k)=>t+(g[k][id]||0),0), all=prods.reduce((t,k)=>t+rowT(k),0);
   const prem=os.filter(o=>o.type!=='affordable').length;
   const stat=(v,l)=>el('div',{class:'kpi'},el('span',{text:l}),el('b',{class:'mono',text:String(v)}));
-  const kpis=el('div',{class:'panel'},el('div',{class:'kpis'},stat(os.length,'Orders'),stat(all,'Pieces sold'),stat(prem,'Premium orders'),stat(os.length-prem,'Affordable orders'),stat(sids.length,'Staff who sold')));
+  const kpis=el('div',{class:'panel'},el('div',{class:'kpis'},stat(os.length,'Orders'),stat(all,'Pieces sold'),stat(prem,'Premium orders'),stat(os.length-prem,'Affordable orders'),stat(os.filter(o=>o.payment==='prepaid').length,'Prepaid'),stat(os.filter(o=>o.payment==='cod').length,'COD'),stat(sids.length,'Staff who sold')));
   const ordN=id=>os.filter(o=>o.staffId===id).length;
   const grid=el('div',{class:'panel'},el('h3',{text:'Products × staff'}),el('p',{class:'hint',text:'Pieces sold of each product, by who sold it. (P) = Premium, (A) = Affordable.'}),
     el('div',{class:'scroll'},el('table',{},
@@ -1056,15 +1063,15 @@ function viewDailySold(){
       el('tbody',{},...prods.map(k=>el('tr',{},el('th',{text:k}),...sids.map(id=>el('td',{class:'mono',text:g[k][id]?String(g[k][id]):'—'})),el('td',{class:'mono',style:'font-weight:700',text:String(rowT(k))})))),
       el('tfoot',{},el('tr',{},el('th',{text:'Total pieces'}),...sids.map(id=>el('td',{class:'mono',text:String(colT(id))})),el('td',{class:'mono',text:String(all)})),
         el('tr',{},el('th',{text:'Orders'}),...sids.map(id=>el('td',{class:'mono',text:String(ordN(id))})),el('td',{class:'mono',text:String(os.length)}))))));
-  const txt=()=>['DAILY SOLD · '+dm(day),'Orders: '+os.length+' · Pieces: '+all,'',...prods.map(k=>k+': '+rowT(k)+'  ('+sids.filter(id=>g[k][id]).map(id=>nm(id)+' '+g[k][id]).join(', ')+')'),'',
+  const txt=()=>['DAILY SOLD · '+dm(day),'Orders: '+os.length+' · Pieces: '+all,'Prepaid: '+os.filter(o=>o.payment==='prepaid').length+' · COD: '+os.filter(o=>o.payment==='cod').length,'',...prods.map(k=>k+': '+rowT(k)+'  ('+sids.filter(id=>g[k][id]).map(id=>nm(id)+' '+g[k][id]).join(', ')+')'),'',
     'BY STAFF',...sids.map(id=>nm(id)+': '+ordN(id)+' orders, '+colT(id)+' pieces')].join('\n');
   const copyB=el('button',{class:'btn primary',type:'button',text:'Copy count (for WhatsApp)',onclick:async()=>{try{await navigator.clipboard.writeText(txt());toast('Copied')}catch(e){prompt('Copy this:',txt())}}});
   const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Orders of the day · '+os.length}),copyB),
     el('div',{class:'scroll'},el('table',{},
-      el('thead',{},el('tr',{},...['No.','Staff','Customer','Product','Qty','Type','District'].map(t=>el('th',{text:t})))),
+      el('thead',{},el('tr',{},...['No.','Staff','Customer','Product','Qty','Type','Payment','District'].map(t=>el('th',{text:t})))),
       el('tbody',{},...lines.slice().sort((a,b)=>nm(a.staffId).localeCompare(nm(b.staffId))||String(a.orderNo||'').localeCompare(String(b.orderNo||''))).map(o=>el('tr',{},
         el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:nm(o.staffId)}),el('td',{text:o.customer||'—'}),el('td',{text:o.product||'—'}),
-        el('td',{class:'mono',text:String(+o.qty||1)}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{text:o.district||''})))))));
+        el('td',{class:'mono',text:String(+o.qty||1)}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{text:payTxt(o)}),el('td',{text:o.district||''})))))));
   return[head,kpis,grid,list];
 }
 function viewDashboard(onlyDisp){
@@ -1136,10 +1143,10 @@ function viewDashboard(onlyDisp){
       for(const o of rows){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE';ok++}catch(x){}}
       toast(ok+' marked dispatched');renderAdmin()}}):null;
     const tbl=rows.length?el('div',{class:'scroll'},el('table',{class:'disptbl'},
-      el('thead',{},el('tr',{},...['Dispatched','Date','No.','Customer','Phone','Staff','Product','District','Amount'].map(t=>el('th',{text:t})))),
+      el('thead',{},el('tr',{},...['Dispatched','Date','No.','Customer','Phone','Staff','Product','District','Amount','Payment'].map(t=>el('th',{text:t})))),
       el('tbody',{},...rows.slice(0,400).map(o=>{const cb=el('input',{type:'checkbox',class:'bigcb','aria-label':'Dispatched '+(o.orderNo||'')});cb.checked=D.sent(o);
         const tr=el('tr',{class:D.sent(o)?'sent':''},el('td',{},el('label',{class:'cbwrap'},cb,el('span',{text:D.sent(o)?'Sent':'Tick'}))),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
-          el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}),el('td',{class:'mono',text:+o.amount?rs(+o.amount):'—'}));
+          el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}),el('td',{class:'mono',text:+o.amount?rs(+o.amount):'—'}),el('td',{style:o.payment==='cod'?'font-weight:700':'',text:payTxt(o)}));
         cb.onchange=async()=>{cb.disabled=true;try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE';tr.classList.toggle('sent',cb.checked);cb.nextSibling.textContent=cb.checked?'Sent':'Tick';toast(cb.checked?(o.orderNo||'Order')+' dispatched':(o.orderNo||'Order')+' marked not sent')}catch(e){cb.checked=!cb.checked;toast('Could not save.')}cb.disabled=false};
         return tr})))):el('div',{class:'empty',text:F.show==='pending'?'Nothing left to dispatch here. ✓':'No orders match.'});
     dispList.replaceChildren(...[staffChips,showChips,el('div',{class:'row'},qI,tickAll),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Pick a staff or search to narrow.'}):null].filter(Boolean))};
@@ -1513,8 +1520,8 @@ function myOrdersView(edit,d){
     if(j&&j.order&&j.order.date!==want)toast('Saved with date '+j.order.date+' — the sheet script (Code.gs) needs the new version. Tell Murshid.');
     ordersHome()},myOrders.map(o=>o.product)):null;
   const list=el('div',{class:'panel'},el('h3',{text:'My orders'}),myOrders.length?el('div',{class:'scroll'},el('table',{},
-    el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Sent',''].map(t=>el('th',{text:t})))),
-    el('tbody',{},...myOrders.map(o=>el('tr',{},el('td',{class:'mono',text:o.date.slice(8)+'/'+o.date.slice(5,7)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:(o.customer||'—')+(o.phone?' · '+o.phone:'')}),el('td',{text:o.district}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{class:'mono',text:o.amount?rs(o.amount):'—'}),el('td',{text:o.dispatched==='TRUE'?'✓':''}),
+    el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Pay','Sent',''].map(t=>el('th',{text:t})))),
+    el('tbody',{},...myOrders.map(o=>el('tr',{},el('td',{class:'mono',text:o.date.slice(8)+'/'+o.date.slice(5,7)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:(o.customer||'—')+(o.phone?' · '+o.phone:'')}),el('td',{text:o.district}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{class:'mono',text:o.amount?rs(o.amount):'—'}),el('td',{text:payTxt(o)}),el('td',{text:o.dispatched==='TRUE'?'✓':''}),
       el('td',{},thisMonth?el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>{ordersHome(o);window.scrollTo(0,0)}}):null)))))):el('div',{class:'empty',text:'No orders in this month.'}));
   return[info,dateBox,form,list];
 }
@@ -1574,9 +1581,9 @@ function viewOrders(){
   const rows=src.filter(o=>!q||[o.customer,o.phone,o.district,o.pincode,o.product,o.orderNo,byId[o.staffId]].join(' ').toLowerCase().includes(q)).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
   const search=el('input',{id:'osearch',type:'search',placeholder:'Search name, phone, district, product…',value:orderSearch,oninput:e=>{orderSearch=e.target.value;clearTimeout(viewOrders._t);viewOrders._t=setTimeout(()=>{renderAdmin();const i=$('#osearch');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},300)}});
   const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'All orders ('+rows.length+')'}),search),el('div',{class:'scroll'},el('table',{},
-    el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Sent',''].map(t=>el('th',{text:t})))),
+    el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Pay','Sent',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...rows.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched'});cb.checked=o.dispatched==='TRUE';cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE'}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
-      return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{},cb),
+      return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{text:payTxt(o)}),el('td',{},cb),
         el('td',{},el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>adminOrderSheet(o)})))})))),
     rows.length>300?el('p',{class:'hint',text:'Showing the newest 300. Use search to find older ones.'}):null);
   return[filters,summary,productReport(src,m,orderScope==='month'),el('div',{class:'split'},top('Best products',group(o=>o.product?pkey(o.product)+(o.type==='affordable'?' (A)':' (P)'):'',orderLines(src)),'Product'),top('Top districts',group(o=>o.district),'District')),el('div',{class:'split'},top('Top pincodes',group(o=>o.pincode),'Pincode'),top('By staff',group(o=>(staff.find(s=>s.id===o.staffId)||{}).name||o.staffId),'Staff')),rep,list];

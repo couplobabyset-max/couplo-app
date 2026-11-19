@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -342,7 +342,8 @@ function cleanOrder_(o) {
   var t = function (v) { return String(v == null ? '' : v).trim(); };
   var r = { type: t(o.type) === 'affordable' ? 'affordable' : 'premium', customer: t(o.customer).toUpperCase(),
     phone: phoneNorm_(o.phone), district: t(o.district).toUpperCase(), pincode: t(o.pincode).replace(/\D/g, '').slice(0, 6),
-    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '' };
+    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '',
+    payment: ['cod', 'prepaid'].indexOf(t(o.payment).toLowerCase()) >= 0 ? t(o.payment).toLowerCase() : '' };
   /* several products in one order: keep the list, and product / qty / amount become the joined name and the totals */
   var it = Array.isArray(o.items) ? o.items : [];
   if (typeof o.items === 'string') { try { it = JSON.parse(o.items || '[]'); } catch (e) { it = []; } }
@@ -365,8 +366,9 @@ function orderItems_(o) {
 }
 /* adds the "items" heading to the Orders sheet the first time it is needed */
 function ordersHeader_() {
-  var sh = sh_('Orders'), col = SHEETS.Orders.length;
-  if (sh && !sh.getRange(1, col).getValue()) sh.getRange(1, col).setValue('items');
+  var sh = sh_('Orders'), cols = SHEETS.Orders; if (!sh) return;
+  var head = sh.getRange(1, 1, 1, cols.length).getValues()[0];  // adds any new column name (items, payment, …) once
+  cols.forEach(function (c, i) { if (!head[i]) sh.getRange(1, i + 1).setValue(c).setFontWeight('bold'); });
 }
 /* delete every row of a sheet that matches — bottom first so row numbers stay right */
 function deleteWhere_(name, fn) {
