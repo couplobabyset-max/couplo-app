@@ -1548,25 +1548,43 @@ function myDayView(d){
         el('div',{style:'font-weight:600',text:'#'+rank+' in the sales team this month'+(rank===1?' 🥇':rank===2?' 🥈':rank===3?' 🥉':'')}),
         el('div',{class:'hint',style:'margin:0',text:'This week: '+r.week+' orders'}),
         r.conv!=null?el('div',{class:'hint',style:'margin:0',text:'Conversion: '+r.conv+'% of '+r.leads+' leads'+(teamConv!=null?' (team '+teamConv+'%)':'')+(teamConv!=null&&r.conv>=teamConv?' 👍':'')}):null)));
-    /* last 7 working days */
-    const last=work.filter(x=>ymd(x)<=td).slice(-7);let streak=0;
-    for(let i=last.length-1;i>=0;i--){const ds=ymd(last[i]);if(ds===td&&(cnt[ds]||0)<base)continue;if((cnt[ds]||0)>=base)streak++;else break}
-    const strip=el('div',{class:'panel'},el('h3',{text:'Last 7 working days'}),
-      el('div',{style:'display:flex;gap:8px;flex-wrap:wrap'},...last.map(x=>{const ds=ymd(x),n=cnt[ds]||0,ok=n>=base,isT=ds===td;
-        return el('div',{style:'flex:1;min-width:58px;text-align:center;padding:8px 4px;border-radius:12px;border:1px solid var(--line);background:'+(ok?'var(--ok-soft)':isT?'var(--surface)':'var(--sunk)')},
-          el('div',{class:'hint',style:'margin:0',text:DAYS[x.getDay()].slice(0,3)+' '+x.getDate()}),el('div',{style:'font:700 20px var(--f-display)',text:String(n)}),el('div',{style:'font-size:13px',text:ok?'✓':isT?'today':'—'}))})),
-      el('div',{class:'hint',style:'margin:0',text:'✓ = '+base+' or more orders (normal day). '+(streak>=2?'🔥 '+streak+' days in a row!':'')}));
-    /* my leads: today / this week (Mon–Sun) / this month — leads come from the Leads tab (HR / CRM sync) */
-    let leadsP=null;
-    if(d.myLeads){const L={};d.myLeads.forEach(x=>L[x.date]=(L[x.date]||0)+x.leads);
-      const t=new Date(td+'T12:00:00'),mon=new Date(t);mon.setDate(t.getDate()-((t.getDay()+6)%7));const wFrom=ymd(mon);
-      const sumL=f=>Object.keys(L).filter(f).reduce((a,k)=>a+L[k],0);
-      const lT=L[td]||0,lW=sumL(k=>k>=wFrom&&k<=td),lM=sumL(k=>k.slice(0,7)===td.slice(0,7)&&k<=td);
-      const pc=(o,l)=>l?Math.round(o/l*1000)/10+'% conversion':'';
-      const tile=(n,lbl,o)=>el('div',{class:'kpi'},el('span',{text:lbl}),el('b',{class:'mono',text:String(n)}),el('small',{text:o+' order'+(o===1?'':'s')+(n?' · '+pc(o,n):'')}));
-      leadsP=el('div',{class:'panel'},el('h3',{text:'My leads'}),el('div',{class:'kpis'},tile(lT,'Today',todayN),tile(lW,'This week',r.week),tile(lM,'This month',r.month)),
-        el('p',{class:'hint',style:'margin:0',text:'Leads are added through the day, so today\'s number can still go up.'}))}
-    box.replaceChildren(el('div',{style:'font:600 18px var(--f-display);margin:2px 0',text:hi[0]}),todayCard,monthMsg,leadsP,ringRow,strip);
+    /* leads: per day this month (from the Leads tab — HR / CRM sync), with orders and conversion */
+    const L={},hasL=!!d.myLeads;(d.myLeads||[]).forEach(x=>L[x.date]=(L[x.date]||0)+x.leads);
+    const t=new Date(td+'T12:00:00'),mon=new Date(t);mon.setDate(t.getDate()-((t.getDay()+6)%7));const wFrom=ymd(mon),m0=td.slice(0,7);
+    const sumL=f=>Object.keys(L).filter(f).reduce((a,k)=>a+L[k],0);
+    const lT=L[td]||0,lW=sumL(k=>k>=wFrom&&k<=td),lM=sumL(k=>k.slice(0,7)===m0&&k<=td);
+    const cv=(o,l)=>l?Math.round(o/l*1000)/10:null, cvT=(o,l)=>l?cv(o,l)+'%':'—';
+    const myConv=cv(r.month,lM);
+    let leadsP=null,chartP=null;
+    if(hasL){
+      const big=(n,lbl,o)=>el('div',{class:'kpi',style:'border-color:var(--accent);background:var(--accent-soft)'},el('span',{text:lbl}),
+        el('b',{class:'mono',style:'font-size:34px',text:String(n)}),el('small',{style:'color:var(--ink);font-size:13px',text:'leads'}),
+        el('small',{text:o+' order'+(o===1?'':'s')+' · '+cvT(o,n)+' conversion'}));
+      const vsTeam=myConv==null||teamConv==null?null:myConv>=teamConv
+        ?el('div',{class:'chip',style:'background:var(--ok-soft);color:var(--ok)',text:'✅ Your conversion '+myConv+'% is above the team ('+teamConv+'%)'})
+        :el('div',{class:'chip',style:'background:var(--warn-soft);color:var(--warn)',text:'⚠️ Your conversion '+myConv+'% is below the team ('+teamConv+'%)'});
+      const tip=myConv!=null&&teamConv!=null&&myConv<teamConv?'Tip: reply to every new lead within 5 minutes, send photos and price quickly, and follow up the same evening.'
+        :lT===0?'No leads counted for you yet today.':'';
+      leadsP=el('div',{class:'panel',style:'border:2px solid var(--accent)'},el('h3',{text:'📞 My leads'}),
+        el('div',{class:'kpis'},big(lT,'Today',todayN),big(lW,'This week',r.week),big(lM,'This month',r.month)),vsTeam,
+        tip?el('p',{class:'hint',style:'margin:0',text:tip}):null);
+      const mdays=mDates.filter(x=>ymd(x)<=td);
+      chartP=el('div',{class:'panel'},el('h3',{text:'Leads per day · '+monFull(m0)}),
+        el('div',{class:'scroll chartscroll'},colChart(mdays.map(x=>{const ds=ymd(x);return{label:String(x.getDate()),sun:x.getDay()===0,p:L[ds]||0,a:0,tip:ds+': '+(L[ds]||0)+' leads, '+(cnt[ds]||0)+' orders'}}),true)))}
+    /* day by day: leads, orders, conversion, target ✓ — newest first */
+    const rowsD=mDates.filter(x=>{const ds=ymd(x);return ds<=td&&(x.getDay()!==0||L[ds]||cnt[ds])}).reverse();
+    let streak=0;for(const x of rowsD){const ds=ymd(x);if(x.getDay()===0)continue;if(ds===td&&(cnt[ds]||0)<base)continue;if((cnt[ds]||0)>=base)streak++;else break}
+    let best=null;rowsD.forEach(x=>{const ds=ymd(x),l=L[ds]||0,c=cv(cnt[ds]||0,l);if(l>=5&&c!=null&&(!best||c>best.c))best={ds,c}});
+    const tbl=el('div',{class:'panel'},el('h3',{text:'Day by day'}),el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},...['Day'].concat(hasL?['Leads']:[],['Orders'],hasL?['Conv.']:[],['✓']).map(x=>el('th',{text:x})))),
+      el('tbody',{},...rowsD.map(x=>{const ds=ymd(x),l=L[ds]||0,o=cnt[ds]||0,c=cv(o,l),ok=o>=base,isT=ds===td;
+        return el('tr',{style:isT?'background:var(--accent-soft)':''},el('th',{},el('span',{class:'mono',text:pad2(x.getDate())}),' '+DAYS[x.getDay()].slice(0,3)),
+          ...(hasL?[el('td',{class:'mono',style:'font-weight:700',text:String(l)})]:[]),el('td',{class:'mono',text:String(o)}),
+          ...(hasL?[el('td',{class:'mono',style:c!=null&&myConv!=null&&c>=myConv?'color:var(--ok);font-weight:600':'',text:(c!=null?c+'%':'—')+(best&&best.ds===ds?' ⭐':'')})]:[]),
+          el('td',{text:x.getDay()===0?'':ok?'✓':isT?'…':'—',style:ok?'color:var(--ok);font-weight:700':''}))})),
+      el('tfoot',{},el('tr',{},el('th',{text:'Month'}),...(hasL?[el('td',{class:'mono',text:String(lM)})]:[]),el('td',{class:'mono',text:String(r.month)}),...(hasL?[el('td',{class:'mono',text:cvT(r.month,lM)})]:[]),el('td',{text:''}))))),
+      el('div',{class:'hint',style:'margin:0',text:'✓ = '+base+' or more orders. '+(best?'⭐ = your best conversion day. ':'')+(streak>=2?'🔥 '+streak+' good days in a row!':'')}));
+    box.replaceChildren(el('div',{style:'font:600 18px var(--f-display);margin:2px 0',text:hi[0]}),todayCard,leadsP,monthMsg,chartP,tbl,ringRow);
   }catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load'}))}})();
   return[box]}
 function myArenaView(){
