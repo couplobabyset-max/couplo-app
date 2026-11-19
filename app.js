@@ -51,11 +51,11 @@ let adminOpen=false, adminPin=null, view='home';
 /* staff who were given some admin tabs (Staff → Edit → Admin tabs) open them with their own PIN. mgrAccess=null means the owner (admin PIN, everything) */
 let mgrAccess=null;
 /* Dispatch tab opens for anyone who has Orders (or Dispatch) — ticking dispatched is an Orders action on the server */
-const hasTab=(acc,t)=>(acc||[]).includes(t)||(t==='dispatch'&&(acc||[]).includes('orders'));
+const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily')&&(acc||[]).includes('orders'));
 const can=t=>!mgrAccess||hasTab(mgrAccess,t);
 /* drops the Leads column (index i) from a header/row list for people without the Leads tab */
 const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
-const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
+const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['dispatch','Dispatch'],['daily','Daily sold'],['products','Products'],['work','Work'],['sales','Leads'],['salary','Salary'],['staff','Staff']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
@@ -281,6 +281,7 @@ function renderAdmin(){
   else if(adminView==='register')parts.push(...viewRegister());
   else if(adminView==='orders')parts.push(...viewOrders());
   else if(adminView==='dispatch')parts.push(...viewDashboard(true));
+  else if(adminView==='daily')parts.push(...viewDailySold());
   else if(adminView==='products')parts.push(...viewProducts());
   else if(adminView==='work')parts.push(...viewWork());
   else if(adminView==='sales')parts.push(...viewSales());
@@ -471,7 +472,7 @@ function editStaff(s){
   const ac=el('select',{id:'s-ac'},el('option',{value:'1',text:'Shown on check-in screen',selected:s?.active!==false}),el('option',{value:'0',text:'Not on check-in (left, or works outside)',selected:s?.active===false}));
   /* admin tabs this person may open with their own PIN — only the owner sets this */
   const curA=s?.access||[];
-  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
+  const aBoxes=ADMIN_TABS.filter(([v])=>v!=='dispatch'&&v!=='daily').map(([v,t])=>{const b=el('input',{type:'checkbox',value:v,style:'width:20px;height:20px;margin:0'});b.checked=curA.includes(v);return el('label',{style:'display:flex;align-items:center;gap:10px;font-weight:500;cursor:pointer'},b,t)});
   const accBox=mgrAccess?null:el('div',{class:'f'},el('span',{},'Admin tabs this person can open (with their own PIN)'),el('p',{class:'hint',text:'Leave all empty for normal staff. Ticked tabs open from an "Admin panel" button on their page, and they can edit there. Leads, Salary and Staff show money and private data.'}),
     el('div',{style:'display:flex;flex-wrap:wrap;gap:6px 16px;padding:4px 0'},...aBoxes));
   const save=async()=>{const name=nm.value.trim().toUpperCase();if(!name){toast('Enter a name.');return}
@@ -1024,6 +1025,48 @@ function viewWeek(){
     strip,kp,missP,nav);
 }
 
+/* Daily sold — which products were sold on a day and by whom (for Mashida's daily count; admin sees it too) */
+let dslDay=null;
+function viewDailySold(){
+  if(!dslDay)dslDay=todayStr;
+  const day=dslDay, R0=rpData({preset:'custom',from:day,to:day});
+  const go=d=>{if(d>todayStr)return;dslDay=d;renderAdmin()};
+  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Daily sold · '+dm(day)}),
+    el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'◀ Prev day',onclick:()=>go(addDays(day,-1))}),
+      el('input',{id:'dsl-d',type:'date','aria-label':'Day',value:day,max:todayStr,onchange:e=>e.target.value&&go(e.target.value)}),
+      el('button',{class:'btn',type:'button',text:'Next day ▶',disabled:day>=todayStr,onclick:()=>go(addDays(day,1))}),
+      day!==todayStr?el('button',{class:'btn',type:'button',text:'Today',onclick:()=>go(todayStr)}):null,
+      el('button',{class:'btn',type:'button',text:'Reload',onclick:()=>{delete rpCache[day.slice(0,7)];renderAdmin()}}))));
+  if(R0.loading)return[head,el('div',{class:'empty',text:'Loading…'})];
+  const os=(R0.orders||[]).filter(o=>o.date===day), lines=orderLines(os);
+  if(!os.length)return[head,el('div',{class:'empty',text:'No orders saved for '+dm(day)+'.'})];
+  const nm=id=>(staff.find(s=>s.id===id)||{name:id||'—'}).name;
+  const sids=[...new Set(os.map(o=>o.staffId))].sort((a,b)=>nm(a).localeCompare(nm(b)));
+  const pname=o=>(pkey(o.product)||'(NO PRODUCT)')+(o.type==='affordable'?' (A)':' (P)');
+  const g={};lines.forEach(o=>{const k=pname(o);g[k]=g[k]||{};g[k][o.staffId]=(g[k][o.staffId]||0)+(+o.qty||1)});
+  const prods=Object.keys(g).sort((a,b)=>{const ta=Object.values(g[a]).reduce((x,y)=>x+y,0),tb=Object.values(g[b]).reduce((x,y)=>x+y,0);return tb-ta||a.localeCompare(b)});
+  const rowT=k=>sids.reduce((t,id)=>t+(g[k][id]||0),0), colT=id=>prods.reduce((t,k)=>t+(g[k][id]||0),0), all=prods.reduce((t,k)=>t+rowT(k),0);
+  const prem=os.filter(o=>o.type!=='affordable').length;
+  const stat=(v,l)=>el('div',{class:'kpi'},el('span',{text:l}),el('b',{class:'mono',text:String(v)}));
+  const kpis=el('div',{class:'panel'},el('div',{class:'kpis'},stat(os.length,'Orders'),stat(all,'Pieces sold'),stat(prem,'Premium orders'),stat(os.length-prem,'Affordable orders'),stat(sids.length,'Staff who sold')));
+  const ordN=id=>os.filter(o=>o.staffId===id).length;
+  const grid=el('div',{class:'panel'},el('h3',{text:'Products × staff'}),el('p',{class:'hint',text:'Pieces sold of each product, by who sold it. (P) = Premium, (A) = Affordable.'}),
+    el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},el('th',{text:'Product'}),...sids.map(id=>el('th',{text:nm(id)})),el('th',{text:'Total'}))),
+      el('tbody',{},...prods.map(k=>el('tr',{},el('th',{text:k}),...sids.map(id=>el('td',{class:'mono',text:g[k][id]?String(g[k][id]):'—'})),el('td',{class:'mono',style:'font-weight:700',text:String(rowT(k))})))),
+      el('tfoot',{},el('tr',{},el('th',{text:'Total pieces'}),...sids.map(id=>el('td',{class:'mono',text:String(colT(id))})),el('td',{class:'mono',text:String(all)})),
+        el('tr',{},el('th',{text:'Orders'}),...sids.map(id=>el('td',{class:'mono',text:String(ordN(id))})),el('td',{class:'mono',text:String(os.length)}))))));
+  const txt=()=>['DAILY SOLD · '+dm(day),'Orders: '+os.length+' · Pieces: '+all,'',...prods.map(k=>k+': '+rowT(k)+'  ('+sids.filter(id=>g[k][id]).map(id=>nm(id)+' '+g[k][id]).join(', ')+')'),'',
+    'BY STAFF',...sids.map(id=>nm(id)+': '+ordN(id)+' orders, '+colT(id)+' pieces')].join('\n');
+  const copyB=el('button',{class:'btn primary',type:'button',text:'Copy count (for WhatsApp)',onclick:async()=>{try{await navigator.clipboard.writeText(txt());toast('Copied')}catch(e){prompt('Copy this:',txt())}}});
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Orders of the day · '+os.length}),copyB),
+    el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},...['No.','Staff','Customer','Product','Qty','Type','District'].map(t=>el('th',{text:t})))),
+      el('tbody',{},...lines.slice().sort((a,b)=>nm(a.staffId).localeCompare(nm(b.staffId))||String(a.orderNo||'').localeCompare(String(b.orderNo||''))).map(o=>el('tr',{},
+        el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:nm(o.staffId)}),el('td',{text:o.customer||'—'}),el('td',{text:o.product||'—'}),
+        el('td',{class:'mono',text:String(+o.qty||1)}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{text:o.district||''})))))));
+  return[head,kpis,grid,list];
+}
 function viewDashboard(onlyDisp){
   const R0=rpData(dsh);
   const presets=[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['lastyear','Last year'],['custom','Pick dates']];
