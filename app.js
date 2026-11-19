@@ -274,7 +274,7 @@ function renderAdmin(){
   if(!adminOpen)return;
   if(!can(adminView))adminView=(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];
   const back=null;
-  const parts=[el('div',{class:'toolbar'},adminNav(),el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),back,el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})))];
+  const parts=[el('div',{class:'toolbar'},el('div',{class:'row'},adminView==='dash'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),back,el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})),themeBtn())];
   if(adminView==='dash')parts.push(...viewDashboard());
   else if(adminView==='arena')parts.push(...viewArena());
   else if(adminView==='reports')parts.push(...viewReports());
@@ -289,8 +289,14 @@ function renderAdmin(){
   else if(adminView==='ads')parts.push(...viewAds());
   else if(adminView==='salary')parts.push(...viewSalary());
   else parts.push(...viewStaff());
-  $('#admin').replaceChildren(...parts);
+  /* tabs: a menu on the left on wide screens, a wrapping bar on top on phones (CSS .adm) */
+  $('#admin').replaceChildren(el('div',{class:'adm'},adminNav(),el('div',{class:'admmain'},...parts)));
 }
+/* Light / Dark / Auto (follows the phone or computer setting) — remembered on this device */
+const THEMES=[['auto','Theme: Auto'],['light','Theme: Light'],['dark','Theme: Dark']];
+function applyTheme(t){if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;else delete document.documentElement.dataset.theme}
+function themeBtn(){const cur=LS.get('theme')||'auto',i=Math.max(0,THEMES.findIndex(x=>x[0]===cur));
+  return el('button',{class:'btn',type:'button',text:THEMES[i][1],title:'Change theme','aria-label':'Theme: '+THEMES[i][0]+'. Tap to change',onclick:()=>{const n=THEMES[(i+1)%THEMES.length][0];LS.set('theme',n);applyTheme(n);renderAdmin()}})}
 function viewRegister(){
   const m=adminMonth, list=activeStaff(), td=todayStr;
   let inN=0,outN=0,noneN=0,lvN=0;
@@ -1786,6 +1792,7 @@ function emailSlips(m,calc){
 
 /* ---------- boot ---------- */
 function boot(){
+  applyTheme(LS.get('theme'));
   if(!API){show('home');$('#home').replaceChildren(el('div',{class:'empty',text:'Not connected to the Google Sheet yet.'}));askServer();return}
   const h=location.hash;
   if(h==='#admin'){history.replaceState(null,'',location.pathname);goHome('admin');setTimeout(()=>{const p=$('#lg-pin');if(p)p.focus()},50);return}
