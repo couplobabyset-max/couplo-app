@@ -1180,8 +1180,8 @@ function viewCod(){
           catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);sv.disabled=false}}});
         return el('tr',{class:codSt(o)==='paid'?'sent':''},el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
           el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
-          el('td',{},cr),el('td',{},aw),el('td',{},st),el('td',{},sv))})))):el('div',{class:'empty',text:'No COD orders here.'});
-    const cours=[...new Set(all.map(o=>o.courier).filter(Boolean))];
+          el('td',{},cr),el('td',{},aw),el('td',{},st),el('td',{},sv,trackBtns(o)))})))):el('div',{class:'empty',text:'No COD orders here.'});
+    const cours=[...new Set(COURIERS.concat(all.map(o=>o.courier).filter(Boolean)))];
     box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
   const list=el('div',{class:'panel'},el('h3',{text:'COD orders'}),el('p',{class:'hint',text:'Type the courier and tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
@@ -1779,6 +1779,28 @@ function productReport(src,m,showPrinted){
       el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{class:'mono',text:String(tot.p)}),el('td',{class:'mono',text:String(tot.af)}),el('td',{class:'mono',text:String(tot.q)}),el('td',{class:'mono',text:rs(tot.a)}),...(showPrinted?[el('td',{class:'mono',text:String(tot.pr)})]:[]))))):
       el('div',{class:'empty',text:'No orders with a product in this period.'}));
 }
+/* ---------- courier tracking: Track opens 17TRACK (covers Speed and Safe, ST Courier, DTDC, India Post) with the number filled in ---------- */
+const COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
+const trackUrl=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
+function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+'\nTrack here: '+trackUrl(o.awb)+'\n\nThank you for choosing Couplo Design Studio 💜'}
+function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
+  return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb),target:'_blank',rel:'noopener',text:'Track'}),
+    wa?el('a',{class:'btn',href:wa+'?text='+encodeURIComponent(trackMsg(o)),target:'_blank',rel:'noopener',text:'Send on WhatsApp'}):null,
+    el('button',{class:'btn',type:'button',text:'Copy',onclick:()=>{try{navigator.clipboard.writeText(trackMsg(o));toast('Tracking message copied')}catch(e){toast('Could not copy')}}}))}
+function trackSheet(o){
+  const known=[...new Set(COURIERS.concat((allOrdersCache||adminOrders||[]).map(x=>x.courier).filter(Boolean)))];
+  const cr=el('select',{id:'tk-c'},el('option',{value:'',text:'Pick courier'}),...known.map(c=>el('option',{value:c,text:c,selected:o.courier===c})));
+  const aw=el('input',{id:'tk-a',type:'text',value:o.awb||'',placeholder:'Tracking / AWB no.',style:'text-transform:uppercase',autocomplete:'off'});
+  const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
+    if(!cr.value){toast('Pick the courier.');return}if(!aw.value.trim()){toast('Type the tracking number.');aw.focus();return}
+    sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:o.codStatus||'',courier:cr.value,awb:aw.value});Object.assign(o,j.order||{courier:cr.value,awb:aw.value.trim().toUpperCase()});
+      if(o.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE'}catch(e){}}
+      closeOv();toast('Tracking saved');renderAdmin()}catch(e){toast('Could not save: '+e.message);sv.disabled=false}}});
+  openOv(el('h3',{text:'Tracking · '+(o.orderNo||'')+' · '+(o.customer||'')}),
+    el('label',{class:'f',for:'tk-c'},'Courier',cr),el('label',{class:'f',for:'tk-a'},'Tracking number',aw),
+    el('p',{class:'hint',text:'Saving also ticks the order as dispatched. Then use Track to see where it is, or Send on WhatsApp to give the customer the tracking link.'}),
+    el('div',{class:'row'},sv,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})),trackBtns(o));
+}
 function viewOrders(){
   const m=adminMonth, byId=Object.fromEntries(staff.map(s=>[s.id,s.name]));
   const base=orderScope==='all'?(allOrdersCache||[]):adminOrders;
@@ -1810,9 +1832,10 @@ function viewOrders(){
   const rows=src.filter(o=>!q||[o.customer,o.phone,o.district,o.pincode,o.product,o.orderNo,byId[o.staffId]].join(' ').toLowerCase().includes(q)).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
   const search=el('input',{id:'osearch',type:'search',placeholder:'Search name, phone, district, product…',value:orderSearch,oninput:e=>{orderSearch=e.target.value;clearTimeout(viewOrders._t);viewOrders._t=setTimeout(()=>{renderAdmin();const i=$('#osearch');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},300)}});
   const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'All orders ('+rows.length+')'}),search),el('div',{class:'scroll'},el('table',{},
-    el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Pay','Sent',''].map(t=>el('th',{text:t})))),
+    el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Pay','Sent','Tracking',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...rows.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched'});cb.checked=o.dispatched==='TRUE';cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE'}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
       return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{text:payTxt(o)}),el('td',{},cb),
+        el('td',{},o.awb?el('div',{},el('div',{class:'hint',style:'font-size:12px',text:(o.courier||'')+' · '+o.awb}),trackBtns(o)):null,el('button',{class:'btn',type:'button',text:o.awb?'Change':'Add tracking',onclick:()=>trackSheet(o)})),
         el('td',{},el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>adminOrderSheet(o)})))})))),
     rows.length>300?el('p',{class:'hint',text:'Showing the newest 300. Use search to find older ones.'}):null);
   return[filters,summary,productReport(src,m,orderScope==='month'),el('div',{class:'split'},top('Best products',group(o=>o.product?pkey(o.product)+(o.type==='affordable'?' (A)':' (P)'):'',orderLines(src)),'Product'),top('Top districts',group(o=>o.district),'District')),el('div',{class:'split'},top('Top pincodes',group(o=>o.pincode),'Pincode'),top('By staff',group(o=>(staff.find(s=>s.id===o.staffId)||{}).name||o.staffId),'Staff')),rep,list];
