@@ -914,25 +914,58 @@ function capiEvent_(o, ctwa) {
   if (hit) {   // came from a click-to-WhatsApp ad → WhatsApp business-messaging event with the Click ID (not hashed)
     ev.action_source = 'business_messaging';
     ev.messaging_channel = 'whatsapp';
+    ud.whatsapp_business_account_id = wabaId_();   // Meta requires the WhatsApp Business Account ID with ctwa_clid
     ud.ctwa_clid = hit.clid;
   }
   return ev;
 }
+/* Couplo's WhatsApp Business Account ID (not secret). Script property META_WABA_ID overrides it.
+   The dataset (META_PIXEL_ID) must also be connected to this WhatsApp account in Business Settings →
+   Data sources → Datasets → Connected assets, or Meta refuses the WhatsApp events. */
+var WABA_ID = '891781476894871';
+function wabaId_() { return String(PropertiesService.getScriptProperties().getProperty('META_WABA_ID') || WABA_ID).trim(); }
 /* sends orders to Meta; returns { sent, failed, error } */
 function capiPost_(orders) {
   var c = capiProps_();
   if (!c.pixel || !c.token) return { sent: 0, failed: orders.length, error: 'META_PIXEL_ID / META_CAPI_TOKEN not set in Script properties' };
   var ctwa = ctwaMap_();
   orders.forEach(function (o) { o._ctwa = !!ctwa[phoneInfo_(o.phone).full]; });
-  var r = capiSend_(c, orders, ctwa);
-  /* safety net: if Meta refuses the WhatsApp (ctwa_clid) events, send the same orders the old way
-     so no Purchase is lost; the Capi sheet note says why */
-  if (r.error && orders.some(function (o) { return o._ctwa; })) {
-    var why = r.error;
-    orders.forEach(function (o) { o._ctwa = false; });
-    r = capiSend_(c, orders, null);
-    if (!r.error) r.note = 'ctwa refused, sent as chat: ' + why;
+  var plain = orders.filter(function (o) { return !o._ctwa; }), wa = orders.filter(function (o) { return o._ctwa; });
+  var per = {}, sent = 0, failed = 0, errors = [];
+  function keep(list, r) {
+    list.forEach(function (o) { per[o.id] = { error: r.error, note: r.note, test: r.test }; });
+    sent += r.sent; failed += r.failed; if (r.error) errors.push(r.error);
   }
+  if (plain.length) keep(plain, capiSend_(c, plain, null));
+  /* WhatsApp (ctwa_clid) orders go one at a time, so one refused event cannot pull down the others.
+     Safety net: if Meta refuses one, that order is sent the old way so no Purchase is lost;
+     the Capi sheet note says why */
+  wa.forEach(function (o) {
+    var r = capiSend_(c, [o], ctwa);
+    if (r.error) {
+      var why = r.error;
+      o._ctwa = false;
+      r = capiSend_(c, [o], null);
+      if (!r.error) r.note = 'ctwa refused, sent as chat: ' + why;
+    }
+    keep([o], r);
+  });
+  return { sent: sent, failed: failed, error: errors[0], per: per, test: !!c.test };
+}
+/* run from the editor to check the WhatsApp (ctwa_clid) event without touching real data:
+   add META_TEST_CODE (Events Manager → Test events) in Script properties first, run this, read the log,
+   then delete META_TEST_CODE. Sends the newest order (last 7 days) whose phone has a Click ID, as a test event only.
+   Nothing is written to the Capi sheet. */
+function capiTestCtwa() {
+  var c = capiProps_();
+  if (!c.pixel || !c.token) throw new Error('META_PIXEL_ID / META_CAPI_TOKEN not set');
+  if (!c.test) throw new Error('Add META_TEST_CODE in Script properties first, so this goes as a test event only');
+  var ctwa = ctwaMap_(), oldest = Math.floor(Date.now() / 1000) - 7 * 86400;
+  var o = rows_('Orders').filter(function (x) { return Number(x.amount) > 0 && capiTime_(x) > oldest && ctwa[phoneInfo_(x.phone).full]; })
+    .sort(function (a, b) { return capiTime_(b) - capiTime_(a); })[0];
+  if (!o) throw new Error('No order in the last 7 days whose phone has a Click ID in the CRM sheet');
+  var r = capiSend_(c, [o], ctwa);
+  Logger.log('Order ' + o.orderNo + ' → ' + (r.error ? 'REFUSED: ' + r.error : 'OK — Meta accepted the WhatsApp (ctwa_clid) test event'));
   return r;
 }
 function capiSend_(c, orders, ctwa) {
@@ -946,6 +979,7 @@ function capiSend_(c, orders, ctwa) {
   return { sent: 0, failed: orders.length, error: 'HTTP ' + code + ': ' + msg };
 }
 function capiLog_(o, r) {
+  if (r.per && r.per[o.id]) r = r.per[o.id];
   var n = now_();
   upsert_('Capi', { id: o.id, status: r.error ? 'error' : (r.test ? 'test' : 'sent'), sentAt: n.date + ' ' + n.time,
     orderNo: o.orderNo, value: o.amount, note: r.error ? String(r.error).slice(0, 300) : (o._ctwa ? 'whatsapp ad (ctwa_clid)' : String(r.note || '').slice(0, 300)) });
