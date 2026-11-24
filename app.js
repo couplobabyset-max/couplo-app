@@ -1182,7 +1182,7 @@ function viewCod(){
           el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
           el('td',{},cr),el('td',{},aw),el('td',{},st),el('td',{},sv))})))):el('div',{class:'empty',text:'No COD orders here.'});
     const cours=[...new Set(all.map(o=>o.courier).filter(Boolean))];
-    box.replaceChildren(el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null)};
+    box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
   const list=el('div',{class:'panel'},el('h3',{text:'COD orders'}),el('p',{class:'hint',text:'Type the courier and tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
   return[head,kpis,courP,list].filter(Boolean);
