@@ -1756,7 +1756,7 @@ function myOrdersView(edit,d){
 }
 
 /* ---------- admin: orders & reports ---------- */
-let adminOrders=[], allOrdersCache=null, orderScope='month', orderSearch='', of={staff:'',type:'',district:'',product:'',sent:'',from:'',to:''};
+let adminOrders=[], allOrdersCache=null, orderScope='month', orderSearch='', of={staff:'',type:'',district:'',product:'',sent:'',pay:'',from:'',to:''};
 /* which printing code an order belongs to: PHR, PFR, PPR, AFR, AHR, T SHIRT… (others keep their own name) */
 function prodCode(o){const p=pkey(o.product),a=o.type==='affordable'?'A':'P';
   if(!p)return'';if(/T.?SHIRT/.test(p))return'T SHIRT';if(/TURKEY|TARKY/.test(p))return'TURKEY';if(/\bCAP\b/.test(p))return'CAP';
@@ -1782,7 +1782,7 @@ function productReport(src,m,showPrinted){
 function viewOrders(){
   const m=adminMonth, byId=Object.fromEntries(staff.map(s=>[s.id,s.name]));
   const base=orderScope==='all'?(allOrdersCache||[]):adminOrders;
-  const src=base.filter(o=>(!of.staff||o.staffId===of.staff)&&(!of.type||o.type===of.type)&&(!of.district||o.district===of.district)&&(!of.product||linesOf(o).some(l=>pkey(l.product)===of.product))&&(!of.sent||(of.sent==='yes')===(o.dispatched==='TRUE'))&&(!of.from||o.date>=of.from)&&(!of.to||o.date<=of.to));
+  const src=base.filter(o=>(!of.staff||o.staffId===of.staff)&&(!of.type||o.type===of.type)&&(!of.district||o.district===of.district)&&(!of.product||linesOf(o).some(l=>pkey(l.product)===of.product))&&(!of.sent||(of.sent==='yes')===(o.dispatched==='TRUE'))&&(!of.pay||(of.pay==='none'?!(o.payment==='cod'||o.payment==='prepaid'):o.payment===of.pay))&&(!of.from||o.date>=of.from)&&(!of.to||o.date<=of.to));
   if(orderScope==='all'&&!allOrdersCache){call('allOrders',{adminPin}).then(j=>{allOrdersCache=j.orders;renderAdmin()}).catch(e=>toast(e.message));return[el('div',{class:'empty',text:'Loading all orders…'})]}
   const amt=o=>+o.amount||0, qty=o=>+o.qty||1;
   const group=(key,from)=>{const g={};(from||src).forEach(o=>{const k=(key(o)||'—');g[k]=g[k]||{k,n:0,q:0,a:0};g[k].n++;g[k].q+=qty(o);g[k].a+=amt(o)});return Object.values(g).sort((a,b)=>b.n-a.n||b.a-a.a)};
@@ -1796,9 +1796,9 @@ function viewOrders(){
   const fsel=(key,label,opts)=>el('label',{class:'f',for:'of-'+key},label,el('select',{id:'of-'+key,onchange:e=>{of[key]=e.target.value;renderAdmin()}},el('option',{value:'',text:'All'}),...opts.map(([v,t])=>el('option',{value:v,text:t,selected:of[key]===v}))));
   const fdate=(key,label)=>el('label',{class:'f',for:'of-'+key},label,el('input',{id:'of-'+key,type:'date',value:of[key],onchange:e=>{of[key]=e.target.value;renderAdmin()}}));
   const active=Object.values(of).some(Boolean);
-  const filters=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Filter sales'}),active?el('button',{class:'btn',type:'button',text:'Clear filters',onclick:()=>{of={staff:'',type:'',district:'',product:'',sent:'',from:'',to:''};renderAdmin()}}):null),
+  const filters=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Filter sales'}),active?el('button',{class:'btn',type:'button',text:'Clear filters',onclick:()=>{of={staff:'',type:'',district:'',product:'',sent:'',pay:'',from:'',to:''};renderAdmin()}}):null),
     el('div',{class:'form2'},fsel('staff','Staff',salesStaff().concat(staff.filter(s=>!s.sales&&base.some(o=>o.staffId===s.id))).map(s=>[s.id,s.name])),fsel('type','Type',[['premium','Premium'],['affordable','Affordable']]),
-      fsel('district','District',uniq('district').map(v=>[v,v])),fsel('product','Product',[...new Set(orderLines(base).map(o=>pkey(o.product)).filter(Boolean))].sort().map(v=>[v,v])),fsel('sent','Dispatched',[['yes','Sent'],['no','Not sent']]),fdate('from','From date'),fdate('to','To date')));
+      fsel('district','District',uniq('district').map(v=>[v,v])),fsel('product','Product',[...new Set(orderLines(base).map(o=>pkey(o.product)).filter(Boolean))].sort().map(v=>[v,v])),fsel('sent','Dispatched',[['yes','Sent'],['no','Not sent']]),fsel('pay','Payment',[['prepaid','Prepaid'],['cod','COD'],['none','Not marked']]),fdate('from','From date'),fdate('to','To date')));
   const summary=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Order report'+(active?' (filtered)':'')}),el('div',{class:'row'},scopeSel,el('button',{class:'btn primary',type:'button',text:'+ Add order',onclick:()=>adminOrderSheet(null)}))),
     el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(src.length)}),el('span',{text:'Orders'})),el('div',{},el('b',{class:'mono',text:rs(total)}),el('span',{text:'Sales'})),
       el('div',{},el('b',{class:'mono',text:String(src.filter(o=>o.type==='premium').length)}),el('span',{text:'Premium'})),el('div',{},el('b',{class:'mono',text:String(src.filter(o=>o.type==='affordable').length)}),el('span',{text:'Affordable'})),
@@ -1910,7 +1910,7 @@ function emailSlips(m,calc){
 
 /* ---------- boot ---------- */
 /* ---------- admin: customers — one row per customer (by phone), filter by the date they came, plus customer reports ---------- */
-let leadCache=null,leadLoading=false;
+let leadCache=null,leadLoading=false,adSpendCache={},adSpendLoading='';
 let cu={preset:'month',from:'',to:'',by:'first',q:'',district:'',staff:'',kind:'',ad:'',sort:'new',show:100,quiet:90};
 /* same customer = same phone (last 10 digits); orders with no phone are joined by name */
 const custKey=o=>{let d=String(o.phone||'').replace(/\D/g,'');if(d.length>10)d=d.slice(-10);if(d.length>=7)return'p:'+d;const n=String(o.customer||'').trim().toLowerCase();return n?'n:'+n:''};
@@ -1918,7 +1918,7 @@ const waLink=p=>{let d=String(p||'').replace(/\D/g,'');if(d.length===10)d='91'+d
 /* lead rows for a phone: [[ 'yyyy-MM-dd HH:mm', adId ], ...] oldest first (from the Leadvyne CRM sheet) */
 const leadsOf=ph=>{if(!leadCache||!leadCache.leads)return[];let d=String(ph||'').replace(/\D/g,'');if(d.length<7)return[];return leadCache.leads[d.slice(-10)]||[]};
 const adKeyOf=L=>!L?'~none':L.ad||'~noad';
-const adLabel=id=>{if(!id)return'';const a=leadCache&&leadCache.ads&&leadCache.ads[id];return a?a.name:'Ad '+id};
+const adLabel=id=>{if(!id)return'';const a=leadCache&&leadCache.ads&&leadCache.ads[id];if(a)return a.name;for(const k in adSpendCache){const x=adSpendCache[k][id];if(x&&x.name)return x.name}return'Ad '+id};
 /* the message that led to an order = the newest lead on or before the order day; its ad, or failing that
    the newest ad seen on this number in the 30 days before the order */
 function leadFor(rows,ds){if(!rows.length)return null;let r=null;for(const x of rows){if(x[0].slice(0,10)<=ds)r=x;else break}
@@ -1984,12 +1984,20 @@ function custData(){
   const noLead=pOrders.filter(x=>!x.o._lead).length;
   const byPhone={};C.forEach(c=>{if(c.k.startsWith('p:'))byPhone[c.k.slice(2)]=c});
   const cg={};if(leadCache&&leadCache.leads)Object.entries(leadCache.leads).forEach(([p,rows])=>{const first=rows[0];if(!first||!inR(first[0].slice(0,10)))return;
-    const ad=(rows.find(x=>x[1])||[])[1]||'';const k=ad||'~noad';if(cu.ad&&cu.ad!==k)return;const r=cg[k]=cg[k]||{k,name:ad?adLabel(ad):'No ad ID (status ad / direct)',leads:0,ord:0,a:0,days:[]};r.leads++;
-    const c=byPhone[p];if(!c)return;const os=c.os.filter(o=>o.date>=first[0].slice(0,10));if(!os.length)return;r.ord++;r.a+=os.reduce((t,o)=>t+(+o.amount||0),0);
+    const ad=(rows.find(x=>x[1])||[])[1]||'';const k=ad||'~noad';if(cu.ad&&cu.ad!==k)return;const r=cg[k]=cg[k]||{k,name:ad?adLabel(ad):'No ad ID (status ad / direct)',leads:0,ord:0,a:0,days:[],st:{}};r.leads++;const sid=first[2]||'';const ss=r.st[sid]=r.st[sid]||{l:0,o:0};ss.l++;
+    const c=byPhone[p];if(!c)return;const os=c.os.filter(o=>o.date>=first[0].slice(0,10));if(!os.length)return;r.ord++;ss.o++;r.a+=os.reduce((t,o)=>t+(+o.amount||0),0);
     r.days.push(Math.round((new Date(os[0].date+'T12:00:00')-new Date(first[0].slice(0,10)+'T12:00:00'))/864e5))});
   const convRows=Object.values(cg).map(r=>({...r,pct:r.leads?Math.round(r.ord/r.leads*1000)/10:0,med:med(r.days)})).sort((a,b)=>(a.k[0]==='~')-(b.k[0]==='~')||b.leads-a.leads);
   const adOpts=[...new Set(C.map(c=>adKeyOf(c.lead1)).concat(Object.keys(leadCache&&leadCache.ads||{})))].filter(k=>k[0]!=='~').map(k=>[k,adLabel(k)]).sort((a,b)=>a[1].localeCompare(b[1]));
-  return{f,t,list,sum,monthly,districts,top,firstProds,staffRows,quiet,all:C,adRows,convRows,adOpts,weekRows,lagRows,noLead,pOrders:pOrders.length};
+  /* ad × product, ad × district (orders in these dates) and ad × staff (leads in these dates) */
+  const adName=k=>k==='~none'?'Not in CRM':k==='~noad'?'No ad ID':adLabel(k);
+  const mix={};pOrders.forEach(({o})=>{const k=adKeyOf(o._lead);const r=mix[k]=mix[k]||{k,o:0,p:0,af:0,prod:{},dist:{}};r.o++;o.type==='affordable'?r.af++:r.p++;
+    linesOf(o).forEach(l=>{const c=prodCode(l)||'NOT WRITTEN';r.prod[c]=(r.prod[c]||0)+(+l.qty||1)});const d=o.district||'Not written';r.dist[d]=(r.dist[d]||0)+1});
+  const topOf=(m,n)=>Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n).map(([c,q])=>(CODE_NAMES[c]||c).toLowerCase()+' '+q).join(', ');
+  const mixRows=Object.values(mix).sort((a,b)=>(a.k[0]==='~')-(b.k[0]==='~')||b.o-a.o).map(r=>({...r,name:adName(r.k),prods:topOf(r.prod,4),dists:topOf(r.dist,4)}));
+  const sName2=Object.fromEntries(staff.map(x=>[x.id,x.name]));
+  const staffConv=convRows.flatMap(r=>Object.entries(r.st).map(([sid,v])=>({ad:r.name,k:r.k,staff:sName2[sid]||'Not assigned',l:v.l,o:v.o,pct:v.l?Math.round(v.o/v.l*1000)/10:0}))).filter(x=>x.l).sort((a,b)=>(a.k[0]==='~')-(b.k[0]==='~')||a.ad.localeCompare(b.ad)||b.l-a.l);
+  return{f,t,list,sum,monthly,districts,top,firstProds,staffRows,quiet,all:C,adRows,convRows,adOpts,mixRows,staffConv,weekRows,lagRows,noLead,pOrders:pOrders.length};
 }
 function custSheet(c){
   const sName=Object.fromEntries(staff.map(s=>[s.id,s.name])),wa=waLink(c.phone);
@@ -2009,6 +2017,8 @@ function viewCustomers(){
   if(!allOrdersCache){call('allOrders',{adminPin}).then(j=>{allOrdersCache=j.orders||[];renderAdmin()}).catch(e=>toast('Could not load: '+e.message));return[el('div',{class:'empty',text:'Loading customers…'})]}
   if(!leadCache&&!leadLoading){leadLoading=true;call('leadMatch',{adminPin}).then(j=>{leadCache=j}).catch(e=>{leadCache={leads:{},ads:{},err:e.message}}).finally(()=>{leadLoading=false;renderAdmin()})}
   const R=custData(), set=(k,v)=>{cu[k]=v;cu.show=100;renderAdmin()};
+  const spKey=R.f+'_'+R.t, owner=!mgrAccess;
+  if(owner&&!adSpendCache[spKey]&&adSpendLoading!==spKey){adSpendLoading=spKey;call('adSpendByAd',{adminPin,from:R.f,to:R.t}).then(j=>{adSpendCache[spKey]=j.ads||{}}).catch(e=>{adSpendCache[spKey]={__err:e.message}}).finally(()=>{adSpendLoading='';renderAdmin()})}
   const presets=[['today','Today'],['yesterday','Yesterday'],['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['all','All time'],['custom','Pick dates']];
   const sel=(id,label,key,opts,all)=>el('label',{class:'f',for:id},label,el('select',{id,onchange:e=>{if(key==='preset'&&e.target.value==='custom'&&!cu.from){cu.from=R.f;cu.to=R.t}set(key,e.target.value)}},
     ...(all?[el('option',{value:'',text:all})]:[]),...opts.map(([v,t])=>el('option',{value:v,text:t,selected:String(cu[key])===String(v)}))));
@@ -2068,10 +2078,27 @@ function viewCustomers(){
     el('p',{class:'hint',text:'Orders in these dates, each joined to the message that started it. "Messages from" = when those customers first wrote. Usual days = the middle value, so one slow customer does not skew it.'}));
   const convP=el('div',{class:'panel'},el('h3',{text:'Leads → orders, by ad'}),R.convRows.length?tbl(['Ad','Leads','Ordered','Conversion','Sales','Usual days to order'],R.convRows.map(r=>[r.name,r.leads,r.ord,r.pct+'%',rs(r.a),r.med==null?'':r.med+' days'])):el('div',{class:'empty',text:leadCache?'No new leads in these dates.':'Loading…'}),
     el('p',{class:'hint',text:'People who first messaged in these dates (from the CRM sheet), grouped by the ad they came from, and how many of them have ordered so far. Recent dates look low because many have not ordered yet.'}));
+  let spendP=null;
+  if(owner){const SP=adSpendCache[spKey];
+    if(!SP)spendP=el('div',{class:'panel'},el('h3',{text:'Ad spend & cost per order'}),el('p',{class:'hint',text:'Loading spend from Meta…'}));
+    else if(SP.__err)spendP=el('div',{class:'panel'},el('h3',{text:'Ad spend & cost per order'}),el('p',{class:'hint',style:'color:var(--accent)',text:/unknown action/i.test(SP.__err)?'Needs the new Code.gs deployed.':'Could not read spend: '+SP.__err}));
+    else{const ids=[...new Set(Object.keys(SP).concat(R.adRows.map(r=>r.k)).concat(R.convRows.map(r=>r.k)))].filter(k=>k[0]!=='~'&&(!cu.ad||cu.ad===k));
+      const rows=ids.map(k=>{const sp=SP[k]||{},o=R.adRows.find(r=>r.k===k)||{},c=R.convRows.find(r=>r.k===k)||{};const spend=sp.spend||0,leads=c.leads||0,ord=o.o||0,sales=o.a||0;
+        return{name:sp.name||adLabel(k),camp:sp.campaign||(leadCache&&leadCache.ads&&leadCache.ads[k]||{}).campaign||'',spend,leads,ord,sales,cpl:leads?spend/leads:null,cpo:ord?spend/ord:null,roas:spend?sales/spend:null}}).filter(r=>r.spend||r.ord||r.leads).sort((a,b)=>b.spend-a.spend||b.ord-a.ord);
+      const T=rows.reduce((t,r)=>({spend:t.spend+r.spend,leads:t.leads+r.leads,ord:t.ord+r.ord,sales:t.sales+r.sales}),{spend:0,leads:0,ord:0,sales:0});
+      const f2=v=>v==null?'—':rs(v),rx=v=>v==null?'—':(Math.round(v*10)/10)+'x';
+      spendP=el('div',{class:'panel'},el('h3',{text:'Ad spend & cost per order (admin only)'}),rows.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Ad','Campaign','Spend','Leads','Cost / lead','Orders','Cost / order','Sales','ROAS'].map(h=>el('th',{text:h})))),
+        el('tbody',{},...rows.map(r=>el('tr',{},el('th',{text:r.name}),el('td',{text:r.camp}),el('td',{class:'mono',text:rs(r.spend)}),el('td',{class:'mono',text:String(r.leads)}),el('td',{class:'mono',text:f2(r.cpl)}),el('td',{class:'mono',text:String(r.ord)}),el('td',{class:'mono',text:f2(r.cpo)}),el('td',{class:'mono',text:rs(r.sales)}),el('td',{class:'mono',text:rx(r.roas)})))),
+        el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{text:''}),el('td',{class:'mono',text:rs(T.spend)}),el('td',{class:'mono',text:String(T.leads)}),el('td',{class:'mono',text:f2(T.leads?T.spend/T.leads:null)}),el('td',{class:'mono',text:String(T.ord)}),el('td',{class:'mono',text:f2(T.ord?T.spend/T.ord:null)}),el('td',{class:'mono',text:rs(T.sales)}),el('td',{class:'mono',text:rx(T.spend?T.sales/T.spend:null)}))))):el('div',{class:'empty',text:'No ad spend or ad orders in these dates.'}),
+        el('p',{class:'hint',text:'Spend = Meta spend on each ad in these dates. Leads = people who first messaged from that ad in these dates. Orders and sales = orders placed in these dates whose message came from that ad (some messaged before these dates). Orders without an ad ID are not counted here, so real cost per order is lower.'}));
+      R.spendRows=rows}}
+  const mixP=el('div',{class:'panel'},el('h3',{text:'Ad × product & district'}),R.mixRows.length?tbl(['Ad','Orders','Premium','Affordable','Top products','Top districts'],R.mixRows.map(r=>[r.name,r.o,r.p,r.af,r.prods,r.dists])):el('div',{class:'empty',text:'No orders in these dates.'}));
+  const scP=el('div',{class:'panel'},el('h3',{text:'Ad × staff · leads to orders'}),R.staffConv.length?tbl(['Ad','Staff','Leads','Ordered','Conversion'],R.staffConv.map(r=>[r.ad,r.staff,r.l,r.o,r.pct+'%'])):el('div',{class:'empty',text:leadCache?'No new leads in these dates.':'Loading…'}),
+    el('p',{class:'hint',text:'Leads assigned to each person in Leadvyne (first message in these dates), and how many have ordered so far.'}));
   const wkP=el('div',{class:'panel'},el('h3',{text:'Week the customer messaged'}),R.weekRows.length?tbl(['Week (Mon–Sun)','Orders','Sales','Ads (orders)'],R.weekRows.map(r=>[r.k==='~'?'Not in CRM':dm(r.k)+'/'+r.k.slice(2,4)+' – '+dm(addDays(r.k,6)),r.o,rs(r.a),r.topAd])):el('div',{class:'empty',text:'No orders in these dates.'}),
     el('p',{class:'hint',text:'The orders placed in these dates, grouped by the week their message came in — so you can see which week\'s ads are paying off now.'}));
   const lagP=el('div',{class:'panel'},el('h3',{text:'Days from message to order'}),tbl(['Time taken','Orders','Sales'],R.lagRows.map(r=>[r.l,r.o,rs(r.a)]).concat(R.noLead?[['Number not in CRM',R.noLead,'']]:[])));
-  return[head,summary,listP,el('h2',{class:'sect',text:'Ads & messages'}),adP,convP,wkP,lagP,el('h2',{class:'sect',text:'Customer reports'}),monthP,distP,topP,fpP,stP,quietP];
+  return[head,summary,listP,el('h2',{class:'sect',text:'Ads & messages'}),spendP,adP,convP,mixP,scP,wkP,lagP,el('h2',{class:'sect',text:'Customer reports'}),monthP,distP,topP,fpP,stP,quietP];
 }
 function custXlsx(R){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
@@ -2080,6 +2107,9 @@ function custXlsx(R){
     ...R.list.map(c=>[c.name,c.phone||'',c.district||'',c.lead1?c.lead1.at:'',c.lead1?c.lead1.days:'',c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):'',c.lead1&&c.lead1.ad&&leadCache.ads[c.lead1.ad]?leadCache.ads[c.lead1.ad].campaign:'',c.first,c.last,c.n,c.amt,c.pn,c.pamt,c.n>1?'YES':'NO',c.staffName,c.firstProd.join(', ')])]);
   add('ADS',[['AD','CAMPAIGN','AD ID','ORDERS','NEW CUSTOMERS','SALES','MESSAGES FROM','MESSAGES TO','USUAL DAYS TO ORDER'],...R.adRows.map(r=>[r.name,r.camp,r.k[0]==='~'?'':r.k,r.o,r.nw,r.a,r.first,r.last,r.med==null?'':r.med])]);
   add('LEADS TO ORDERS',[['AD','LEADS','ORDERED','CONVERSION %','SALES','USUAL DAYS TO ORDER'],...R.convRows.map(r=>[r.name,r.leads,r.ord,r.pct,r.a,r.med==null?'':r.med])]);
+  if(R.spendRows)add('AD SPEND',[['AD','CAMPAIGN','SPEND','LEADS','COST PER LEAD','ORDERS','COST PER ORDER','SALES','ROAS'],...R.spendRows.map(r=>[r.name,r.camp,Math.round(r.spend),r.leads,r.cpl==null?'':Math.round(r.cpl),r.ord,r.cpo==null?'':Math.round(r.cpo),r.sales,r.roas==null?'':Math.round(r.roas*10)/10])]);
+  add('AD X PRODUCT',[['AD','ORDERS','PREMIUM','AFFORDABLE','TOP PRODUCTS','TOP DISTRICTS'],...R.mixRows.map(r=>[r.name,r.o,r.p,r.af,r.prods,r.dists])]);
+  add('AD X STAFF',[['AD','STAFF','LEADS','ORDERED','CONVERSION %'],...R.staffConv.map(r=>[r.ad,r.staff,r.l,r.o,r.pct])]);
   add('MESSAGE WEEK',[['WEEK STARTING','ORDERS','SALES','ADS'],...R.weekRows.map(r=>[r.k==='~'?'NOT IN CRM':r.k,r.o,r.a,r.topAd])]);
   add('DAYS TO ORDER',[['TIME TAKEN','ORDERS','SALES'],...R.lagRows.map(r=>[r.l,r.o,r.a])]);
   add('NEW VS REPEAT',[['MONTH','NEW','CAME BACK','REPEAT %','ORDERS','SALES'],...R.monthly.map(r=>[r.m,r.nw,r.ret,r.rate,r.ords,r.sales])]);

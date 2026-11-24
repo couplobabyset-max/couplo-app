@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -342,7 +342,8 @@ function cleanOrder_(o) {
   var t = function (v) { return String(v == null ? '' : v).trim(); };
   var r = { type: t(o.type) === 'affordable' ? 'affordable' : 'premium', customer: t(o.customer).toUpperCase(),
     phone: phoneNorm_(o.phone), district: t(o.district).toUpperCase(), pincode: t(o.pincode).replace(/\D/g, '').slice(0, 6),
-    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '' };
+    product: t(o.product).toUpperCase(), qty: Number(o.qty) || 1, amount: Number(o.amount) || 0, note: t(o.note), items: '',
+    payment: t(o.payment) === 'cod' || t(o.payment) === 'prepaid' ? t(o.payment) : '' };   // Prepaid / COD from the order form
   /* several products in one order: keep the list, and product / qty / amount become the joined name and the totals */
   var it = Array.isArray(o.items) ? o.items : [];
   if (typeof o.items === 'string') { try { it = JSON.parse(o.items || '[]'); } catch (e) { it = []; } }
@@ -363,10 +364,11 @@ function orderItems_(o) {
   if (!it || !it.length) return [{ product: o.product, qty: Number(o.qty) || 1, amount: Number(o.amount) || 0 }];
   return it;
 }
-/* adds the "items" heading to the Orders sheet the first time it is needed */
+/* adds any missing headings (items, designDoneAt, dispatchedAt, payment…) to the Orders sheet the first time they are needed */
 function ordersHeader_() {
-  var sh = sh_('Orders'), col = SHEETS.Orders.length;
-  if (sh && !sh.getRange(1, col).getValue()) sh.getRange(1, col).setValue('items');
+  var sh = sh_('Orders'), cols = SHEETS.Orders; if (!sh) return;
+  var head = sh.getRange(1, 1, 1, cols.length).getValues()[0];
+  cols.forEach(function (c, i) { if (!head[i]) sh.getRange(1, i + 1).setValue(c).setFontWeight('bold'); });
 }
 /* delete every row of a sheet that matches — bottom first so row numbers stay right */
 function deleteWhere_(name, fn) {
@@ -400,7 +402,7 @@ function doGet() { return out_({ ok: true, app: 'couplo-attendance' }); }
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, arenaMe: 1, arenaAdmin: 1 };
+var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -582,6 +584,7 @@ function handle_(b) {
     }
     case 'allOrders': return { ok: true, orders: rows_('Orders') };
     case 'leadMatch': return leadMatch_();
+    case 'adSpendByAd': return adSpendByAd_(String(b.from || ''), String(b.to || ''));
     case 'saveOrder': {
       var so = cleanOrder_(b.order); so.id = b.order.id || ('o' + new Date().getTime().toString(36));
       ['orderNo','date','staffId','createdAt'].forEach(function (k) { so[k] = String(b.order[k] || ''); });
@@ -754,9 +757,10 @@ function syncLeadvyneLeads() {
 function leadMatch_() {
   var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
   var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
-  var cPh = head.indexOf('phone'), cDate = head.indexOf('date'), cAd = head.indexOf('ad id');
+  var cPh = head.indexOf('phone'), cDate = head.indexOf('date'), cAd = head.indexOf('ad id'), cWho = head.indexOf('assigned to');
   if (cPh < 0 || cDate < 0) throw new Error('CRM sheet: Phone / Date column not found');
-  var leads = {}, adIds = {};
+  var leads = {}, adIds = {}, byName = {};
+  staffList_().forEach(function (s) { byName[leadName_(s.name)] = s.id; byName[leadName_(s.id.split('-')[0])] = s.id; });
   data.forEach(function (r) {
     var p = String(r[cPh] || '').replace(/\D/g, ''); if (p.length < 7) return; p = p.slice(-10);
     var d = r[cDate]; if (!d) return;
@@ -764,12 +768,33 @@ function leadMatch_() {
     if (isNaN(d)) return;
     var ad = cAd >= 0 ? String(r[cAd] || '').trim().replace(/\.0+$/, '') : '';
     if (ad) adIds[ad] = 1;
-    (leads[p] = leads[p] || []).push([Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm'), ad]);
+    (leads[p] = leads[p] || []).push([Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm'), ad, cWho >= 0 ? (byName[leadName_(r[cWho])] || '') : '']);
   });
   Object.keys(leads).forEach(function (p) { leads[p].sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }); });
   var ads = {}, note = '';
   try { ads = adNames_(Object.keys(adIds)); } catch (e) { note = String(e.message || e); }
   return { ok: true, leads: leads, ads: ads, note: note, synced: setting_('leadSyncLast') || '' };
+}
+/* owner only: spend per ad from Meta for since..until (yyyy-MM-dd), all ad accounts; kept 1 hour in the cache */
+function adSpendByAd_(since, until) {
+  if (!/^\d{4}-\d\d-\d\d$/.test(since) || !/^\d{4}-\d\d-\d\d$/.test(until)) throw new Error('Bad dates');
+  var cache = CacheService.getScriptCache(), ck = 'adsp_' + since + '_' + until, hit = cache.get(ck);
+  if (hit) return { ok: true, ads: JSON.parse(hit), cached: true };
+  var c = adSpendProps_();
+  if (!c.token || !c.accounts.length) throw new Error('Add META_ADS_TOKEN and META_AD_ACCOUNT in Script properties first');
+  var out = {};
+  c.accounts.forEach(function (acc) {
+    var url = 'https://graph.facebook.com/' + c.version + '/act_' + acc + '/insights?level=ad&fields=ad_id,ad_name,campaign_name,spend&limit=200' +
+              '&time_range=' + encodeURIComponent(JSON.stringify({ since: since, until: until })) + '&access_token=' + encodeURIComponent(c.token);
+    while (url) {
+      var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true }), j = JSON.parse(res.getContentText() || '{}');
+      if (res.getResponseCode() !== 200) throw new Error('Meta (act_' + acc + '): ' + ((j.error && j.error.message) || res.getResponseCode()));
+      (j.data || []).forEach(function (r) { var o = out[r.ad_id] = out[r.ad_id] || { name: r.ad_name, campaign: r.campaign_name, spend: 0 }; o.spend += Number(r.spend) || 0; });
+      url = j.paging && j.paging.next ? j.paging.next : '';
+    }
+  });
+  var js = JSON.stringify(out); if (js.length < 90000) cache.put(ck, js, 3600);
+  return { ok: true, ads: out };
 }
 function adNames_(ids) {
   var out = {}, cache = CacheService.getScriptCache(), need = [];
