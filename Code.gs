@@ -400,7 +400,7 @@ function doGet() { return out_({ ok: true, app: 'couplo-attendance' }); }
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, arenaMe: 1, arenaAdmin: 1 };
+var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, arenaMe: 1, arenaAdmin: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -581,6 +581,7 @@ function handle_(b) {
       return { ok: true, holidays: h };
     }
     case 'allOrders': return { ok: true, orders: rows_('Orders') };
+    case 'leadMatch': return leadMatch_();
     case 'saveOrder': {
       var so = cleanOrder_(b.order); so.id = b.order.id || ('o' + new Date().getTime().toString(36));
       ['orderNo','date','staffId','createdAt'].forEach(function (k) { so[k] = String(b.order[k] || ''); });
@@ -744,6 +745,55 @@ function syncLeadvyneLeads() {
     upsert_('Settings', { key: 'leadSyncLast', value: now_().date + ' ' + now_().time });
     return { ok: true, days: Object.keys(count).length, notMatched: unknown };
   } finally { lock.releaseLock(); }
+}
+/* ---------- Customers tab: when did each customer first message us, and from which ad ----------
+   Reads the Leadvyne CRM sheet ("COUPLO LEADS CRM": Phone, Date, Ad ID, Assigned To) and returns, per phone
+   (last 10 digits), every lead row as [date "yyyy-MM-dd HH:mm" IST, Ad ID]. Ad names come from the Meta
+   Marketing API with META_ADS_TOKEN (same token as ad spend) and are kept 6 hours in the cache.
+   Read only — nothing is written. */
+function leadMatch_() {
+  var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
+  var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
+  var cPh = head.indexOf('phone'), cDate = head.indexOf('date'), cAd = head.indexOf('ad id');
+  if (cPh < 0 || cDate < 0) throw new Error('CRM sheet: Phone / Date column not found');
+  var leads = {}, adIds = {};
+  data.forEach(function (r) {
+    var p = String(r[cPh] || '').replace(/\D/g, ''); if (p.length < 7) return; p = p.slice(-10);
+    var d = r[cDate]; if (!d) return;
+    if (!(d instanceof Date)) d = new Date(String(d).trim().replace(' ', 'T'));
+    if (isNaN(d)) return;
+    var ad = cAd >= 0 ? String(r[cAd] || '').trim().replace(/\.0+$/, '') : '';
+    if (ad) adIds[ad] = 1;
+    (leads[p] = leads[p] || []).push([Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm'), ad]);
+  });
+  Object.keys(leads).forEach(function (p) { leads[p].sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }); });
+  var ads = {}, note = '';
+  try { ads = adNames_(Object.keys(adIds)); } catch (e) { note = String(e.message || e); }
+  return { ok: true, leads: leads, ads: ads, note: note, synced: setting_('leadSyncLast') || '' };
+}
+function adNames_(ids) {
+  var out = {}, cache = CacheService.getScriptCache(), need = [];
+  ids.forEach(function (id) { var c = cache.get('adn_' + id); if (c) out[id] = JSON.parse(c); else need.push(id); });
+  if (!need.length) return out;
+  var c = adSpendProps_(); if (!c.token) throw new Error('Ad names need META_ADS_TOKEN in Script properties');
+  for (var i = 0; i < need.length; i += 50) {
+    var part = need.slice(i, i + 50);
+    var url = 'https://graph.facebook.com/' + c.version + '/?ids=' + part.join(',') + '&fields=name,created_time,effective_status,campaign{name},adset{name}&access_token=' + encodeURIComponent(c.token);
+    var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true }), j = JSON.parse(res.getContentText() || '{}');
+    if (res.getResponseCode() !== 200) {
+      /* one bad id makes Meta refuse the whole batch — then ask one by one */
+      part.forEach(function (id) {
+        var r1 = UrlFetchApp.fetch('https://graph.facebook.com/' + c.version + '/' + id + '?fields=name,created_time,effective_status,campaign{name},adset{name}&access_token=' + encodeURIComponent(c.token), { muteHttpExceptions: true });
+        if (r1.getResponseCode() === 200) j[id] = JSON.parse(r1.getContentText());
+      });
+    }
+    part.forEach(function (id) {
+      var a = j[id]; if (!a || !a.name) return;
+      out[id] = { name: a.name, campaign: a.campaign ? a.campaign.name : '', adset: a.adset ? a.adset.name : '', created: String(a.created_time || '').slice(0, 10), status: a.effective_status || '' };
+      cache.put('adn_' + id, JSON.stringify(out[id]), 21600);
+    });
+  }
+  return out;
 }
 function setupLeadSync() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncLeadvyneLeads') ScriptApp.deleteTrigger(t); });
@@ -1237,7 +1287,7 @@ function arenaAdminAction_(b, n) {
 var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
-  allOrders: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
+  allOrders: 'orders', leadMatch: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
   saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
   saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
   saveStaff: 'staff',
