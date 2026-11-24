@@ -1173,6 +1173,7 @@ function viewCod(){
       el('tbody',{},...rows.slice(0,400).map(o=>{
         const cr=el('input',{type:'text',value:o.courier||'',placeholder:'Courier',list:'dl-cour','aria-label':'Courier '+(o.orderNo||''),style:'min-width:110px'});
         const aw=el('input',{type:'text',value:o.awb||'',placeholder:'Tracking no.','aria-label':'Tracking '+(o.orderNo||''),style:'min-width:120px;text-transform:uppercase'});
+        const scb=el('button',{class:'btn',type:'button',text:'📷','aria-label':'Scan tracking '+(o.orderNo||''),onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})});
         const st=el('select',{'aria-label':'Status '+(o.orderNo||'')},...COD_ST.map(([v,t])=>el('option',{value:v,text:t,selected:codSt(o)===v})));
         const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
           if(st.value&&st.value!=='returned'&&!cr.value.trim()){toast('Type the courier name.');cr.focus();return}
@@ -1180,7 +1181,7 @@ function viewCod(){
           catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);sv.disabled=false}}});
         return el('tr',{class:codSt(o)==='paid'?'sent':''},el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
           el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
-          el('td',{},cr),el('td',{},aw),el('td',{},st),el('td',{},sv,trackBtns(o)))})))):el('div',{class:'empty',text:'No COD orders here.'});
+          el('td',{},cr),el('td',{style:'white-space:nowrap'},aw,scb),el('td',{},st),el('td',{},sv,trackBtns(o)))})))):el('div',{class:'empty',text:'No COD orders here.'});
     const cours=[...new Set(COURIERS.concat(all.map(o=>o.courier).filter(Boolean)))];
     box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
@@ -1787,6 +1788,34 @@ function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
   return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb),target:'_blank',rel:'noopener',text:'Track'}),
     wa?el('a',{class:'btn',href:wa+'?text='+encodeURIComponent(trackMsg(o)),target:'_blank',rel:'noopener',text:'Send on WhatsApp'}):null,
     el('button',{class:'btn',type:'button',text:'Copy',onclick:()=>{try{navigator.clipboard.writeText(trackMsg(o));toast('Tracking message copied')}catch(e){toast('Could not copy')}}}))}
+/* Scan a barcode / QR from the courier receipt with the phone camera. Uses the phone's own barcode reader
+   (Android Chrome); on iPhone / other browsers it loads a small scanner library the first time. */
+function awbFrom(t){t=String(t||'').trim();const ip=t.match(/[A-Z]{2}\d{9}IN/i);if(ip)return ip[0].toUpperCase();
+  if(/^https?:/i.test(t)){const runs=(t.split(/[?#]/).slice(1).join('&').match(/[A-Z0-9]{7,16}/gi)||[]).concat(t.split('?')[0].split('/').filter(x=>/^[A-Z0-9]{7,16}$/i.test(x)));return(runs.sort((a,b)=>/\d/.test(b)-/\d/.test(a)||b.length-a.length)[0]||t).toUpperCase()}
+  return t.replace(/\s+/g,'').toUpperCase()}
+let scanLib=null;
+function loadScanLib(){return scanLib=scanLib||new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';sc.onload=()=>ok(window.Html5Qrcode);sc.onerror=()=>{scanLib=null;no(new Error('Scanner did not load. Check the internet.'))};document.head.append(sc)})}
+async function scanCode(onDone){
+  const box=el('div',{id:'scanbox',style:'width:100%;max-width:420px;aspect-ratio:3/4;background:#000;border-radius:14px;overflow:hidden;position:relative'});
+  const msg=el('p',{style:'color:#fff;margin:0;text-align:center',text:'Point the camera at the barcode or QR on the courier slip'});
+  let stop=()=>{};const close=()=>{try{stop()}catch(e){}wrap.remove()};
+  const wrap=el('div',{style:'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px'},
+    box,msg,el('button',{class:'btn',type:'button',text:'Cancel',onclick:close}));
+  document.body.append(wrap);
+  let done=false;const hit=t=>{if(done||!t)return;done=true;try{navigator.vibrate&&navigator.vibrate(80)}catch(e){}close();onDone(awbFrom(t))};
+  try{
+    if('BarcodeDetector' in window){
+      const fm=await BarcodeDetector.getSupportedFormats();const det=new BarcodeDetector({formats:fm});
+      const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+      const v=el('video',{playsinline:true,muted:true,autoplay:true,style:'width:100%;height:100%;object-fit:cover'});v.srcObject=st;box.append(v);await v.play();
+      let alive=true;stop=()=>{alive=false;st.getTracks().forEach(t=>t.stop())};
+      const loop=async()=>{if(!alive||done)return;try{const r=await det.detect(v);if(r&&r.length){hit(r[0].rawValue);return}}catch(e){}setTimeout(loop,200)};loop();
+    }else{
+      const H=await loadScanLib();const q=new H('scanbox');stop=()=>{q.stop().catch(()=>{})};
+      await q.start({facingMode:'environment'},{fps:10,qrbox:(w,h)=>({width:Math.floor(w*.85),height:Math.floor(h*.4)})},t=>hit(t),()=>{});
+    }
+  }catch(e){msg.textContent=/Permission|NotAllowed/i.test(e.name+e.message)?'Camera permission was refused. Allow the camera for this site in the browser settings.':'Could not start the camera: '+e.message}
+}
 function trackSheet(o){
   const known=[...new Set(COURIERS.concat((allOrdersCache||adminOrders||[]).map(x=>x.courier).filter(Boolean)))];
   const cr=el('select',{id:'tk-c'},el('option',{value:'',text:'Pick courier'}),...known.map(c=>el('option',{value:c,text:c,selected:o.courier===c})));
@@ -1797,7 +1826,8 @@ function trackSheet(o){
       if(o.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE'}catch(e){}}
       closeOv();toast('Tracking saved');renderAdmin()}catch(e){toast('Could not save: '+e.message);sv.disabled=false}}});
   openOv(el('h3',{text:'Tracking · '+(o.orderNo||'')+' · '+(o.customer||'')}),
-    el('label',{class:'f',for:'tk-c'},'Courier',cr),el('label',{class:'f',for:'tk-a'},'Tracking number',aw),
+    el('label',{class:'f',for:'tk-c'},'Courier',cr),el('label',{class:'f',for:'tk-a'},'Tracking number',el('div',{class:'row',style:'flex-wrap:nowrap'},aw,
+      el('button',{class:'btn primary',type:'button',text:'📷 Scan',onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})}))),
     el('p',{class:'hint',text:'Saving also ticks the order as dispatched. Then use Track to see where it is, or Send on WhatsApp to give the customer the tracking link.'}),
     el('div',{class:'row'},sv,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})),trackBtns(o));
 }
