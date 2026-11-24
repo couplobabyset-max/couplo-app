@@ -1173,6 +1173,7 @@ function viewCod(){
       el('tbody',{},...rows.slice(0,400).map(o=>{
         const cr=el('input',{type:'text',value:o.courier||'',placeholder:'Courier',list:'dl-cour','aria-label':'Courier '+(o.orderNo||''),style:'min-width:110px'});
         const aw=el('input',{type:'text',value:o.awb||'',placeholder:'Tracking no.','aria-label':'Tracking '+(o.orderNo||''),style:'min-width:120px;text-transform:uppercase'});
+        pasteScan(aw);
         const scb=el('button',{class:'btn',type:'button',text:'📷','aria-label':'Scan tracking '+(o.orderNo||''),onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})});
         const st=el('select',{'aria-label':'Status '+(o.orderNo||'')},...COD_ST.map(([v,t])=>el('option',{value:v,text:t,selected:codSt(o)===v})));
         const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
@@ -1816,10 +1817,54 @@ async function scanCode(onDone){
     }
   }catch(e){msg.textContent=/Permission|NotAllowed/i.test(e.name+e.message)?'Camera permission was refused. Allow the camera for this site in the browser settings.':'Could not start the camera: '+e.message}
 }
+/* read a barcode / QR from a photo (file, or an image pasted with Ctrl+V) */
+async function scanImage(file){
+  if('BarcodeDetector' in window){try{const fm=await BarcodeDetector.getSupportedFormats();const r=await new BarcodeDetector({formats:fm}).detect(await createImageBitmap(file));if(r&&r.length)return awbFrom(r[0].rawValue)}catch(e){}}
+  const H=await loadScanLib();let d=document.getElementById('scanfile');if(!d){d=el('div',{id:'scanfile',style:'display:none'});document.body.append(d)}
+  const q=new H('scanfile');try{return awbFrom(await q.scanFile(file,false))}catch(e){throw new Error('No barcode or QR found in this photo. Try a clearer, straight photo.')}finally{try{q.clear()}catch(e){}}
+}
+function photoBtn(onDone,label){const inp=el('input',{type:'file',accept:'image/*',style:'display:none',onchange:async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;toast('Reading the photo…');try{const t=await scanImage(f);onDone(t);toast('Read: '+t)}catch(er){toast(er.message)}}});
+  return el('span',{},inp,el('button',{class:'btn',type:'button',text:label||'🖼 From photo',onclick:()=>inp.click()}))}
+/* Ctrl+V a receipt photo into a tracking box */
+function pasteScan(input){input.addEventListener('paste',async e=>{const it=[...(e.clipboardData||{}).items||[]].find(x=>x.type&&x.type.startsWith('image/'));if(!it)return;e.preventDefault();toast('Reading the pasted photo…');
+  try{input.value=await scanImage(it.getAsFile());input.dispatchEvent(new Event('input'));toast('Read: '+input.value)}catch(er){toast(er.message)}})}
+/* Quick tracking: order no. (or phone) → tracking no. → saved, next. Built for a USB barcode scanner (it types + Enter). */
+function quickTrack(){
+  const pool=()=>{const m={};(allOrdersCache||[]).concat(adminOrders||[]).forEach(o=>m[o.id]=o);return Object.values(m)};
+  if(!allOrdersCache)call('allOrders',{adminPin}).then(j=>{allOrdersCache=j.orders||[]}).catch(()=>{});
+  const norm=v=>String(v||'').replace(/[^A-Z0-9]/gi,'').toUpperCase();
+  const cr=el('select',{id:'qt-c'},...COURIERS.map(c=>el('option',{value:c,text:c,selected:(LS.get('qt_courier')||COURIERS[0])===c})));cr.onchange=()=>LS.set('qt_courier',cr.value);
+  const oi=el('input',{id:'qt-o',type:'text',placeholder:'Order no. or customer phone, then Enter',autocomplete:'off',style:'text-transform:uppercase'});
+  const ai=el('input',{id:'qt-a',type:'text',placeholder:'Scan or type tracking no., then Enter',autocomplete:'off',disabled:true,style:'text-transform:uppercase'});pasteScan(ai);
+  const info=el('div',{class:'hint',text:'Click the order box, then scan or type. Ctrl+V pastes a receipt photo into the tracking box.'});
+  const doneT=el('tbody',{});let cur=null,n=0;
+  const pick=o=>{cur=o;info.replaceChildren(el('b',{text:(o.orderNo||'')+' · '+(o.customer||'')+' · '+(o.phone||'')}),' · '+(o.product||'')+' · '+(o.district||'')+(o.awb?' · already has '+o.awb+' (will be replaced)':''));ai.disabled=false;ai.value='';ai.focus()};
+  oi.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const q=norm(oi.value);if(!q)return;const all=pool();
+    let hits=all.filter(o=>norm(o.orderNo)===q);if(!hits.length&&q.length>=7&&/^\d+$/.test(q))hits=all.filter(o=>norm(o.phone).slice(-10)===q.slice(-10));
+    if(!hits.length&&q.length>=3)hits=all.filter(o=>norm(o.orderNo).includes(q));
+    hits.sort((a,b)=>(!!a.awb-!!b.awb)||b.date.localeCompare(a.date));
+    if(!hits.length){info.textContent='No order found for "'+oi.value+'".'+(allOrdersCache?'':' (Older orders are still loading — try again in a moment.)');cur=null;ai.disabled=true;return}
+    if(hits.length===1){pick(hits[0]);return}
+    cur=null;ai.disabled=true;info.replaceChildren('Several orders match — pick one: ',...hits.slice(0,8).map(o=>el('button',{class:'btn',type:'button',style:'margin:4px',text:(o.orderNo||'')+' · '+dm(o.date)+' · '+(o.customer||'')+(o.awb?' ✓':''),onclick:()=>pick(o)})))};
+  const save=async()=>{const awb=awbFrom(ai.value);if(!cur||!awb)return;ai.disabled=true;
+    try{const j=await call('setCod',{adminPin,id:cur.id,codStatus:cur.codStatus||'',courier:cr.value,awb});Object.assign(cur,j.order||{courier:cr.value,awb});
+      if(cur.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:cur.id,value:true});cur.dispatched='TRUE'}catch(e){}}
+      n++;doneT.prepend(el('tr',{},el('td',{class:'mono',text:cur.orderNo||''}),el('td',{text:cur.customer||''}),el('td',{text:cr.value}),el('td',{class:'mono',text:awb}),el('td',{},trackBtns(cur))));
+      cnt.textContent='Saved this session: '+n;toast((cur.orderNo||'Order')+' saved');cur=null;oi.value='';ai.value='';info.textContent='Next order…';oi.focus()}
+    catch(e){toast('Could not save: '+e.message);ai.disabled=false;ai.focus()}};
+  ai.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();save()}};
+  const cnt=el('b',{text:'Saved this session: 0'});
+  openOv(el('h3',{text:'Quick tracking'}),el('label',{class:'f',for:'qt-c'},'Courier (stays the same until you change it)',cr),
+    el('label',{class:'f',for:'qt-o'},'1. Order',oi),info,
+    el('label',{class:'f',for:'qt-a'},'2. Tracking number',el('div',{class:'row',style:'flex-wrap:nowrap'},ai,photoBtn(t=>{ai.value=t;if(cur)save()}),el('button',{class:'btn',type:'button',text:'📷',onclick:()=>scanCode(t=>{ai.value=t;if(cur)save()})}),el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}))),
+    cnt,el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['No.','Customer','Courier','Tracking',''].map(h=>el('th',{text:h})))),doneT)),
+    el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Close',onclick:()=>{closeOv();renderAdmin()}})));
+  $('#sheet').style.maxWidth='760px';setTimeout(()=>oi.focus(),50);
+}
 function trackSheet(o){
   const known=[...new Set(COURIERS.concat((allOrdersCache||adminOrders||[]).map(x=>x.courier).filter(Boolean)))];
   const cr=el('select',{id:'tk-c'},el('option',{value:'',text:'Pick courier'}),...known.map(c=>el('option',{value:c,text:c,selected:o.courier===c})));
-  const aw=el('input',{id:'tk-a',type:'text',value:o.awb||'',placeholder:'Tracking / AWB no.',style:'text-transform:uppercase',autocomplete:'off'});
+  const aw=el('input',{id:'tk-a',type:'text',value:o.awb||'',placeholder:'Tracking / AWB no.',style:'text-transform:uppercase',autocomplete:'off'});pasteScan(aw);
   const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
     if(!cr.value){toast('Pick the courier.');return}if(!aw.value.trim()){toast('Type the tracking number.');aw.focus();return}
     sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:o.codStatus||'',courier:cr.value,awb:aw.value});Object.assign(o,j.order||{courier:cr.value,awb:aw.value.trim().toUpperCase()});
@@ -1827,7 +1872,8 @@ function trackSheet(o){
       closeOv();toast('Tracking saved');renderAdmin()}catch(e){toast('Could not save: '+e.message);sv.disabled=false}}});
   openOv(el('h3',{text:'Tracking · '+(o.orderNo||'')+' · '+(o.customer||'')}),
     el('label',{class:'f',for:'tk-c'},'Courier',cr),el('label',{class:'f',for:'tk-a'},'Tracking number',el('div',{class:'row',style:'flex-wrap:nowrap'},aw,
-      el('button',{class:'btn primary',type:'button',text:'📷 Scan',onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})}))),
+      el('button',{class:'btn primary',type:'button',text:'📷 Scan',onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})}),photoBtn(t=>{aw.value=t}))),
+    el('p',{class:'hint',text:'On a computer: use a USB barcode scanner (click the box, scan), pick a photo of the receipt, or copy a photo and press Ctrl+V in the box.'}),
     el('p',{class:'hint',text:'Saving also ticks the order as dispatched. Then use Track to see where it is, or Send on WhatsApp to give the customer the tracking link.'}),
     el('div',{class:'row'},sv,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})),trackBtns(o));
 }
@@ -1861,7 +1907,7 @@ function viewOrders(){
   const q=orderSearch.toLowerCase();
   const rows=src.filter(o=>!q||[o.customer,o.phone,o.district,o.pincode,o.product,o.orderNo,byId[o.staffId]].join(' ').toLowerCase().includes(q)).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
   const search=el('input',{id:'osearch',type:'search',placeholder:'Search name, phone, district, product…',value:orderSearch,oninput:e=>{orderSearch=e.target.value;clearTimeout(viewOrders._t);viewOrders._t=setTimeout(()=>{renderAdmin();const i=$('#osearch');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},300)}});
-  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'All orders ('+rows.length+')'}),search),el('div',{class:'scroll'},el('table',{},
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'All orders ('+rows.length+')'}),el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'⚡ Quick tracking',onclick:quickTrack}),search)),el('div',{class:'scroll'},el('table',{},
     el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Pay','Sent','Tracking',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...rows.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched'});cb.checked=o.dispatched==='TRUE';cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE'}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
       return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{text:payTxt(o)}),el('td',{},cb),
