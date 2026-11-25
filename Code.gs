@@ -447,7 +447,7 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
+var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -570,7 +570,7 @@ function handle_(b) {
     case 'salesStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.sales; })
         .map(function (s) { return { id: s.id, name: s.name, order: s.order, hasPin: !!s.pin }; }) };
-    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': {
+    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': case 'myCustomers': case 'editCustomer': {
       var me = staffList_().filter(function (x) { return x.id === b.staffId && x.sales; })[0];
       if (!me) return { ok: false, error: 'Not a sales staff' };
       if (me.pin && String(me.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
@@ -591,6 +591,27 @@ function handle_(b) {
       }
       if (b.action === 'myOrders')
         return { ok: true, today: n.date, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id && o.date.indexOf(month) === 0; }) };
+      if (b.action === 'myCustomers') // all-time orders of this sales staff only — the app groups them into customers
+        return { ok: true, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id; }).map(function (o) {
+          return { id: o.id, orderNo: o.orderNo, date: o.date, customer: o.customer, phone: o.phone, district: o.district, pincode: o.pincode, product: o.product, amount: o.amount, payment: o.payment, dispatched: o.dispatched, codStatus: o.codStatus, courier: o.courier, awb: o.awb }; }) };
+      if (b.action === 'editCustomer') { // fix a customer's name / phone / place on ALL of this staff's orders for them (never other staff's orders)
+        var key = String(b.key || ''), nc = b.c || {};
+        var keyOf = function (o) { var d = String(o.phone || '').replace(/\D/g, ''); if (d.length > 10) d = d.slice(-10); if (d.length >= 7) return 'p:' + d; var nm = String(o.customer || '').trim().toLowerCase(); return nm ? 'n:' + nm : 'id:' + o.id; }; // same as custKey in app.js
+        var name = String(nc.customer || '').trim().toUpperCase(), ph = String(nc.phone || '').replace(/[^\d+]/g, ''), dist = String(nc.district || '').trim().toUpperCase(), pin = String(nc.pincode || '').replace(/\D/g, '');
+        if (!name) return { ok: false, error: 'Enter the customer name' };
+        if (ph && ph.replace(/\D/g, '').length < 8) return { ok: false, error: 'Phone number looks too short' };
+        if (pin && pin.length !== 6) return { ok: false, error: 'Pincode must be 6 digits' };
+        var mineC = rows_('Orders').filter(function (o) { return o.staffId === me.id && keyOf(o) === key; });
+        if (!mineC.length) return { ok: false, error: 'Customer not found in your orders' };
+        var before = { customer: mineC[0].customer, phone: mineC[0].phone, district: mineC[0].district, pincode: mineC[0].pincode };
+        mineC.forEach(function (o) { o.customer = name; o.phone = ph; o.district = dist; o.pincode = pin; upsert_('Orders', o); });
+        try { // kept in EditLog (no email) so the owner can see who changed a customer
+          var el_ = sh_('EditLog');
+          if (el_) el_.getRange(el_.getLastRow() + 1, 1, 1, 6).setNumberFormat('@').setValues([[n.date + ' ' + n.time, 'Customer edited (' + mineC.length + ' orders)', me.name, '',
+            [before.customer, before.phone, before.district, before.pincode].join(' | '), [name, ph, dist, pin].join(' | ')]]);
+        } catch (x) {}
+        return { ok: true, changed: mineC.length };
+      }
       var o = cleanOrder_(b.order);
       if (!o.phone && !o.customer) return { ok: false, error: 'Enter customer name or phone' };
       // staff may pick today or yesterday as the order date; when admin unlocks them for today, 3 more days back

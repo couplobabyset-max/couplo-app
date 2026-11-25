@@ -1780,13 +1780,13 @@ async function ordersHome(edit){
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
   const isProd=/Design|Printing/.test(d.category||'');
-  const tabList=(isProd?[['design',/Design/.test(d.category)?'🎨 Design work':'🖨️ Printing work']]:[]).concat(me.sales?[['day','⭐ My day']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
+  const tabList=(isProd?[['design',/Design/.test(d.category)?'🎨 Design work':'🖨️ Printing work']]:[]).concat(me.sales?[['day','⭐ My day']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders'],['cust','👥 My customers']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
   if(portalTab==='auto')portalTab=isProd?'design':me.sales?'day':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
   me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>hasTab(d.access,v));
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})),
     ...given.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>openMgr(d.access,v)})));
-  const body=portalTab==='design'?myDesignView():portalTab==='day'?myDayView(d):portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
+  const body=portalTab==='design'?myDesignView():portalTab==='day'?myDayView(d):portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):portalTab==='cust'?myCustomersView():myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
   box.replaceChildren(head,warn,tabs,...body);
 }
@@ -1850,6 +1850,52 @@ function myOrdersView(edit,d){
     el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Pay','Tracking',''].map(t=>el('th',{text:t})))),tb)):el('div',{class:'empty',text:'No orders in this month.'}));
   return[info,dateBox,form,list];
 }
+
+/* Sales staff: their own customers only (built from their own orders, all time). Tap a customer to call / WhatsApp,
+   see their orders, or fix name / phone / district / pincode — the fix goes to all of this staff's orders for that customer. */
+let myCustQ='';
+function myCustomersView(){
+  const box=el('div',{class:'panel'},el('h3',{text:'My customers'}),el('div',{class:'empty',text:'Loading your customers…'}));
+  (async()=>{
+    let j;try{j=await call('myCustomers',{staffId:me.id,pin:me.pin})}
+    catch(e){box.replaceChildren(el('h3',{text:'My customers'}),el('div',{class:'empty',text:/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':e.message}));return}
+    const by={};j.orders.forEach(o=>{const k=custKey(o)||'id:'+o.id;(by[k]=by[k]||[]).push(o)});
+    const list=Object.entries(by).map(([k,os])=>{os.sort((a,b)=>String(a.date).localeCompare(String(b.date)));const l=os[os.length-1];
+      return{key:k,os,name:l.customer||'—',phone:l.phone||'',district:l.district||'',pincode:l.pincode||'',n:os.length,amt:os.reduce((t,o)=>t+(+o.amount||0),0),first:os[0].date,last:l.date}})
+      .sort((a,b)=>b.last.localeCompare(a.last));
+    const rep=list.filter(c=>c.n>1).length;
+    const tb=el('tbody',{}),cnt=el('span',{class:'hint',style:'margin:0'});
+    const draw=()=>{const q=myCustQ.trim().toUpperCase();const rows=list.filter(c=>!q||[c.name,c.phone,c.district,c.pincode,...c.os.map(o=>o.orderNo)].some(v=>String(v||'').toUpperCase().includes(q)));
+      cnt.textContent=rows.length+' of '+list.length;
+      tb.replaceChildren(...rows.slice(0,300).map(c=>el('tr',{style:'cursor:pointer',onclick:()=>myCustSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone}),el('td',{text:c.district}),el('td',{class:'mono',text:c.pincode}),
+        el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}))))};
+    const qI=el('input',{id:'mc-q',type:'search',placeholder:'Search name, phone, place, order no…',value:myCustQ,oninput:e=>{myCustQ=e.target.value;draw()}});
+    draw();
+    box.replaceChildren(el('div',{class:'toolbar'},el('h3',{text:'My customers ('+list.length+')'}),cnt),
+      el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(list.length)}),el('span',{text:'Customers'})),el('div',{},el('b',{class:'mono',text:String(rep)}),el('span',{text:'Repeat ⟳'})),el('div',{},el('b',{class:'mono',text:String(j.orders.length)}),el('span',{text:'Orders'}))),
+      qI,
+      list.length?scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','Pincode','Orders','Total','First order','Last order'].map(h=>el('th',{text:h})))),tb)):el('div',{class:'empty',text:'No customers yet.'}),
+      el('p',{class:'hint',text:'Only your own customers. Tap a customer to call, WhatsApp, see their orders or fix their details. ⟳ = ordered more than once.'}))})();
+  return[box]}
+function myCustSheet(c){
+  const wa=waLink(c.phone);
+  const f=(id,label,val,attrs)=>el('label',{class:'f',for:id},label,el('input',Object.assign({id,type:'text',value:val||'',autocomplete:'off'},attrs||{})));
+  const save=el('button',{class:'btn primary',type:'button',text:'Save changes',onclick:async()=>{
+    const nc={customer:$('#mc-n').value,phone:$('#mc-p').value,district:$('#mc-d').value,pincode:$('#mc-pc').value};
+    if(!nc.customer.trim()){toast('Enter the customer name.');return}
+    save.disabled=true;try{const r=await call('editCustomer',{staffId:me.id,pin:me.pin,key:c.key,c:nc});closeOv();toast('Saved · updated in '+r.changed+' order'+(r.changed>1?'s':''));ordersHome()}
+    catch(e){toast(/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':e.message);save.disabled=false}}});
+  openOv(el('h3',{text:c.name}),
+    el('div',{class:'row'},c.phone?el('a',{class:'btn',href:'tel:'+String(c.phone).replace(/[^\d+]/g,''),text:'📞 Call'}):null,wa?el('a',{class:'btn',href:wa,target:'_blank',rel:'noopener',text:'WhatsApp'}):null),
+    el('div',{class:'stats'},...[[c.n,'Orders'],[rs(c.amt),'Total'],[dm(c.first)+'/'+c.first.slice(2,4),'First order'],[dm(c.last)+'/'+c.last.slice(2,4),'Last order']].map(([v,l])=>el('div',{},el('b',{class:'mono',text:String(v)}),el('span',{text:l})))),
+    el('details',{},el('summary',{text:'✏️ Edit customer details'}),
+      el('div',{class:'form2',style:'margin-top:10px'},f('mc-n','Name',c.name==='—'?'':c.name,{style:'text-transform:uppercase'}),f('mc-p','Phone',c.phone,{type:'tel',inputmode:'tel'}),
+        f('mc-d','District',c.district,{style:'text-transform:uppercase'}),f('mc-pc','Pincode',c.pincode,{inputmode:'numeric',maxlength:'6'})),
+      el('p',{class:'hint',text:'Saving changes these details in all '+c.n+' of your order'+(c.n>1?'s':'')+' for this customer. Changes are logged.'}),save),
+    el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','No.','Product','₹','Pay','Status'].map(h=>el('th',{text:h})))),
+      el('tbody',{},...c.os.slice().reverse().map(o=>el('tr',{},el('th',{text:dm(o.date)+'/'+o.date.slice(2,4)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.product||'—'}),el('td',{class:'mono',text:+o.amount?rs(+o.amount):'—'}),
+        el('td',{text:o.payment==='cod'?'COD':o.payment==='prepaid'?'Prepaid':'—'}),el('td',{text:/delivered|paid/.test(o.codStatus||'')?'Delivered':o.awb?'Shipped · '+o.awb:o.dispatched==='TRUE'?'Sent':'Not sent'})))))),
+    el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Close',onclick:closeOv})))}
 
 /* ---------- admin: orders & reports ---------- */
 let adminOrders=[], allOrdersCache=null, orderScope='month', orderSearch='', of={staff:'',type:'',district:'',product:'',sent:'',pay:'',from:'',to:''};
