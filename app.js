@@ -1827,14 +1827,17 @@ const COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
 /* All COD orders go by India Post — courier is fixed for them */
 const COD_COURIER='India Post';
 const courOf=o=>o&&o.payment==='cod'?COD_COURIER:((o&&o.courier)||'');
-/* India Post parcels go to the official India Post site (it asks for the number + a captcha, so the number is copied for pasting);
-   other couriers keep the 17TRACK link */
+/* Each courier's own tracking site. Official sites ask for the number (some with a captcha), so Track copies the number to paste.
+   Speed and Safe has no official site we use, so it keeps 17TRACK with the number filled in. */
 const IP_SITE='https://www.indiapost.gov.in/';
+const COURIER_SITES=[[/india\s*post|speed\s*post|\bems\b/i,'India Post',IP_SITE],[/dtdc/i,'DTDC','https://www.dtdc.com/track-your-shipment/'],[/\bst\b|st\s*courier/i,'ST Courier','https://stcourier.com/']];
 const isPost=o=>/^[A-Z]{2}\d{9}IN$/i.test(String(o&&o.awb||'').trim())||/india\s*post|speed\s*post/i.test(String(o&&o.courier||''))||(o&&o.payment==='cod');
-const trackUrl=(awb,o)=>(o?isPost(o):/^[A-Z]{2}\d{9}IN$/i.test(String(awb||'').trim()))?IP_SITE:'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
-function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+(isPost(o)?'\nTrack on India Post: '+IP_SITE+' (type the tracking no. in the Track box)':'\nTrack here: '+trackUrl(o.awb,o))+'\n\nThank you for choosing Couplo Design Studio 💜'}
+function courierSite(o){if(isPost(o))return['India Post',IP_SITE];const c=String(o&&o.courier||'');const hit=COURIER_SITES.find(([re])=>re.test(c));return hit?[hit[1],hit[2]]:null}
+const t17=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
+const trackUrl=(awb,o)=>{const cs=o?courierSite(o):(/^[A-Z]{2}\d{9}IN$/i.test(String(awb||'').trim())?['India Post',IP_SITE]:null);return cs?cs[1]:t17(awb)};
+function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+(courierSite(o)?'\nTrack on '+courierSite(o)[0]+': '+courierSite(o)[1]+' (type the tracking no. in the Track box)':'\nTrack here: '+trackUrl(o.awb,o))+'\n\nThank you for choosing Couplo Design Studio 💜'}
 function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
-  return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb,o),target:'_blank',rel:'noopener',text:isPost(o)?'Track (India Post)':'Track',onclick:()=>{if(isPost(o)){try{navigator.clipboard.writeText(o.awb);toast(o.awb+' copied — paste it in the India Post Track box')}catch(e){}}}}),
+  return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb,o),target:'_blank',rel:'noopener',text:courierSite(o)?'Track ('+courierSite(o)[0]+')':'Track',onclick:()=>{const cs=courierSite(o);if(cs){try{navigator.clipboard.writeText(o.awb);toast(o.awb+' copied — paste it in the '+cs[0]+' Track box')}catch(e){}}}}),
     wa?el('a',{class:'btn',href:wa+'?text='+encodeURIComponent(trackMsg(o)),target:'_blank',rel:'noopener',text:'Send on WhatsApp'}):null,
     el('button',{class:'btn',type:'button',text:'Copy',onclick:()=>{try{navigator.clipboard.writeText(trackMsg(o));toast('Tracking message copied')}catch(e){toast('Could not copy')}}}))}
 /* Scan a barcode / QR from the courier receipt with the phone camera. Uses the phone's own barcode reader
@@ -1914,18 +1917,19 @@ function slipReader(){
       const hits=pool().filter(o=>f.phones.includes(last10(o.phone))).sort((a,b)=>b.date.localeCompare(a.date));
       st.textContent='Tracking: '+(f.awb||'not found')+' · Phones: '+(f.phones.join(', ')||'—')+(f.cod?' · COD amount ₹'+f.cod:'');
       const aw=el('input',{type:'text',value:f.awb,placeholder:'Tracking no.',style:'text-transform:uppercase;min-width:150px'});
+      const cs=el('select',{'aria-label':'Courier'},...COURIERS.map(c=>el('option',{value:c,text:c,selected:/IN$/i.test(f.awb)?c==='India Post':(hits[0]&&hits[0].courier===c)})));
       const sel=el('select',{},...hits.map(o=>el('option',{value:o.id,text:(o.orderNo||'')+' · '+dm(o.date)+' · '+(o.customer||'')+' · '+rs(+o.amount||0)+(o.payment==='cod'?' · COD':'')+(o.awb?' · has '+o.awb:'')})),el('option',{value:'',text:'— Type order no. instead —'}));
       const on=el('input',{type:'text',placeholder:'Order no.',style:'text-transform:uppercase;width:110px;display:'+(hits.length?'none':'')});sel.onchange=()=>{on.style.display=sel.value?'none':''};
       const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
         const awb=awbFrom(aw.value);if(!awb){toast('Type the tracking no.');aw.focus();return}
         const o=sel.value?pool().find(x=>x.id===sel.value):pool().find(x=>String(x.orderNo||'').replace(/\s/g,'').toUpperCase()===on.value.replace(/\s/g,'').toUpperCase());
         if(!o){toast('Order not found — pick or type the order no.');return}
-        const cv=o.payment==='cod'||/IN$/.test(awb)?(o.payment==='cod'?COD_COURIER:'India Post'):(o.courier||'');
+        const cv=o.payment==='cod'?COD_COURIER:cs.value;
         sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:o.codStatus||(o.payment==='cod'?'shipped':''),courier:cv,awb});Object.assign(o,j.order||{courier:cv,awb});
           if(o.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE'}catch(e){}}
           body.replaceChildren(el('p',{style:'margin:6px 0;font-weight:600',text:'✅ Saved: '+(o.orderNo||'')+' · '+awb+(cv?' · '+cv:'')}),trackBtns(o))}catch(e){toast('Could not save: '+e.message);sv.disabled=false}}});
       body.replaceChildren(hits.length?null:el('p',{class:'hint',style:'margin:4px 0',text:'No order with these phone numbers — pick it by order no. (ask in the dispatch group).'}),
-        el('div',{class:'row',style:'align-items:center'},aw,hits.length?sel:null,on,sv))}
+        el('div',{class:'row',style:'align-items:center'},aw,cs,hits.length?sel:null,on,sv))}
       catch(e){st.textContent='Could not read: '+e.message}})};
   const inp=el('input',{type:'file',accept:'image/*',multiple:true,style:'display:none',onchange:e=>{[...e.target.files].forEach(addFile);e.target.value=''}});
   const drop=el('div',{tabindex:'0',style:'border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer',onclick:()=>inp.click(),
