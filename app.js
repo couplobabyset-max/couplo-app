@@ -1861,26 +1861,34 @@ function myCustomersView(){
     catch(e){box.replaceChildren(el('h3',{text:'My customers'}),el('div',{class:'empty',text:/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':e.message}));return}
     const by={};j.orders.forEach(o=>{const k=custKey(o)||'id:'+o.id;(by[k]=by[k]||[]).push(o)});
     const list=Object.entries(by).map(([k,os])=>{os.sort((a,b)=>String(a.date).localeCompare(String(b.date)));const l=os[os.length-1];
-      return{key:k,os,name:l.customer||'—',phone:l.phone||'',district:l.district||'',pincode:l.pincode||'',n:os.length,amt:os.reduce((t,o)=>t+(+o.amount||0),0),first:os[0].date,last:l.date}})
+      const fp=String(l.phone||'').replace(/\D/g,'').slice(-10);return{key:k,os,fm:(j.firstMsg||{})[fp]||null,name:l.customer||'—',phone:l.phone||'',district:l.district||'',pincode:l.pincode||'',n:os.length,amt:os.reduce((t,o)=>t+(+o.amount||0),0),first:os[0].date,last:l.date}})
       .sort((a,b)=>b.last.localeCompare(a.last));
     const rep=list.filter(c=>c.n>1).length;
     const tb=el('tbody',{}),cnt=el('span',{class:'hint',style:'margin:0'}),cards=el('div',{class:'ccards'}),phone=matchMedia('(max-width:640px)').matches;
     const draw=()=>{const q=myCustQ.trim().toUpperCase();const rows=list.filter(c=>!q||[c.name,c.phone,c.district,c.pincode,...c.os.map(o=>o.orderNo)].some(v=>String(v||'').toUpperCase().includes(q)));
       cnt.textContent=rows.length+' of '+list.length;
       if(phone){cards.replaceChildren(...rows.slice(0,300).map(c=>{const wa=waLink(c.phone);return el('div',{class:'ccard',onclick:()=>myCustSheet(c)},
-        el('div',{class:'who'},el('b',{text:c.name+(c.n>1?' ⟳':'')}),el('small',{text:[c.phone,c.district].filter(Boolean).join(' · ')}),el('small',{text:c.n+' order'+(c.n>1?'s':'')+' · '+(c.amt?rs(c.amt):'—')+' · last '+dm(c.last)+'/'+c.last.slice(2,4)})),
+        el('div',{class:'who'},el('b',{text:c.name+(c.n>1?' ⟳':'')}),el('small',{text:[c.phone,c.district].filter(Boolean).join(' · ')}),el('small',{text:c.n+' order'+(c.n>1?'s':'')+' · '+(c.amt?rs(c.amt):'—')+' · last '+dm(c.last)+'/'+c.last.slice(2,4)}),el('small',{style:c.fm?'':'color:var(--warn);font-weight:600',text:c.fm?'First message '+dm(c.fm[0])+'/'+c.fm[0].slice(2,4):'⚠ First message date missing'})),
         c.phone?el('a',{class:'ic',href:'tel:'+String(c.phone).replace(/[^\d+]/g,''),'aria-label':'Call '+c.name,text:'📞',onclick:e=>e.stopPropagation()}):null,
         wa?el('a',{class:'ic',href:wa,target:'_blank',rel:'noopener','aria-label':'WhatsApp '+c.name,text:'💬',onclick:e=>e.stopPropagation()}):null)}));return}
       tb.replaceChildren(...rows.slice(0,300).map(c=>el('tr',{style:'cursor:pointer',onclick:()=>myCustSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone}),el('td',{text:c.district}),el('td',{class:'mono',text:c.pincode}),
-        el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}))))};
+        el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{style:c.fm?'':'color:var(--warn);font-weight:600',text:c.fm?dm(c.fm[0])+'/'+c.fm[0].slice(2,4):'Missing'}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}))))};
     const qI=el('input',{id:'mc-q',type:'search',placeholder:'Search name, phone, place, order no…',value:myCustQ,oninput:e=>{myCustQ=e.target.value;draw()}});
     draw();
     box.replaceChildren(el('div',{class:'toolbar'},el('h3',{text:'My customers ('+list.length+')'}),cnt),
       el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(list.length)}),el('span',{text:'Customers'})),el('div',{},el('b',{class:'mono',text:String(rep)}),el('span',{text:'Repeat ⟳'})),el('div',{},el('b',{class:'mono',text:String(j.orders.length)}),el('span',{text:'Orders'}))),
       qI,
-      !list.length?el('div',{class:'empty',text:'No customers yet.'}):phone?cards:scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','Pincode','Orders','Total','First order','Last order'].map(h=>el('th',{text:h})))),tb)),
+      !list.length?el('div',{class:'empty',text:'No customers yet.'}):phone?cards:scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','Pincode','Orders','Total','First message','First order','Last order'].map(h=>el('th',{text:h})))),tb)),
       el('p',{class:'hint',text:'Only your own customers. Tap a customer to call, WhatsApp, see their orders or fix their details. ⟳ = ordered more than once.'}))})();
   return[box]}
+function myFmRow(c){
+  const fp=String(c.phone||'').replace(/\D/g,'').slice(-10);
+  if(c.fm&&c.fm[1]==='crm')return el('p',{class:'hint',style:'margin:0'},'First message: ',el('b',{text:dm(c.fm[0])+'/'+c.fm[0].slice(2,4)}),' (from CRM)');
+  if(!fp)return null;
+  const save=async v=>{await call('setFirstMsg',{staffId:me.id,pin:me.pin,phone:c.phone,date:v});c.fm=v?[v,'manual']:null};
+  return el('div',{class:'row',style:'align-items:center;gap:8px'},
+    c.fm?el('span',{},'First message: ',el('b',{text:dm(c.fm[0])+'/'+c.fm[0].slice(2,4)})):el('span',{style:'color:var(--warn);font-weight:600',text:'⚠ First message date missing'}),
+    el('button',{class:'btn',type:'button',text:c.fm?'Change':'+ Add date',onclick:()=>fmDateSheet(c.name,c.phone,c.fm?c.fm[0]:'',c.first,async v=>{await save(v);setTimeout(()=>{myCustSheet(c);ordersHome()},50)})}))}
 function myCustSheet(c){
   const wa=waLink(c.phone);
   const f=(id,label,val,attrs)=>el('label',{class:'f',for:id},label,el('input',Object.assign({id,type:'text',value:val||'',autocomplete:'off'},attrs||{})));
@@ -1892,6 +1900,7 @@ function myCustSheet(c){
   openOv(el('h3',{text:c.name}),
     el('div',{class:'row'},c.phone?el('a',{class:'btn',href:'tel:'+String(c.phone).replace(/[^\d+]/g,''),text:'📞 Call'}):null,wa?el('a',{class:'btn',href:wa,target:'_blank',rel:'noopener',text:'WhatsApp'}):null),
     el('p',{class:'hint',style:'margin:0'},c.n+' order'+(c.n>1?'s':'')+' · '+(c.amt?rs(c.amt):'—')+' · first '+dm(c.first)+'/'+c.first.slice(2,4)+' · last '+dm(c.last)+'/'+c.last.slice(2,4)),
+    myFmRow(c),
     el('details',{},el('summary',{text:'✏️ Edit customer details'}),
       el('div',{class:matchMedia('(max-width:640px)').matches?'form1':'form2',style:'margin-top:10px'},f('mc-n','Name',c.name==='—'?'':c.name,{style:'text-transform:uppercase'}),f('mc-p','Phone',c.phone,{type:'tel',inputmode:'tel'}),
         f('mc-d','District',c.district,{style:'text-transform:uppercase'}),f('mc-pc','Pincode',c.pincode,{inputmode:'numeric',maxlength:'6'})),
@@ -2239,7 +2248,7 @@ const adCamp=id=>{if(!id)return'';const a=leadCache&&leadCache.ads&&leadCache.ad
    the newest ad seen on this number in the 30 days before the order */
 function leadFor(rows,ds){if(!rows.length)return null;let r=null;for(const x of rows){if(x[0].slice(0,10)<=ds)r=x;else break}
   if(!r)return null;let ad=r[1];if(!ad){const lim=addDays(ds,-30);for(let i=rows.length-1;i>=0;i--){const x=rows[i];if(x[0].slice(0,10)>ds)continue;if(x[0].slice(0,10)<lim)break;if(x[1]){ad=x[1];break}}}
-  const day=r[0].slice(0,10);return{at:r[0],day,ad,days:Math.round((new Date(ds+'T12:00:00')-new Date(day+'T12:00:00'))/864e5)}}
+  const day=r[0].slice(0,10);return{at:r[0],day,ad,manual:r[3]==='manual',days:Math.round((new Date(ds+'T12:00:00')-new Date(day+'T12:00:00'))/864e5)}}
 function custBuild(all){
   const g={};
   all.forEach(o=>{if(!o.date)return;const k=custKey(o);if(!k)return;(g[k]=g[k]||{k,os:[]}).os.push(o)});
@@ -2370,7 +2379,7 @@ function viewCustomers(){
       el('button',{class:'btn',type:'button',text:'📄 PDF',title:'This list (with your filters) as a PDF',onclick:()=>custListPdf(R)})):null),
     R.list.length?scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
       el('tbody',{},...shown.map(c=>el('tr',{style:'cursor:pointer',onclick:()=>custSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone||''}),el('td',{text:c.district||''}),
-        (c.lead1||!leadCache?el('td',{text:c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):'…'}):el('td',{},waLink(c.phone)?el('a',{class:'btn',href:waLink(c.phone),target:'_blank',rel:'noopener',style:'padding:3px 10px;font-size:12px',title:'Not in the CRM sheet — open this chat on WhatsApp to see when they first messaged',text:'💬 Check',onclick:e=>e.stopPropagation()}):'—')),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
+        fmCell(c),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
       el('div',{class:'empty',text:'No customers for these dates and filters.'}),
     R.list.length>cu.show?el('button',{class:'btn',type:'button',text:'Show more ('+(R.list.length-cu.show)+' left)',onclick:()=>{cu.show+=200;renderAdmin()}}):null,
     R.list.length?el('p',{class:'hint',text:'Tap a customer to see all their orders and messages, call or WhatsApp. ⟳ = repeat customer. First message / Ad / Campaign = the CRM lead (by phone) that led to their first order; Days = days from that message to the order.'}):null);
@@ -2418,6 +2427,29 @@ function viewCustomers(){
   const lagP=el('div',{class:'panel'},el('h3',{text:'Days from message to order'}),tbl(['Time taken','Orders','Sales'],R.lagRows.map(r=>[r.l,r.o,rs(r.a)]).concat(R.noLead?[['Number not in CRM',R.noLead,'']]:[])));
   return[head,summary,listP,el('h2',{class:'sect',text:'Ads & messages'}),spendP,adP,convP,mixP,scP,wkP,lagP,el('h2',{class:'sect',text:'Customer reports'}),monthP,distP,topP,fpP,stP,quietP];
 }
+/* First message date for customers who are not in the CRM sheet: staff check the WhatsApp chat and type the date.
+   (CRM dates can't be changed here.) */
+function fmDateSheet(name,phone,cur,maxD,save){
+  const inp=el('input',{id:'fm-d',type:'date',value:cur||'',max:maxD||ymd(new Date()),style:'font-size:17px'});
+  const wa=waLink(phone);
+  const go=async v=>{if(v&&maxD&&v>maxD){toast('First message must be on or before the first order ('+dm(maxD)+').');return}
+    try{await save(v);closeOv();toast(v?'First message date saved':'Date removed')}catch(e){toast(/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':e.message)}};
+  openOv(el('h3',{text:'First message · '+name}),
+    el('p',{class:'hint',text:'Open the WhatsApp chat, scroll to the very first message from this customer and pick that date.'}),
+    wa?el('a',{class:'btn',href:wa,target:'_blank',rel:'noopener',text:'💬 Open WhatsApp chat'}):null,
+    el('label',{class:'f',for:'fm-d'},'First message date',inp),
+    el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Save',onclick:()=>{if(!inp.value){toast('Pick the date.');return}go(inp.value)}}),
+      cur?el('button',{class:'btn',type:'button',text:'Remove',onclick:()=>go('')}):null,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})))}
+function fmCell(c){
+  if(!leadCache)return el('td',{text:'…'});
+  const L=c.lead1,p=String(c.phone||'').replace(/\D/g,'').slice(-10);
+  const save=async v=>{await call('saveFirstMsg',{adminPin,phone:c.phone,date:v});if(leadCache.leads){if(v)leadCache.leads[p]=[[v+' 00:00','','','manual']];else delete leadCache.leads[p]}renderAdmin()};
+  const open=e=>{e.stopPropagation();fmDateSheet(c.name,c.phone,L&&L.manual?L.day:'',c.first,save)};
+  if(L&&!L.manual)return el('td',{text:dm(L.day)+'/'+L.day.slice(2,4)});
+  if(L)return el('td',{style:'white-space:nowrap'},el('span',{title:'Typed by staff after checking WhatsApp',text:dm(L.day)+'/'+L.day.slice(2,4)+' ✎'}),' ',el('button',{class:'btn',type:'button',style:'padding:2px 8px;font-size:12px',text:'Edit',onclick:open}));
+  if(!p)return el('td',{text:'—'});
+  return el('td',{style:'white-space:nowrap'},el('a',{class:'btn',href:waLink(c.phone),target:'_blank',rel:'noopener',style:'padding:3px 8px;font-size:12px',title:'Open the WhatsApp chat',text:'💬',onclick:e=>e.stopPropagation()}),' ',
+    el('button',{class:'btn',type:'button',style:'padding:3px 8px;font-size:12px',text:'+ Date',onclick:open}))}
 /* Customer list only (same filters and order as on screen) — Excel or PDF */
 const custRow=c=>[c.name+(c.n>1?' (repeat)':''),c.phone||'',c.district||'',c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):'',dm(c.first)+'/'+c.first.slice(2,4),c.lead1?c.lead1.days:'',c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):'',c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):'',dm(c.last)+'/'+c.last.slice(2,4),c.n,c.amt||0,c.staffName||''];
 const CUST_COLS=['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'];

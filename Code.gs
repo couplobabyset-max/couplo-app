@@ -16,6 +16,7 @@ var SHEETS = {
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
   Settings:   ['key','value'],
   Capi:       ['id','status','sentAt','orderNo','value','note'],   // Meta Conversions API log — one row per order sent
+  FirstMsg:   ['phone','date','staffId','updatedAt'],   // first WhatsApp message date typed by staff after checking WhatsApp, for customers not in the CRM sheet
   EditLog:    ['time','action','staff','date','before','after'],   // every admin change to attendance / attendance settings (cannot be changed from the app)
   /* ---- Weekly Arena (Nov 2026) ---- */
   Media:      ['id','date','staffId','product','concept','title','status','reedits','igLink','createdAt','decidedAt'], // one video / post; status pending | approved | reedit
@@ -570,7 +571,7 @@ function handle_(b) {
     case 'salesStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.sales; })
         .map(function (s) { return { id: s.id, name: s.name, order: s.order, hasPin: !!s.pin }; }) };
-    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': case 'myCustomers': case 'editCustomer': {
+    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': case 'myCustomers': case 'editCustomer': case 'setFirstMsg': {
       var me = staffList_().filter(function (x) { return x.id === b.staffId && x.sales; })[0];
       if (!me) return { ok: false, error: 'Not a sales staff' };
       if (me.pin && String(me.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
@@ -591,9 +592,18 @@ function handle_(b) {
       }
       if (b.action === 'myOrders')
         return { ok: true, today: n.date, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id && o.date.indexOf(month) === 0; }) };
-      if (b.action === 'myCustomers') // all-time orders of this sales staff only — the app groups them into customers
-        return { ok: true, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id; }).map(function (o) {
+      if (b.action === 'setFirstMsg') { // only for a phone that is in this staff's own orders
+        var fp = String(b.phone || '').replace(/\D/g, '').slice(-10);
+        if (!rows_('Orders').some(function (o) { return o.staffId === me.id && String(o.phone || '').replace(/\D/g, '').slice(-10) === fp; })) return { ok: false, error: 'Not your customer' };
+        return fmSave_(fp, b.date, me.id, n);
+      }
+      if (b.action === 'myCustomers') { // all-time orders of this sales staff only — the app groups them into customers
+        var crmFirst = {}; try { var lm = leadMatch_(true).leads; Object.keys(lm).forEach(function (p) { crmFirst[p] = [lm[p][0][0].slice(0, 10), lm[p][0][3] === 'manual' ? 'manual' : 'crm']; }); } catch (x) {}
+        var minePh = {}, myOs = rows_('Orders').filter(function (o) { return o.staffId === me.id; });
+        myOs.forEach(function (o) { var q = String(o.phone || '').replace(/\D/g, ''); if (q.length >= 7) { q = q.slice(-10); if (crmFirst[q]) minePh[q] = crmFirst[q]; } });
+        return { ok: true, firstMsg: minePh, orders: myOs.map(function (o) {
           return { id: o.id, orderNo: o.orderNo, date: o.date, customer: o.customer, phone: o.phone, district: o.district, pincode: o.pincode, product: o.product, amount: o.amount, payment: o.payment, dispatched: o.dispatched, codStatus: o.codStatus, courier: o.courier, awb: o.awb }; }) };
+      }
       if (b.action === 'editCustomer') { // fix a customer's name / phone / place on ALL of this staff's orders for them (never other staff's orders)
         var key = String(b.key || ''), nc = b.c || {};
         var keyOf = function (o) { var d = String(o.phone || '').replace(/\D/g, ''); if (d.length > 10) d = d.slice(-10); if (d.length >= 7) return 'p:' + d; var nm = String(o.customer || '').trim().toLowerCase(); return nm ? 'n:' + nm : 'id:' + o.id; }; // same as custKey in app.js
@@ -685,6 +695,7 @@ function handle_(b) {
     case 'allOrders': return { ok: true, orders: rows_('Orders') };
     case 'aiAsk': return aiAsk_(b, mgr, can, n);
     case 'leadMatch': return leadMatch_();
+    case 'saveFirstMsg': return fmSave_(b.phone, b.date, 'admin', n);
     case 'adSpendByAd': return adSpendByAd_(String(b.from || ''), String(b.to || ''));
     case 'saveOrder': {
       var so = cleanOrder_(b.order); so.id = b.order.id || ('o' + new Date().getTime().toString(36));
@@ -886,7 +897,23 @@ function syncLeadvyneLeads() {
    (last 10 digits), every lead row as [date "yyyy-MM-dd HH:mm" IST, Ad ID]. Ad names come from the Meta
    Marketing API with META_ADS_TOKEN (same token as ad spend) and are kept 6 hours in the cache.
    Read only — nothing is written. */
-function leadMatch_() {
+/* FirstMsg sheet: made the first time someone saves a date */
+function fmSheet_() {
+  var sh = sh_('FirstMsg'); if (sh) return sh;
+  sh = SpreadsheetApp.getActiveSpreadsheet().insertSheet('FirstMsg');
+  sh.getRange(1, 1, 1, SHEETS.FirstMsg.length).setValues([SHEETS.FirstMsg]).setFontWeight('bold'); sh.setFrozenRows(1); return sh;
+}
+function fmAll_() { if (!sh_('FirstMsg')) return {}; var m = {}; rows_('FirstMsg').forEach(function (r) { if (r.phone && r.date) m[String(r.phone)] = String(r.date).slice(0, 10); }); return m; }
+function fmSave_(phone, date, staffId, n) {
+  var p = String(phone || '').replace(/\D/g, ''); if (p.length < 7) return { ok: false, error: 'This customer has no phone number' }; p = p.slice(-10);
+  var d = String(date || '').trim();
+  if (d && (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d > n.date)) return { ok: false, error: 'Pick a valid date (not in the future)' };
+  fmSheet_();
+  if (!d) { remove_('FirstMsg', p); return { ok: true, phone: p, date: '' }; }
+  upsert_('FirstMsg', { phone: p, date: d, staffId: staffId || '', updatedAt: n.date + ' ' + n.time });
+  return { ok: true, phone: p, date: d };
+}
+function leadMatch_(noAds) { // noAds: skip the Meta ad-name lookup (staff list only needs dates)
   var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
   var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
   var cPh = head.indexOf('phone'), cDate = head.indexOf('date'), cAd = head.indexOf('ad id'), cWho = head.indexOf('assigned to');
@@ -903,8 +930,10 @@ function leadMatch_() {
     (leads[p] = leads[p] || []).push([Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm'), ad, cWho >= 0 ? (byName[leadName_(r[cWho])] || '') : '']);
   });
   Object.keys(leads).forEach(function (p) { leads[p].sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }); });
+  var fm = fmAll_(); // dates staff typed after checking WhatsApp — only used when the CRM sheet has no message for that number
+  Object.keys(fm).forEach(function (p) { if (!leads[p]) leads[p] = [[fm[p] + ' 00:00', '', '', 'manual']]; });
   var ads = {}, note = '';
-  try { ads = adNames_(Object.keys(adIds)); } catch (e) { note = String(e.message || e); }
+  if (!noAds) try { ads = adNames_(Object.keys(adIds)); } catch (e) { note = String(e.message || e); }
   return { ok: true, leads: leads, ads: ads, note: note, synced: setting_('leadSyncLast') || '' };
 }
 /* owner only: spend per ad from Meta for since..until (yyyy-MM-dd), all ad accounts; kept 1 hour in the cache */
@@ -1493,7 +1522,7 @@ function arenaAdminAction_(b, n) {
 var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff', 'ai'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
-  allOrders: 'orders', leadMatch: 'orders', setCod: 'orders', setTrack: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
+  allOrders: 'orders', leadMatch: 'orders', saveFirstMsg: 'orders', setCod: 'orders', setTrack: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
   saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
   saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
   saveStaff: 'staff',
