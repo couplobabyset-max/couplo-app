@@ -1603,7 +1603,7 @@ function backupSheet_() {
    Admin → "AI Assistant" tab. Ask questions about the app's data in Malayalam, Manglish or English.
    Uses Google Gemini. One-time setup — Apps Script editor → Project Settings (gear) → Script properties → add:
      GEMINI_API_KEY = key from https://aistudio.google.com/apikey  (free tier is enough)
-     GEMINI_MODEL   = (optional) model name, default gemini-2.5-flash
+     GEMINI_MODEL   = (optional) model name, default gemini-3.8-flash
    Who can use it: the owner (admin PIN) and staff who have the "AI Assistant" admin tab ticked.
    It only sees what that person may see: no leads / ad spend / salary unless they have those tabs.
    Customer names and phone numbers are never sent to Gemini — each customer gets a short code instead. */
@@ -1693,7 +1693,7 @@ function aiAsk_(b, mgr, can, n) {
   if (!key) return { ok: false, error: 'AI is not set up yet. Add GEMINI_API_KEY in Apps Script → Project Settings → Script properties.' };
   var q = String(b.question || '').trim().slice(0, 1500);
   if (!q) return { ok: false, error: 'Type a question' };
-  var model = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || 'gemini-2.5-flash';
+  var model = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || 'gemini-3.8-flash';
   var who = mgr ? mgr.name : 'Murshid (owner)';
   var sys = 'You are the AI assistant inside the Couplo Design Studio staff app (a baby clothing brand in Vengara, Malappuram, Kerala that sells custom name-printed newborn baby sets on WhatsApp). ' +
     'You are talking to ' + who + '. Answer ONLY from the data below. Count and add up carefully, row by row; when you give a number, say which dates it covers. ' +
