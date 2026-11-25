@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Track your order · Couplo Design Studio</title>
+<meta name="description" content="Track your Couplo Design Studio baby set order with your mobile number.">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@600;700&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+:root{--bg:#FBF7FB;--surface:#fff;--ink:#22172A;--muted:#6B5F72;--line:#E7DCE8;--accent:#511F52;--accent-soft:#F1E6F1;--ok:#1F7A55;--ok-soft:#DDF1E7;--warn:#9A5B00;--warn-soft:#FBEBD0;
+  --f-display:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;--f-body:"Figtree","Segoe UI",system-ui,sans-serif;--f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.5}
+main{max-width:520px;margin:0 auto;padding:28px 18px 60px}
+header{text-align:center;margin-bottom:22px}
+header img{width:150px;height:auto}
+h1{font-family:var(--f-display);font-size:26px;margin:14px 0 4px;letter-spacing:-.01em}
+header p{margin:0;color:var(--muted)}
+form{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px;display:grid;gap:12px}
+label{font-weight:600;font-size:14px}
+.row{display:flex;border:1.5px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+.row span{padding:13px 12px;background:var(--accent-soft);color:var(--accent);font-weight:600}
+input{flex:1;border:0;padding:13px 12px;font:inherit;font-size:18px;min-width:0;outline:none;letter-spacing:.04em}
+.row:focus-within{border-color:var(--accent)}
+button,.btn{appearance:none;border:0;border-radius:12px;padding:14px 16px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none;text-align:center;display:inline-block}
+.primary{background:var(--accent);color:#fff;font-size:17px}
+.primary:disabled{opacity:.6;cursor:wait}
+.btn{background:var(--accent-soft);color:var(--accent);padding:10px 14px;font-size:14px}
+.wa{background:#1F7A55;color:#fff}
+.msg{padding:14px;border-radius:12px;margin-top:16px}
+.err{background:var(--warn-soft);color:var(--warn)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px;margin-top:16px}
+.top{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.top b{font-family:var(--f-display);font-size:20px}
+.top small{color:var(--muted)}
+.prod{color:var(--muted);margin:2px 0 14px}
+ol{list-style:none;margin:0;padding:0}
+ol li{position:relative;padding:0 0 18px 34px}
+ol li:last-child{padding-bottom:0}
+ol li::before{content:"";position:absolute;left:8px;top:6px;width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid var(--line)}
+ol li:not(:last-child)::after{content:"";position:absolute;left:15px;top:22px;bottom:2px;width:2px;background:var(--line)}
+ol li.done::before{background:var(--accent);border-color:var(--accent)}
+ol li.done:not(:last-child)::after{background:var(--accent)}
+ol li.now::before{background:#fff;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+ol li span{display:block;font-weight:600}
+ol li small{color:var(--muted)}
+ol li:not(.done):not(.now) span{color:var(--muted);font-weight:500}
+.trk{margin-top:16px;padding:14px;border-radius:12px;background:var(--accent-soft)}
+.trk .no{font-family:var(--f-mono);font-size:17px;word-break:break-all}
+.trk .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.trk .acts .btn{background:#fff}
+.note{font-size:14px;color:var(--muted);margin-top:8px}
+footer{text-align:center;margin-top:28px;color:var(--muted);font-size:14px}
+footer a{color:var(--accent);font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icons/logo.png" alt="Couplo Design Studio">
+    <h1>Track your order</h1>
+    <p>Enter the mobile number you gave when ordering.</p>
+  </header>
+
+  <form id="f" autocomplete="on">
+    <label for="ph">Mobile number</label>
+    <div class="row"><span>+91</span><input id="ph" type="tel" inputmode="numeric" maxlength="14" placeholder="98765 43210" autocomplete="tel-national" required></div>
+    <button class="primary" id="go" type="submit">Track order</button>
+  </form>
+
+  <div id="out" aria-live="polite"></div>
+
+  <footer>Need help? <a id="wa" href="#" target="_blank" rel="noopener">Message us on WhatsApp</a></footer>
+</main>
+
+<script>
+const API = "https://script.google.com/macros/s/AKfycbxUUZvu5SU3GLEFSZSFeUFdrLXy0WrOfPlFVGlL_gKnX2oK84mGf08HiD30jdDs4OEX/exec";
+const WA = "918590288151";
+const IP_SITE = "https://www.indiapost.gov.in/";
+const SITES = [[/india\s*post|speed\s*post|\bems\b/i,"India Post",IP_SITE],[/dtdc/i,"DTDC","https://www.dtdc.com/track-your-shipment/"],[/\bst\b|st\s*courier/i,"ST Courier","https://stcourier.com/"],[/speed\s*(and|&)\s*safe|gokulam/i,"Speed and Safe","https://www.gokulamspeedandsafe.com/speedandsafe-tracking/"]];
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = d => { if (!d) return ""; const x = new Date(String(d).slice(0,10) + "T00:00:00"); return isNaN(x) ? esc(d) : x.toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}); };
+$("#wa").href = "https://wa.me/" + WA + "?text=" + encodeURIComponent("Hi Couplo, I want to know the status of my order.");
+
+function site(o){
+  if (/^[A-Z]{2}\d{9}IN$/i.test(String(o.awb||"").trim()) || o.cod) return ["India Post", IP_SITE];
+  const h = SITES.find(([re]) => re.test(o.courier||"")); return h ? [h[1],h[2]] : null;
+}
+
+function card(o){
+  const delivered = /delivered|paid/.test(o.codStatus||"");
+  const sent = o.dispatched || !!o.awb || delivered;
+  const made = o.designDone || sent;
+  const steps = [
+    ["Order confirmed", fmt(o.date), true],
+    ["Design & printing", made ? "Done" : "Your baby set is being made", made],
+    ["Shipped", sent ? (o.dispatchedAt ? fmt(o.dispatchedAt) : "Sent") + (o.courier ? " · " + esc(o.courier) : "") : "We'll ship it soon", sent],
+    ["Delivered", delivered ? "Delivered" : (sent ? "On the way" : ""), delivered]
+  ];
+  const nowIdx = steps.findIndex(s => !s[2]);
+  let trk = "";
+  if (o.awb) {
+    const s = site(o);
+    trk = `<div class="trk"><small>Tracking number${o.courier ? " · " + esc(o.courier) : ""}</small><div class="no">${esc(o.awb)}</div>
+      <div class="acts"><button class="btn" type="button" data-copy="${esc(o.awb)}">Copy number</button>
+      ${s ? `<a class="btn" href="${s[1]}" target="_blank" rel="noopener" data-copy="${esc(o.awb)}">Track on ${esc(s[0])} ↗</a>` : `<a class="btn" href="https://t.17track.net/en#nums=${encodeURIComponent(o.awb)}" target="_blank" rel="noopener">Track ↗</a>`}</div>
+      ${s ? `<div class="note">Paste the tracking number in the Track box on the ${esc(s[0])} site.</div>` : ""}</div>`;
+  } else if (sent) {
+    trk = `<div class="note">Your parcel has been sent. The tracking number will be updated here soon.</div>`;
+  }
+  return `<div class="card"><div class="top"><b>${esc(o.orderNo || "Your order")}</b><small>${o.cod ? "Cash on delivery" : "Prepaid"}</small></div>
+    <div class="prod">${esc(o.product || "")}</div>
+    <ol>${steps.map((s,i) => `<li class="${s[2] ? "done" : (i === nowIdx ? "now" : "")}"><span>${s[0]}</span>${s[1] ? `<small>${s[1]}</small>` : ""}</li>`).join("")}</ol>${trk}</div>`;
+}
+
+document.addEventListener("click", e => {
+  const c = e.target.closest("[data-copy]"); if (!c) return;
+  try { navigator.clipboard.writeText(c.dataset.copy); if (c.tagName === "BUTTON") { c.textContent = "Copied ✓"; setTimeout(() => c.textContent = "Copy number", 1500); } } catch (x) {}
+});
+
+async function track(phone){
+  const out = $("#out"), go = $("#go");
+  go.disabled = true; go.textContent = "Checking…"; out.innerHTML = "";
+  try {
+    const r = await fetch(API, {method:"POST", body: JSON.stringify({action:"publicTrack", phone})});
+    const j = await r.json();
+    if (!j.ok) out.innerHTML = `<div class="msg err">${esc(j.error || "Something went wrong.")}</div>`;
+    else out.innerHTML = j.orders.map(card).join("");
+  } catch (e) {
+    out.innerHTML = `<div class="msg err">Could not connect. Check your internet and try again.</div>`;
+  } finally { go.disabled = false; go.textContent = "Track order"; }
+}
+
+$("#f").addEventListener("submit", e => {
+  e.preventDefault();
+  const ph = $("#ph").value.replace(/\D/g, "").slice(-10);
+  if (ph.length !== 10) { $("#out").innerHTML = `<div class="msg err">Please enter a 10-digit mobile number.</div>`; return; }
+  track(ph);
+});
+</script>
+</body>
+</html>

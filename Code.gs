@@ -503,11 +503,13 @@ function handle_(b) {
       es.appendRow([n.date + ' ' + n.time, String(b.who || '').slice(0, 40), String(b.where || '').slice(0, 60), msg, String(b.ua || '').slice(0, 120)]);
       return { ok: true };
     }
-    case 'publicTrack': { // customer tracking page: order no. + phone must both match; only shipping facts go back
+    case 'publicTrack': { // customer tracking page (track.html): search by mobile number; order no. optional to narrow. Only shipping facts go back — no name, address or amount
       var on = String(b.orderNo || '').replace(/\s+/g, '').toUpperCase(), ph = String(b.phone || '').replace(/\D/g, '').slice(-10);
-      if (on.length < 2 || ph.length !== 10) return { ok: false, error: 'Enter your order number and 10-digit mobile number.' };
-      var hit = rows_('Orders').filter(function (o) { return String(o.orderNo || '').replace(/\s+/g, '').toUpperCase() === on && String(o.phone || '').replace(/\D/g, '').slice(-10) === ph; });
-      if (!hit.length) return { ok: false, error: 'No order found with this order number and mobile number. Please check both, or message us on WhatsApp.' };
+      if (ph.length !== 10) return { ok: false, error: 'Enter your 10-digit mobile number.' };
+      var since = Utilities.formatDate(new Date(Date.now() - 120 * 864e5), TZ, 'yyyy-MM-dd'); // last ~4 months only
+      var hit = rows_('Orders').filter(function (o) { return String(o.phone || '').replace(/\D/g, '').slice(-10) === ph && String(o.date || '') >= since && (!on || String(o.orderNo || '').replace(/\s+/g, '').toUpperCase() === on); })
+        .sort(function (x, y) { return String(y.date) < String(x.date) ? -1 : String(y.date) > String(x.date) ? 1 : 0; }).slice(0, 10);
+      if (!hit.length) return { ok: false, error: 'No recent order found for this mobile number. Use the number you gave when ordering, or message us on WhatsApp.' };
       return { ok: true, orders: hit.map(function (o) { return { orderNo: o.orderNo, date: o.date, product: o.product, cod: o.payment === 'cod',
         designDone: !!o.designDoneAt, dispatched: o.dispatched === 'TRUE', dispatchedAt: String(o.dispatchedAt || '').slice(0, 10), courier: o.payment === 'cod' ? 'India Post' : (o.courier || ''), awb: o.awb || '', codStatus: o.codStatus || '' }; }) };
     }
@@ -694,6 +696,17 @@ function handle_(b) {
       if (cs && cs !== 'returned' && co.dispatched !== 'TRUE') { co.dispatched = 'TRUE'; co.dispatchedAt = co.dispatchedAt || n.date + ' ' + n.time; }
       ordersHeader_(); upsert_('Orders', co);
       return { ok: true, order: co };
+    }
+    case 'setTrack': { // Dispatch tab: courier + tracking no. for any order (prepaid or COD); a tracking no. marks it dispatched. Shown to customers on track.html
+      var tk = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
+      if (!tk) return { ok: false, error: 'Order not found' };
+      tk.awb = String(b.awb || '').replace(/\s+/g, '').toUpperCase();
+      tk.courier = tk.payment === 'cod' ? 'India Post' : String(b.courier || '').trim();
+      if (tk.awb && !tk.courier) return { ok: false, error: 'Pick the courier.' };
+      if (tk.awb && tk.dispatched !== 'TRUE') { tk.dispatched = 'TRUE'; tk.dispatchedAt = tk.dispatchedAt || n.date + ' ' + n.time; }
+      if (tk.awb && tk.payment === 'cod' && !tk.codStatus) tk.codStatus = 'shipped';
+      ordersHeader_(); upsert_('Orders', tk);
+      return { ok: true, order: tk };
     }
     case 'saveAtt': { var a = b.rec; a.key = a.date + '__' + a.staffId; var was = findRow_('Attendance', a.key); was = was ? JSON.parse(JSON.stringify(was)) : null;
       upsert_('Attendance', a); logEdit_(was ? 'Attendance changed' : 'Attendance added', a.staffId, a.date, attText_(was), attText_(a)); return { ok: true }; }
@@ -1459,7 +1472,7 @@ function arenaAdminAction_(b, n) {
 var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff', 'ai'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
-  allOrders: 'orders', leadMatch: 'orders', setCod: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
+  allOrders: 'orders', leadMatch: 'orders', setCod: 'orders', setTrack: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
   saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
   saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
   saveStaff: 'staff',

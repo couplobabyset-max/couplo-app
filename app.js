@@ -1158,6 +1158,21 @@ function viewWeek(){
     strip,kp,missP,nav);
 }
 
+/* Dispatch tab: courier + tracking no. for every order (prepaid too). Customers see it on track.html by their phone number.
+   COD always goes by India Post; prepaid picks the courier. Saving a tracking no. also marks the order dispatched. */
+const TRACK_COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
+function trackCell(o,onSent){
+  const cod=o.payment==='cod';
+  const cr=cod?el('span',{class:'hint',style:'margin:0;white-space:nowrap',text:'India Post'}):el('select',{'aria-label':'Courier '+(o.orderNo||'')},el('option',{value:'',text:'Courier…'}),...TRACK_COURIERS.map(c=>el('option',{value:c,text:c,selected:(o.courier||'')===c})));
+  const aw=el('input',{type:'text',value:o.awb||'',placeholder:'Tracking no.','aria-label':'Tracking '+(o.orderNo||''),style:'min-width:120px;text-transform:uppercase'});
+  pasteScan(aw);
+  const scb=el('button',{class:'btn',type:'button',text:'📷','aria-label':'Scan tracking '+(o.orderNo||''),onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})});
+  const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
+    const courier=cod?'India Post':cr.value;
+    if(aw.value.trim()&&!courier){toast('Pick the courier.');cr.focus();return}
+    sv.disabled=true;try{const j=await call('setTrack',{adminPin,id:o.id,courier,awb:aw.value});Object.assign(o,j.order||{});toast((o.orderNo||'Order')+(o.awb?' · tracking saved':' saved'));if(o.awb&&onSent)onSent()}
+    catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message)}sv.disabled=false}});
+  return el('div',{style:'display:flex;gap:6px;align-items:center'},cr,aw,scb,sv)}
 /* COD — only cash-on-delivery orders: courier, tracking no., shipped → delivered → cash received (or returned) */
 let codF={preset:'month',from:'',to:'',show:'open',q:''};
 const COD_ST=[['','Not shipped'],['shipped','Shipped'],['delivered','Delivered (cash pending)'],['paid','Cash received'],['returned','Returned (RTO)']];
@@ -1338,10 +1353,10 @@ function viewDashboard(onlyDisp){
       for(const o of rows){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE';ok++}catch(x){}}
       toast(ok+' marked dispatched');renderAdmin()}}):null;
     const tbl=rows.length?el('div',{class:'scroll'},el('table',{class:'disptbl'},
-      el('thead',{},el('tr',{},...['Dispatched','Date','No.','Customer','Phone','Staff','Product','District','Amount','Payment'].map(t=>el('th',{text:t})))),
+      el('thead',{},el('tr',{},...['Dispatched','Date','No.','Customer','Phone','Staff','Product','District','Amount','Payment','Courier · Tracking no.'].map(t=>el('th',{text:t})))),
       el('tbody',{},...rows.slice(0,400).map(o=>{const cb=el('input',{type:'checkbox',class:'bigcb','aria-label':'Dispatched '+(o.orderNo||'')});cb.checked=D.sent(o);
         const tr=el('tr',{class:D.sent(o)?'sent':''},el('td',{},el('label',{class:'cbwrap'},cb,el('span',{text:D.sent(o)?'Sent':'Tick'}))),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
-          el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}),el('td',{class:'mono',text:+o.amount?rs(+o.amount):'—'}),el('td',{style:o.payment==='cod'?'font-weight:700':'',text:payTxt(o)}));
+          el('td',{text:nm(o.staffId)}),el('td',{text:(o.product||'—')+(o.type==='affordable'?' (A)':'')}),el('td',{text:o.district||''}),el('td',{class:'mono',text:+o.amount?rs(+o.amount):'—'}),el('td',{style:o.payment==='cod'?'font-weight:700':'',text:payTxt(o)}),el('td',{},trackCell(o,()=>{cb.checked=true;tr.classList.add('sent');cb.nextSibling.textContent='Sent'})));
         cb.onchange=async()=>{cb.disabled=true;try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE';tr.classList.toggle('sent',cb.checked);cb.nextSibling.textContent=cb.checked?'Sent':'Tick';toast(cb.checked?(o.orderNo||'Order')+' dispatched':(o.orderNo||'Order')+' marked not sent')}catch(e){cb.checked=!cb.checked;toast('Could not save.')}cb.disabled=false};
         return tr})))):el('div',{class:'empty',text:F.show==='pending'?'Nothing left to dispatch here. ✓':'No orders match.'});
     dispList.replaceChildren(...[staffChips,showChips,el('div',{class:'row'},qI,tickAll),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Pick a staff or search to narrow.'}):null].filter(Boolean))};
@@ -1857,7 +1872,7 @@ const isPost=o=>/^[A-Z]{2}\d{9}IN$/i.test(String(o&&o.awb||'').trim())||/india\s
 function courierSite(o){if(isPost(o))return['India Post',IP_SITE];const c=String(o&&o.courier||'');const hit=COURIER_SITES.find(([re])=>re.test(c));return hit?[hit[1],hit[2]]:null}
 const t17=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
 const trackUrl=(awb,o)=>{const cs=o?courierSite(o):(/^[A-Z]{2}\d{9}IN$/i.test(String(awb||'').trim())?['India Post',IP_SITE]:null);return cs?cs[1]:t17(awb)};
-function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+(courierSite(o)?'\nTrack on '+courierSite(o)[0]+': '+courierSite(o)[1]+' (type the tracking no. in the Track box)':'\nTrack here: '+trackUrl(o.awb,o))+'\n\nThank you for choosing Couplo Design Studio 💜'}
+function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+(courierSite(o)?'\nTrack on '+courierSite(o)[0]+': '+courierSite(o)[1]+' (type the tracking no. in the Track box)':'\nTrack here: '+trackUrl(o.awb,o))+'\nOrder status anytime: https://couplobabyset-max.github.io/couplo-app/track.html'+'\n\nThank you for choosing Couplo Design Studio 💜'}
 function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
   return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb,o),target:'_blank',rel:'noopener',text:courierSite(o)?'Track ('+courierSite(o)[0]+')':'Track',onclick:()=>{const cs=courierSite(o);if(cs){try{navigator.clipboard.writeText(o.awb);toast(o.awb+' copied — paste it in the '+cs[0]+' Track box')}catch(e){}}}}),
     wa?el('a',{class:'btn',href:wa+'?text='+encodeURIComponent(trackMsg(o)),target:'_blank',rel:'noopener',text:'Send on WhatsApp'}):null,
