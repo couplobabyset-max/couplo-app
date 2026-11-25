@@ -50,6 +50,19 @@ tick();setInterval(tick,15000);
 let adminOpen=false, adminPin=null, view='home';
 /* staff who were given some admin tabs (Staff → Edit → Admin tabs) open them with their own PIN. mgrAccess=null means the owner (admin PIN, everything) */
 let mgrAccess=null;
+/* unlock requests from sales staff (owner only): shown as a banner on every admin tab, checked every minute */
+let unlockReqs={},unlockSeen=null,unlockTimer=null;
+function notifyAdmin(title,body){try{if(!('Notification' in window)||Notification.permission!=='granted')return;
+  if(navigator.serviceWorker&&navigator.serviceWorker.ready)navigator.serviceWorker.ready.then(r=>r.showNotification(title,{body,icon:'icons/icon-192.png',tag:'unlock'})).catch(()=>new Notification(title,{body}));else new Notification(title,{body})}catch(e){}}
+function pollUnlock(){if(unlockTimer||mgrAccess)return;unlockTimer=setInterval(async()=>{if(!adminOpen||mgrAccess||document.hidden)return;
+  try{const r=await call('unlockDates',{adminPin});const q=r.requests||{},fresh=Object.keys(q).filter(id=>!(id in unlockReqs));unlockReqs=q;
+    if(fresh.length){fresh.forEach(id=>{notifyAdmin('🔓 '+q[id].name+' asks to enter older orders',(q[id].note||'Tap to open the admin panel'));toast(q[id].name+' asks to unlock older dates')});renderAdmin()}}catch(e){}},60000)}
+function unlockBanner(){if(mgrAccess)return null;const ids=Object.keys(unlockReqs||{});if(!ids.length)return null;
+  const act=(id,reject)=>async e=>{e.target.disabled=true;try{const r=await call('unlockDates',{adminPin,staffId:id,reject});unlockReqs=r.requests||{};toast(reject?'Declined':unlockReqsName(id)+' unlocked for today');renderAdmin()}catch(x){toast(x.message);e.target.disabled=false}};
+  return el('div',{class:'panel',style:'border:2px solid #7b3fa0'},el('h3',{text:'🔓 Unlock requests · '+ids.length}),
+    ...ids.map(id=>{const q=unlockReqs[id];return el('div',{class:'staffrow'},el('div',{},el('div',{style:'font-weight:600',text:q.name+' wants to enter older orders'}),el('div',{class:'meta',text:'Asked at '+q.time+(q.note?' · '+q.note:'')})),
+      el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Approve for today',onclick:act(id,false)}),el('button',{class:'btn',type:'button',text:'Decline',onclick:act(id,true)})))}))}
+function unlockReqsName(id){const s=(staff||[]).find(x=>x.id===id);return s?s.name:id}
 /* Dispatch tab opens for anyone who has Orders (or Dispatch) — ticking dispatched is an Orders action on the server */
 const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily'||t==='cod'||t==='customers')&&(acc||[]).includes('orders'));
 const can=t=>!mgrAccess||(t!=='ads'&&hasTab(mgrAccess,t)); /* Ads (spend) is owner only */
@@ -211,7 +224,7 @@ async function loadMonth(m){
   adminMonth=m;
   if(salesDate&&salesDate.slice(0,7)!==m)salesDate=m+'-01';
   $('#admin').replaceChildren(el('div',{class:'empty',text:'Loading '+m+'…'}));
-  try{const j=await call('month',{adminPin,month:m});todayStr=j.today;staff=j.staff;if(j.products)products=j.products;if(j.tasks)tasks=j.tasks;adminWork=j.work||[];if(j.holidays)holidays=j.holidays;
+  try{const j=await call('month',{adminPin,month:m});todayStr=j.today;staff=j.staff;if(j.products)products=j.products;if(j.tasks)tasks=j.tasks;adminWork=j.work||[];if(j.holidays)holidays=j.holidays;unlockReqs=j.unlockReqs||{};pollUnlock();
     adminRecs={};j.att.forEach(r=>adminRecs[r.date+'__'+r.staffId]=r);
     adminSales={};const sx=k=>adminSales[k]=adminSales[k]||{leads:0,premium:0,affordable:0,amount:0};
     j.sales.forEach(r=>{const x=sx(r.date+'__'+r.staffId);x.leads=+r.leads||0;x.calls=+r.calls||0;x.answered=+r.answered||0;x.missed=+r.missed||0;x.called=+r.called||0});
@@ -275,6 +288,7 @@ function renderAdmin(){
   if(!can(adminView))adminView=(ADMIN_TABS.find(([v])=>can(v))||['orders'])[0];
   const back=null;
   const parts=[el('div',{class:'toolbar'},el('div',{class:'row'},adminView==='dash'||adminView==='customers'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),back,el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})),themeBtn())];
+  const ub=unlockBanner();if(ub)parts.push(ub);
   if(adminView==='dash')parts.push(...viewDashboard());
   else if(adminView==='arena')parts.push(...viewArena());
   else if(adminView==='reports')parts.push(...viewReports());
@@ -507,7 +521,8 @@ function viewStaff(){
   if(mgrAccess)return[staffPanel];
   const ul=el('div',{class:'panel'},el('h3',{text:'Allow older order dates'}),el('div',{class:'empty',text:'Loading…'}));
   const drawUl=r=>ul.replaceChildren(el('h3',{text:'Allow older order dates'}),
-    el('p',{class:'hint',text:'Sales staff can enter orders for today and yesterday only. Unlock lets one person also enter orders up to 4 days back — for today only. It closes by itself tomorrow.'}),
+    el('p',{class:'hint',text:'Sales staff can enter orders for today and yesterday only. Unlock lets one person also enter orders up to 4 days back — for today only. It closes by itself tomorrow. When staff tap "Ask admin", you get an e-mail with an Approve button, and a request box shows at the top of the admin panel.'}),
+    ('Notification' in window)&&Notification.permission!=='granted'?el('button',{class:'btn',type:'button',style:'margin-bottom:8px',text:'🔔 Turn on notifications on this phone',onclick:async()=>{try{const p=await Notification.requestPermission();toast(p==='granted'?'Notifications on (while the admin panel is open)':'Notifications blocked in the browser settings')}catch(e){toast('This browser cannot show notifications')}}}):'',
     ...all.filter(s=>r.unlocked&&s.id in r.unlocked).map(s=>{const on=r.unlocked[s.id];
       return el('div',{class:'staffrow'},el('div',{},el('div',{style:'font-weight:600',text:s.name}),el('div',{class:'meta',text:on?'Unlocked today':'Today + yesterday only'})),
         el('button',{class:'btn'+(on?'':' primary'),type:'button',text:on?'Lock again':'Unlock for today',onclick:async e=>{e.target.disabled=true;try{drawUl(await call('unlockDates',{adminPin,staffId:s.id,off:on}));toast(on?s.name+' locked':s.name+' can enter older orders today')}catch(x){toast(/Unknown action/i.test(x.message)?'Update the sheet script (Code.gs) first.':x.message);e.target.disabled=false}}}))}));
@@ -1756,7 +1771,10 @@ function myOrdersView(edit,d){
   const dLabel=(ds,i)=>(i===0?'Today':i===1?'Yesterday':i+' days ago')+' · '+ds.slice(8)+'/'+ds.slice(5,7);
   const odt=el('select',{id:'o-sdt','aria-label':'Order date'},...(lockD?[el('option',{value:edit.date,text:edit.date.slice(8)+'/'+edit.date.slice(5,7)})]:backDays.map((ds,i)=>el('option',{value:ds,selected:ds===(edit?edit.date:td),text:dLabel(ds,i)}))));
   if(lockD)odt.disabled=true;
-  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date (which day did the customer order?)',odt),el('p',{class:'hint',text:d.unlocked?'Admin has opened older dates for you today only (up to 4 days back).':'Enter every order the same day. Forgot one from yesterday? Pick Yesterday. Older than that — ask admin to unlock.'})):null;
+  const why=el('input',{id:'o-why',type:'text',placeholder:'Which orders / why late (optional)',autocomplete:'off',style:'flex:1;min-width:0'});
+  const ask=d.unlocked?null:d.unlockAsked?el('p',{class:'hint',style:'font-weight:600',text:'⏳ Asked admin to unlock older dates — waiting. Tap Refresh after admin approves.'})
+    :el('div',{class:'row',style:'flex-wrap:nowrap'},why,el('button',{class:'btn',type:'button',text:'🔓 Ask admin',onclick:async e=>{e.target.disabled=true;try{const j=await call('askUnlock',{staffId:me.id,pin:me.pin,note:why.value});toast(j.unlocked?'Already unlocked':'Sent to admin');ordersHome()}catch(x){toast(/Unknown action|Not a sales/i.test(x.message)?'Ask admin directly (app update pending).':x.message);e.target.disabled=false}}}));
+  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date (which day did the customer order?)',odt),el('p',{class:'hint',text:d.unlocked?'Admin has opened older dates for you today only (up to 4 days back).':'Enter every order the same day. Forgot one from yesterday? Pick Yesterday. Older than that — ask admin to unlock.'}),ask):null;
   const form=thisMonth?orderForm(edit,async data=>{
     const want=lockD?edit.date:(odt.value||td);data.date=want;
     let j;

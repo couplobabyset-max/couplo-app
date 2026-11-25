@@ -267,6 +267,9 @@ function remove_(name, key) {
 }
 function holidays_() { try { return JSON.parse(setting_('holidays') || '{}') || {}; } catch (e) { return {}; } }
 function setting_(k) { var r = rows_('Settings').filter(function (x) { return x.key === k; })[0]; return r ? r.value : ''; }
+/* unlock requests: a sales staff asks admin to open older order dates; admin gets an e-mail with a one-tap Approve link */
+function unlockReq_(id, n) { var v = setting_('unlockReq_' + id); if (!v) return null; try { var r = JSON.parse(v); return r.date === n.date ? r : null; } catch (e) { return null; } }
+function unlockReqs_(n) { var o = {}; staffList_().filter(function (s) { return s.sales; }).forEach(function (s) { var r = unlockReq_(s.id, n); if (r && !unlocked_(s.id, n)) o[s.id] = { name: s.name, time: r.time, note: r.note || '' }; }); return o; }
 function unlocked_(id, n) { return setting_('unlock_' + id) === n.date; } // admin unlock lasts only for the day it was given
 function bool_(v) { return String(v).toUpperCase() === 'TRUE'; }
 function staffList_() {
@@ -399,7 +402,22 @@ function now_() { var d = new Date(); return { date: Utilities.formatDate(d, TZ,
 function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 /* ---------- API ---------- */
-function doGet() { return out_({ ok: true, app: 'couplo-attendance' }); }
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (p.a === 'unlock') {
+    var lock = LockService.getScriptLock(); lock.waitLock(25000);
+    try {
+      var n = now_(), r = unlockReq_(p.s, n), s = staffList_().filter(function (x) { return x.id === p.s; })[0];
+      var msg;
+      if (!s) msg = 'Staff not found.';
+      else if (unlocked_(s.id, n)) msg = s.name + ' is already unlocked for today.';
+      else if (!r || !p.t || r.token !== p.t) msg = 'This link is old or already used. Open the admin panel to unlock.';
+      else { upsert_('Settings', { key: 'unlock_' + s.id, value: n.date }); upsert_('Settings', { key: 'unlockReq_' + s.id, value: '' }); msg = '✅ ' + s.name + ' can enter older orders (up to 4 days back) today. It locks again tomorrow.'; }
+      return HtmlService.createHtmlOutput('<div style="font-family:Arial,sans-serif;font-size:20px;padding:40px;text-align:center">' + msg + '</div>').setTitle('Couplo unlock');
+    } finally { lock.releaseLock(); }
+  }
+  return out_({ ok: true, app: 'couplo-attendance' });
+}
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
@@ -476,7 +494,7 @@ function handle_(b) {
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
         category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
-        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access, unlocked: unlocked_(p.id, n), myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
+        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access, unlocked: unlocked_(p.id, n), unlockAsked: !!unlockReq_(p.id, n), myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
     }
     case 'hrSaveLeads': { // HR staff type the daily lead count for each sales person (same rows the admin Leads tab saves)
       var hr = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
@@ -506,12 +524,25 @@ function handle_(b) {
     case 'salesStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.sales; })
         .map(function (s) { return { id: s.id, name: s.name, order: s.order, hasPin: !!s.pin }; }) };
-    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': {
+    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': {
       var me = staffList_().filter(function (x) { return x.id === b.staffId && x.sales; })[0];
       if (!me) return { ok: false, error: 'Not a sales staff' };
       if (me.pin && String(me.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
       var month = n.date.slice(0, 7);
       if (b.action === 'staffLogin') return { ok: true, name: me.name };
+      if (b.action === 'askUnlock') {
+        if (unlocked_(me.id, n)) return { ok: true, unlocked: true };
+        var prev = unlockReq_(me.id, n); if (prev) return { ok: true, asked: true, again: true };
+        var tok = Utilities.getUuid().replace(/-/g, '');
+        upsert_('Settings', { key: 'unlockReq_' + me.id, value: JSON.stringify({ date: n.date, time: n.time, token: tok, note: String(b.note || '').slice(0, 200) }) });
+        var to = setting_('reportEmail') || Session.getEffectiveUser().getEmail(), url = ScriptApp.getService().getUrl();
+        if (to) MailApp.sendEmail({ to: to, name: 'Couplo App', subject: '🔓 ' + me.name + ' asks to enter older orders',
+          htmlBody: '<div style="font-family:Arial,sans-serif;font-size:15px;color:#1c2630"><b>' + me.name + '</b> wants to enter orders older than yesterday (asked at ' + n.time + ').' +
+            (b.note ? '<br>Reason: <i>' + String(b.note).replace(/</g, '&lt;') + '</i>' : '') +
+            '<br><br><a href="' + url + '?a=unlock&s=' + encodeURIComponent(me.id) + '&t=' + tok + '" style="background:#7b3fa0;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:bold">Approve for today</a>' +
+            '<br><br><span style="color:#888;font-size:12px">Opens dates up to 4 days back for today only. Ignore this mail to say no.</span></div>' });
+        return { ok: true, asked: true };
+      }
       if (b.action === 'myOrders')
         return { ok: true, today: n.date, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id && o.date.indexOf(month) === 0; }) };
       var o = cleanOrder_(b.order);
@@ -569,7 +600,7 @@ function handle_(b) {
       var stf = staffList_();
       if (mgr) stf = stf.map(function (x) { var c = JSON.parse(JSON.stringify(x)); c.hasPin = !!c.pin; c.pin = ''; c.access = [];
         if (!can('salary')) c.salary = 0; return c; });
-      return { ok: true, today: n.date, staff: stf, products: productList_(), tasks: taskList_(), work: workRows_(m),
+      return { ok: true, today: n.date, unlockReqs: mgr ? {} : unlockReqs_(n), staff: stf, products: productList_(), tasks: taskList_(), work: workRows_(m),
         att: rows_('Attendance').filter(function (r) { return r.date.indexOf(m) === 0; }),
         sales: can('sales') ? rows_('Sales').filter(function (r) { return r.date.indexOf(m) === 0; }) : [],
         pay: can('salary') ? rows_('Pay').filter(function (r) { return r.month === m; }) : [],
@@ -605,9 +636,10 @@ function handle_(b) {
       od.dispatched = b.value ? 'TRUE' : 'FALSE'; od.dispatchedAt = b.value ? (od.dispatchedAt || n.date + ' ' + n.time) : ''; upsert_('Orders', od); return { ok: true };
     }
     case 'unlockDates': { // admin lets a sales staff enter older orders (up to 4 days back) — only for today
-      if (b.staffId) upsert_('Settings', { key: 'unlock_' + b.staffId, value: b.off ? '' : n.date });
+      if (b.staffId && !b.reject) upsert_('Settings', { key: 'unlock_' + b.staffId, value: b.off ? '' : n.date });
+      if (b.staffId) upsert_('Settings', { key: 'unlockReq_' + b.staffId, value: '' }); // request handled (approved, locked or declined)
       var st = {}; staffList_().filter(function (s) { return s.sales; }).forEach(function (s) { st[s.id] = unlocked_(s.id, n); });
-      return { ok: true, unlocked: st };
+      return { ok: true, unlocked: st, requests: unlockReqs_(n) };
     }
     case 'setCod': { // COD tab: courier, tracking no. and status (shipped → delivered → paid, or returned)
       var co = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
