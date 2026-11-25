@@ -189,7 +189,7 @@ function punchSheet(s,pin){
   /* late / early is checked on the phone, so there is no extra trip to the sheet */
   const go=(btn)=>{btn.disabled=true;const t=hm(new Date());
     if((!r||!r.in)&&toMin(t)>toMin(kCfg.lateAfter)){reasonSheet(s,'late',t,null,send);return}
-    if(r&&r.in&&!r.out&&toMin(t)-toMin(r.in)<kCfg.minHours*60){reasonSheet(s,'early',t,r.in,send);return}
+    if(r&&r.in&&!r.out&&toMin(t)-toMin(r.in)<(Number(s.hours)||kCfg.minHours)*60){reasonSheet(s,'early',t,r.in,send);return}
     send('')};
   let label;
   if(!r||!r.in)label='IN  ·  '+t12(now);
@@ -208,7 +208,7 @@ function reasonSheet(s,kind,time,inTime,send){
     try{await send(r)}catch(e){closeOv();toast('Could not save. Check the internet and try again.')}};
   const worked=inTime?Math.max(0,toMin(time)-inMin(inTime,ymd(new Date()))):0;
   openOv(el('h2',{text:s.name}),
-    el('p',{text:late?('You are coming in at '+t12(time)+'. Why are you late?'):('You came at '+t12(inTime)+' and worked '+fmtMin(worked)+' (less than '+kCfg.minHours+' hours). Why are you leaving early?')}),
+    el('p',{text:late?('You are coming in at '+t12(time)+'. Why are you late?'):('You came at '+t12(inTime)+' and worked '+fmtMin(worked)+' (less than '+(Number(s.hours)||kCfg.minHours)+' hours). Why are you leaving early?')}),
     txt,ok,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv}));
   setTimeout(()=>txt.focus(),50);
 }
@@ -249,7 +249,9 @@ const payStaff=()=>staff.filter(s=>s.active!==false||s.sales).sort(byOrder);
 function ordersOn(ds,sid){const x=adminSales[ds+'__'+sid];return x?x.premium+x.affordable:0}
 /* overtime (admin only): time worked beyond the office minimum hours (Settings → minHours, default 8). Under 15 min is ignored. */
 let adminMinH=8;
-function otMin(r){if(!r||r.status==='leave'||r.status==='wfh'||(r.date||'')<OT_FROM)return 0;const a=inMin(r.in,r.date),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-adminMinH*60;return x>=15?x:0}
+function otMin(r){if(!r||r.status==='leave'||r.status==='wfh'||(r.date||'')<OT_FROM)return 0;const a=inMin(r.in,r.date),b=toMin(r.out);if(a==null||b==null)return 0;const x=b-a-hoursOf(r.staffId)*60;return x>=15?x:0}
+/* hours a day for one person (Admin → Staff → Edit), else the office rule */
+function hoursOf(id){const p=(typeof staff!=='undefined'&&staff||[]).find(x=>x.id===id);return (p&&Number(p.hours)>0)?Number(p.hours):adminMinH}
 function cellInfo(r){
   if(!r)return null;
   if(r.status==='leave')return{txt:'LEAVE',cls:'leave'};
@@ -520,7 +522,7 @@ function viewStaff(){
   const all=[...staff].sort(byOrder);
   const staffPanel=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Staff'}),el('button',{class:'btn',type:'button',text:'+ Add staff',onclick:()=>editStaff(null)})),
     all.length?el('div',{},...all.map(s=>el('div',{class:'staffrow'},
-      el('div',{},el('div',{style:'font-weight:600',text:s.name+(s.active===false?' (not on check-in)':'')}),el('div',{class:'meta',text:['ID: '+s.id,catOf(s),can('salary')?(s.salary?rs(s.salary)+'/month':'No salary set'):null,((s.pin||s.hasPin)?'PIN set':'No PIN'),!mgrAccess&&(s.access||[]).length?'Admin tabs: '+s.access.map(a=>(ADMIN_TABS.find(t=>t[0]===a)||[a,a])[1]).join(', '):null,(s.email||'No email')].filter(Boolean).join(' · ')})),
+      el('div',{},el('div',{style:'font-weight:600',text:s.name+(s.active===false?' (not on check-in)':'')}),el('div',{class:'meta',text:['ID: '+s.id,catOf(s),Number(s.hours)>0?s.hours+' h a day':null,can('salary')?(s.salary?rs(s.salary)+'/month':'No salary set'):null,((s.pin||s.hasPin)?'PIN set':'No PIN'),!mgrAccess&&(s.access||[]).length?'Admin tabs: '+s.access.map(a=>(ADMIN_TABS.find(t=>t[0]===a)||[a,a])[1]).join(', '):null,(s.email||'No email')].filter(Boolean).join(' · ')})),
       el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>editStaff(s)})))):el('div',{class:'empty',text:'No staff yet.'}));
   const setPanel=el('div',{class:'panel'},el('h3',{text:'Settings'}),
     el('p',{class:'hint',text:'The office phone opens the normal link and shows only check-in. Add #admin to the end of the link on the owner\'s or HR\'s phone to see these tabs. Everything is saved in your Google Sheet.'}),
@@ -581,6 +583,7 @@ function editStaff(s){
   const sal=el('input',{id:'s-sal',type:'number',min:'0',value:s?.salary||'',placeholder:'e.g. 9000'});
   const em=el('input',{id:'s-em',type:'email',value:s?.email||'',placeholder:'name@gmail.com'});
   const pn=el('input',{id:'s-pn',type:'text',inputmode:'numeric',maxlength:'4',value:s?.pin||'',placeholder:'4 digits'});
+  const hrs=el('input',{id:'s-hr',type:'number',min:'1',max:'16',step:'0.5',inputmode:'decimal',value:s&&Number(s.hours)>0?s.hours:'',placeholder:'Office rule'});
   const od=el('input',{id:'s-od',type:'number',value:s?.order??'',placeholder:'1, 2, 3…'});
   /* one person can have more than one category (e.g. Media + Add-ons). Regular = attendance only, so it stands alone */
   const cur=s?catsOf(s):['Office'];
@@ -599,10 +602,10 @@ function editStaff(s){
     const pin=pn.value.trim();if(pin&&!/^\d{4}$/.test(pin)){toast('PIN must be exactly 4 digits.');return}
     const id=s?.id||name.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+Date.now().toString(36).slice(-4);
     const access=mgrAccess?(s?.access||[]):aBoxes.map(l=>l.firstChild).filter(b=>b.checked).map(b=>b.value);
-    try{await call('saveStaff',{adminPin,staff:{id,name,role:cats.join(','),salary:Number(sal.value)||0,pin,order:od.value===''?null:Number(od.value),sales:cats.includes('Sales'),active:ac.value==='1',email:em.value.trim(),access}});closeOv();toast('Saved '+name);reload()}catch(e){toast('Could not save: '+e.message)}};
+    try{await call('saveStaff',{adminPin,staff:{id,name,role:cats.join(','),salary:Number(sal.value)||0,pin,order:od.value===''?null:Number(od.value),sales:cats.includes('Sales'),active:ac.value==='1',email:em.value.trim(),access,...(mgrAccess?{}:{hours:hrs.value===''?0:Number(hrs.value)})}});closeOv();toast('Saved '+name);reload()}catch(e){toast('Could not save: '+e.message)}};
   openOv(el('h2',{text:s?'Edit staff':'Add staff'}),el('label',{class:'f',for:'s-nm'},'Name',nm),can('salary')?el('label',{class:'f',for:'s-sal'},'Monthly salary (₹)',sal):null,el('label',{class:'f',for:'s-em'},'Email (for salary slips)',em),
     mgrAccess?el('p',{class:'hint',text:s?((s.hasPin||s.pin)?'PIN is set. Only the owner can reset a PIN.':'No PIN yet: the staff makes their own PIN at first login.'):'The new staff makes their own PIN at first login.'}):el('label',{class:'f',for:'s-pn'},'PIN (4 digits). Leave empty so the staff can create their own PIN',pn),
-    el('div',{class:'f'},el('span',{},'Category (tick one or more)'),sl),el('label',{class:'f',for:'s-od'},'Order on screen',od),el('label',{class:'f',for:'s-ac'},'Check-in',ac),accBox,
+    el('div',{class:'f'},el('span',{},'Category (tick one or more)'),sl),mgrAccess?null:el('label',{class:'f',for:'s-hr'},'Work hours a day (from 9:30 AM). Empty = office rule. e.g. 9.5 = till 7:00 PM',hrs),el('label',{class:'f',for:'s-od'},'Order on screen',od),el('label',{class:'f',for:'s-ac'},'Check-in',ac),accBox,
     el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}),s&&!mgrAccess?delStaffBtn(s):null,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv})));
 }
 /* Delete: staff with no saved data go straight away; staff with data get a second screen (hide instead, or delete everything) */

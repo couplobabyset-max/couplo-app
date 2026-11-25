@@ -273,11 +273,23 @@ function unlockReqs_(n) { var o = {}; staffList_().filter(function (s) { return 
 function unlocked_(id, n) { return setting_('unlock_' + id) === n.date; } // admin unlock lasts only for the day it was given
 function bool_(v) { return String(v).toUpperCase() === 'TRUE'; }
 function staffList_() {
+  var hm = staffHours_();
   return rows_('Staff').map(function (s) {
     return { id: s.id, name: s.name, role: s.role, salary: Number(s.salary) || 0, pin: s.pin,
              sales: bool_(s.sales), active: s.active === '' ? true : bool_(s.active), order: s.order === '' ? null : Number(s.order), email: s.email || '',
-             access: String(s.access || '').split(',').map(function (x) { return x.trim(); }).filter(String) };
+             access: String(s.access || '').split(',').map(function (x) { return x.trim(); }).filter(String), hours: Number(hm[s.id]) || 0 };
   });
+}
+/* hours a day for one person when it differs from the office rule (Settings → staffHours = {"staffId": 9.5}). 0 = office rule */
+function staffHours_() { try { return JSON.parse(setting_('staffHours') || '{}') || {}; } catch (e) { return {}; } }
+function minHoursOf_(s) { return (s && Number(s.hours) > 0) ? Number(s.hours) : Number(setting_('minHours') || 8); }
+/* Salman works 9:30 AM – 7:00 PM = 9.5 hours (Nov 2026). Runs once; later changes are made in Admin → Staff → Edit */
+function hoursSetup_() {
+  if (setting_('hoursVersion') === '1') return;
+  var h = staffHours_();
+  rows_('Staff').forEach(function (r) { if (String(r.name).trim().toLowerCase().indexOf('salman') === 0 && !h[r.id]) h[r.id] = 9.5; });
+  upsert_('Settings', { key: 'staffHours', value: JSON.stringify(h) });
+  upsert_('Settings', { key: 'hoursVersion', value: '1' });
 }
 /* Printing = printing production, Add-ons = bows / socks / boots…, HR = enters daily leads for sales staff, Regular = does every kind of work (attendance only, no work list) */
 var CATS = ['Sales', 'Office', 'Media', 'Printing', 'Add-ons', 'HR', 'Design', 'Accounts', 'Regular'];
@@ -453,6 +465,7 @@ function handle_(b) {
   accessSetup_();
   aiSetup_();
   reasonSetup_();
+  hoursSetup_();
   var n = now_();
   switch (b.action) {
     case 'kiosk': {
@@ -460,7 +473,7 @@ function handle_(b) {
       rowsTail_('Attendance', 400).forEach(function (r) { if (r.date === n.date) att[r.staffId] = r; });
       return { ok: true, today: n.date, time: n.time, lateAfter: setting_('lateAfter') || '09:40', minHours: Number(setting_('minHours') || 8),
         staff: staffList_().filter(function (s) { return s.active; })
-          .map(function (s) { return { id: s.id, name: s.name, role: s.role, order: s.order, hasPin: !!s.pin }; }),
+          .map(function (s) { return { id: s.id, name: s.name, role: s.role, order: s.order, hasPin: !!s.pin, hours: s.hours }; }),
         att: att };
     }
     case 'punch': {
@@ -478,7 +491,7 @@ function handle_(b) {
       } else if (rec.out) {
         return { ok: false, error: 'OUT already marked at ' + rec.out + '. Only admin can change it.' };
       } else {
-        if (toMin(n.time) - toMin(rec.in) < Number(setting_('minHours') || 8) * 60 && !reason) return { ok: false, needReason: 'early', time: n.time, in: rec.in };
+        if (toMin(n.time) - toMin(rec.in) < minHoursOf_(s) * 60 && !reason) return { ok: false, needReason: 'early', time: n.time, in: rec.in, minHours: minHoursOf_(s) };
         rec.out = n.time; rec.earlyReason = reason; kind = 'out';
       }
       upsert_('Attendance', rec);
@@ -520,7 +533,7 @@ function handle_(b) {
       if (b.action === 'portalLogin') return { ok: true, staffId: p.id, name: p.name, sales: p.sales, access: p.access };
       var myCats = cats_(p.role, p.sales), myCat = myCats.join(' + ');
       var mm = /^\d{4}-\d{2}$/.test(String(b.month)) ? String(b.month) : n.date.slice(0, 7);
-      return { ok: true, today: n.date, month: mm, name: p.name, sales: p.sales, products: productList_().filter(function (x) { return x.active; }), lateAfter: setting_('lateAfter') || '09:40', minHours: Number(setting_('minHours') || 8),
+      return { ok: true, today: n.date, month: mm, name: p.name, sales: p.sales, products: productList_().filter(function (x) { return x.active; }), lateAfter: setting_('lateAfter') || '09:40', minHours: minHoursOf_(p),
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
         category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
@@ -713,6 +726,11 @@ function handle_(b) {
       upsert_('Staff', { id: st.id, name: st.name, role: cats_(st.role, st.sales).join(','), salary: st.salary, pin: st.pin || '',
         sales: st.sales ? 'TRUE' : 'FALSE', active: st.active ? 'TRUE' : 'FALSE', order: st.order == null ? '' : st.order,
         email: String(st.email || '').trim(), access: acc.join(',') });
+      if (!mgr && st.hours !== undefined) { // owner only: this person's hours a day (empty = office rule)
+        var hh = staffHours_(), hv = Number(st.hours) || 0;
+        if (hv > 0 && hv <= 16) hh[st.id] = hv; else delete hh[st.id];
+        upsert_('Settings', { key: 'staffHours', value: JSON.stringify(hh) }); forget_('Staff');
+      }
       if (mgr) logEdit_('Staff changed by ' + mgr.name, st.id, n.date, prev ? prev.name : 'new', st.name);
       return { ok: true };
     }
@@ -1652,7 +1670,7 @@ function aiContext_(mgr, can, n) {
   staff.forEach(function (s) { nm[s.id] = s.name; });
   var parts = [];
   parts.push('TODAY: ' + n.date + ' ' + n.time + ' (India time). Office hours 10:00–17:30, check-in 9:00–9:30, late after ' + (setting_('lateAfter') || '09:40') + '. Sundays are holidays.');
-  parts.push('STAFF (id, name, categories, active):\n' + aiCsv_(['id', 'name', 'categories', 'active'], staff.map(function (s) { return [s.id, s.name, cats_(s.role, s.sales).join('+'), s.active ? 'yes' : 'no']; })));
+  parts.push('STAFF (id, name, categories, active, hours a day — work starts 9:30 AM, e.g. 9.5 h = till 7:00 PM):\n' + aiCsv_(['id', 'name', 'categories', 'active', 'hours_a_day'], staff.map(function (s) { return [s.id, s.name, cats_(s.role, s.sales).join('+'), s.active ? 'yes' : 'no', minHoursOf_(s)]; })));
   var hol = holidays_(); if (Object.keys(hol).length) parts.push('OFFICE HOLIDAYS: ' + JSON.stringify(hol));
   parts.push('PRODUCTS:\n' + aiCsv_(['name', 'type', 'active'], productList_().map(function (p) { return [p.name, p.type, p.active ? 'yes' : 'no']; })));
 
