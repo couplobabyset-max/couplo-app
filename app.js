@@ -1662,13 +1662,17 @@ function myDayView(d){
     box.replaceChildren(el('div',{style:'font:600 18px var(--f-display);margin:2px 0',text:hi[0]}),todayCard,leadsP,monthMsg,chartP,tbl,ringRow);
   }catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load'}))}})();
   return[box]}
+/* Design / printing staff: their order queue on its own tab (Start → Design done → Dispatched) */
+function myDesignView(){
+  const box=el('div',{},el('div',{class:'empty',text:'Loading orders…'}));
+  const load=async()=>{try{const d=await call('arenaMe',{staffId:me.id,pin:me.pin,period:arenaPeriod});
+    box.replaceChildren(...(d.queue?arenaQueue(d,load):[el('div',{class:'empty',text:'No orders.'})]),arenaIssueForm(d,load))}catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load orders'}))}};
+  load();return[box]}
 function myArenaView(){
   const box=el('div',{},el('div',{class:'empty',text:'Loading Arena…'}));
   const load=async()=>{try{const d=await call('arenaMe',{staffId:me.id,pin:me.pin,period:arenaPeriod});const A=d.arena;
     const parts=[periodSeg(load),arenaMine(A,d.me),arenaTeam(A)];
     if(d.media)parts.push(...arenaMedia(d,load));
-    if(d.queue)parts.push(...arenaQueue(d,load));
-    if(d.cats.includes('Design')||d.cats.includes('Printing'))parts.push(arenaIssueForm(d,load));
     if(d.accounts)parts.push(...arenaAccounts(d,load));
     parts.push(arenaBoardList(A,d.me,false));
     box.replaceChildren(...parts)}catch(e){box.replaceChildren(el('div',{class:'empty',text:e.message||'Cannot load Arena'}))}};
@@ -1727,13 +1731,14 @@ async function ordersHome(edit){
     el('div',{class:'row'},el('select',{id:'pm','aria-label':'Month',onchange:e=>{portalMonth=e.target.value;ordersHome()}},...opts),el('button',{class:'btn',type:'button',text:'Change PIN',onclick:changeMyPin}),el('button',{class:'btn',type:'button',text:'Log out',onclick:portalOut})));
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
-  const tabList=(me.sales?[['day','⭐ My day']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
-  if(portalTab==='auto')portalTab=me.sales?'day':myTasks.length?'work':'att';
+  const isProd=/Design|Printing/.test(d.category||'');
+  const tabList=(isProd?[['design',/Design/.test(d.category)?'🎨 Design work':'🖨️ Printing work']]:[]).concat(me.sales?[['day','⭐ My day']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
+  if(portalTab==='auto')portalTab=isProd?'design':me.sales?'day':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
   me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>hasTab(d.access,v));
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})),
     ...given.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>openMgr(d.access,v)})));
-  const body=portalTab==='day'?myDayView(d):portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
+  const body=portalTab==='design'?myDesignView():portalTab==='day'?myDayView(d):portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
   box.replaceChildren(head,warn,tabs,...body);
 }
