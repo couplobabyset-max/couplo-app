@@ -1150,7 +1150,7 @@ function viewCod(){
     stat(rs(sum(pendCash)),'Cash still to come',pendCash.length+' orders')),
     !all.length?el('p',{class:'hint',text:'Orders show here once staff pick "COD" in the order form.'}):null);
   /* courier-wise money still to come */
-  const cg={};pendCash.forEach(o=>{const k=o.courier||'(no courier yet)';cg[k]=cg[k]||{n:0,a:0};cg[k].n++;cg[k].a+=amt(o)});
+  const cg={};pendCash.forEach(o=>{const k=courOf(o);cg[k]=cg[k]||{n:0,a:0};cg[k].n++;cg[k].a+=amt(o)});
   const courP=Object.keys(cg).length?el('div',{class:'panel'},el('h3',{text:'Cash to collect, by courier'}),el('div',{class:'scroll'},el('table',{},
     el('thead',{},el('tr',{},...['Courier','Orders','Amount'].map(t=>el('th',{text:t})))),
     el('tbody',{},...Object.entries(cg).sort((a,b)=>b[1].a-a[1].a).map(([k,v])=>el('tr',{},el('td',{text:k}),el('td',{class:'mono',text:String(v.n)}),el('td',{class:'mono',text:rs(v.a)}))))))):null;
@@ -1165,20 +1165,20 @@ function viewCod(){
     const chips=el('div',{class:'fchips'},chip('open','All open'),chip('','Not shipped'),chip('shipped','On the way'),chip('delivered','Cash pending'),chip('paid','Cash received'),chip('returned','Returned'),chip('all','All'));
     const qI=el('input',{id:'cod-q',type:'search',placeholder:'Search order no, customer, phone, tracking…',value:codF.q,oninput:e=>{codF.q=e.target.value;clearTimeout(draw._t);draw._t=setTimeout(()=>{draw();const i=$('#cod-q');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},250)}});
     const xl=el('button',{class:'btn',type:'button',text:'Download Excel ('+rows.length+')',disabled:!rows.length,onclick:()=>{
-      const aoa=[['DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','QTY','COD AMOUNT','STAFF','COURIER','TRACKING NO','STATUS']].concat(rows.map(o=>[o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',+o.qty||1,amt(o),nm(o.staffId),o.courier||'',o.awb||'',(COD_ST.find(x=>x[0]===codSt(o))||['',''])[1]]));
+      const aoa=[['DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','QTY','COD AMOUNT','STAFF','COURIER','TRACKING NO','STATUS']].concat(rows.map(o=>[o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',+o.qty||1,amt(o),nm(o.staffId),COD_COURIER,o.awb||'',(COD_ST.find(x=>x[0]===codSt(o))||['',''])[1]]));
       const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(()=>({wch:16}));XLSX.utils.book_append_sheet(wb,ws,'COD');
       saveFile('COUPLO_COD_'+R0.f+'_to_'+R0.t+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT)}});
     const tbl=rows.length?el('div',{class:'scroll'},el('table',{class:'disptbl'},
       el('thead',{},el('tr',{},...['Date','No.','Customer','Phone','Place','Staff','Amount','Courier','Tracking no.','Status',''].map(t=>el('th',{text:t})))),
       el('tbody',{},...rows.slice(0,400).map(o=>{
-        const cr=el('input',{type:'text',value:o.courier||'',placeholder:'Courier',list:'dl-cour','aria-label':'Courier '+(o.orderNo||''),style:'min-width:110px'});
+        const cr=el('input',{type:'text',value:COD_COURIER,readonly:true,title:'COD orders always go by India Post','aria-label':'Courier '+(o.orderNo||''),style:'min-width:110px;background:#f3f0f7'});
         const aw=el('input',{type:'text',value:o.awb||'',placeholder:'Tracking no.','aria-label':'Tracking '+(o.orderNo||''),style:'min-width:120px;text-transform:uppercase'});
         pasteScan(aw);
         const scb=el('button',{class:'btn',type:'button',text:'📷','aria-label':'Scan tracking '+(o.orderNo||''),onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})});
         const st=el('select',{'aria-label':'Status '+(o.orderNo||'')},...COD_ST.map(([v,t])=>el('option',{value:v,text:t,selected:codSt(o)===v})));
         const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
           if(st.value&&st.value!=='returned'&&!cr.value.trim()){toast('Type the courier name.');cr.focus();return}
-          sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:st.value,courier:cr.value,awb:aw.value});Object.assign(o,j.order||{codStatus:st.value,courier:cr.value.trim(),awb:aw.value.trim().toUpperCase()});toast((o.orderNo||'Order')+' saved');draw()}
+          sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:st.value,courier:COD_COURIER,awb:aw.value});Object.assign(o,j.order||{codStatus:st.value,courier:COD_COURIER,awb:aw.value.trim().toUpperCase()});toast((o.orderNo||'Order')+' saved');draw()}
           catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);sv.disabled=false}}});
         return el('tr',{class:codSt(o)==='paid'?'sent':''},el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
           el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
@@ -1186,7 +1186,7 @@ function viewCod(){
     const cours=[...new Set(COURIERS.concat(all.map(o=>o.courier).filter(Boolean)))];
     box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
-  const list=el('div',{class:'panel'},el('h3',{text:'COD orders'}),el('p',{class:'hint',text:'Type the courier and tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
+  const list=el('div',{class:'panel'},el('h3',{text:'COD orders'}),el('p',{class:'hint',text:'All COD orders go by India Post (set automatically). Type or scan the tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
   return[head,kpis,courP,list].filter(Boolean);
 }
 /* Daily sold — which products were sold on a day and by whom (for Mashida's daily count; admin sees it too) */
@@ -1783,6 +1783,9 @@ function productReport(src,m,showPrinted){
 }
 /* ---------- courier tracking: Track opens 17TRACK (covers Speed and Safe, ST Courier, DTDC, India Post) with the number filled in ---------- */
 const COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
+/* All COD orders go by India Post — courier is fixed for them */
+const COD_COURIER='India Post';
+const courOf=o=>o&&o.payment==='cod'?COD_COURIER:((o&&o.courier)||'');
 const trackUrl=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
 function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+'\nTrack here: '+trackUrl(o.awb)+'\n\nThank you for choosing Couplo Design Studio 💜'}
 function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
@@ -1838,7 +1841,7 @@ function quickTrack(){
   const ai=el('input',{id:'qt-a',type:'text',placeholder:'Scan or type tracking no., then Enter',autocomplete:'off',disabled:true,style:'text-transform:uppercase'});pasteScan(ai);
   const info=el('div',{class:'hint',text:'Click the order box, then scan or type. Ctrl+V pastes a receipt photo into the tracking box.'});
   const doneT=el('tbody',{});let cur=null,n=0;
-  const pick=o=>{cur=o;info.replaceChildren(el('b',{text:(o.orderNo||'')+' · '+(o.customer||'')+' · '+(o.phone||'')}),' · '+(o.product||'')+' · '+(o.district||'')+(o.awb?' · already has '+o.awb+' (will be replaced)':''));ai.disabled=false;ai.value='';ai.focus()};
+  const pick=o=>{cur=o;info.replaceChildren(el('b',{text:(o.orderNo||'')+' · '+(o.customer||'')+' · '+(o.phone||'')}),' · '+(o.product||'')+' · '+(o.district||'')+(o.payment==='cod'?' · COD → India Post':'')+(o.awb?' · already has '+o.awb+' (will be replaced)':''));ai.disabled=false;ai.value='';ai.focus()};
   oi.onkeydown=e=>{if(e.key!=='Enter')return;e.preventDefault();const q=norm(oi.value);if(!q)return;const all=pool();
     let hits=all.filter(o=>norm(o.orderNo)===q);if(!hits.length&&q.length>=7&&/^\d+$/.test(q))hits=all.filter(o=>norm(o.phone).slice(-10)===q.slice(-10));
     if(!hits.length&&q.length>=3)hits=all.filter(o=>norm(o.orderNo).includes(q));
@@ -1846,15 +1849,15 @@ function quickTrack(){
     if(!hits.length){info.textContent='No order found for "'+oi.value+'".'+(allOrdersCache?'':' (Older orders are still loading — try again in a moment.)');cur=null;ai.disabled=true;return}
     if(hits.length===1){pick(hits[0]);return}
     cur=null;ai.disabled=true;info.replaceChildren('Several orders match — pick one: ',...hits.slice(0,8).map(o=>el('button',{class:'btn',type:'button',style:'margin:4px',text:(o.orderNo||'')+' · '+dm(o.date)+' · '+(o.customer||'')+(o.awb?' ✓':''),onclick:()=>pick(o)})))};
-  const save=async()=>{const awb=awbFrom(ai.value);if(!cur||!awb)return;ai.disabled=true;
-    try{const j=await call('setCod',{adminPin,id:cur.id,codStatus:cur.codStatus||'',courier:cr.value,awb});Object.assign(cur,j.order||{courier:cr.value,awb});
+  const save=async()=>{const awb=awbFrom(ai.value);if(!cur||!awb)return;ai.disabled=true;const cv=cur.payment==='cod'?COD_COURIER:cr.value;
+    try{const j=await call('setCod',{adminPin,id:cur.id,codStatus:cur.codStatus||'',courier:cv,awb});Object.assign(cur,j.order||{courier:cv,awb});
       if(cur.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:cur.id,value:true});cur.dispatched='TRUE'}catch(e){}}
-      n++;doneT.prepend(el('tr',{},el('td',{class:'mono',text:cur.orderNo||''}),el('td',{text:cur.customer||''}),el('td',{text:cr.value}),el('td',{class:'mono',text:awb}),el('td',{},trackBtns(cur))));
+      n++;doneT.prepend(el('tr',{},el('td',{class:'mono',text:cur.orderNo||''}),el('td',{text:cur.customer||''}),el('td',{text:cv}),el('td',{class:'mono',text:awb}),el('td',{},trackBtns(cur))));
       cnt.textContent='Saved this session: '+n;toast((cur.orderNo||'Order')+' saved');cur=null;oi.value='';ai.value='';info.textContent='Next order…';oi.focus()}
     catch(e){toast('Could not save: '+e.message);ai.disabled=false;ai.focus()}};
   ai.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();save()}};
   const cnt=el('b',{text:'Saved this session: 0'});
-  openOv(el('h3',{text:'Quick tracking'}),el('label',{class:'f',for:'qt-c'},'Courier (stays the same until you change it)',cr),
+  openOv(el('h3',{text:'Quick tracking'}),el('label',{class:'f',for:'qt-c'},'Courier (stays the same until you change it — COD orders always go by India Post)',cr),
     el('label',{class:'f',for:'qt-o'},'1. Order',oi),info,
     el('label',{class:'f',for:'qt-a'},'2. Tracking number',el('div',{class:'row',style:'flex-wrap:nowrap'},ai,photoBtn(t=>{ai.value=t;if(cur)save()}),el('button',{class:'btn',type:'button',text:'📷',onclick:()=>scanCode(t=>{ai.value=t;if(cur)save()})}),el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}))),
     cnt,el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['No.','Customer','Courier','Tracking',''].map(h=>el('th',{text:h})))),doneT)),
@@ -1863,7 +1866,8 @@ function quickTrack(){
 }
 function trackSheet(o){
   const known=[...new Set(COURIERS.concat((allOrdersCache||adminOrders||[]).map(x=>x.courier).filter(Boolean)))];
-  const cr=el('select',{id:'tk-c'},el('option',{value:'',text:'Pick courier'}),...known.map(c=>el('option',{value:c,text:c,selected:o.courier===c})));
+  const isCod=o.payment==='cod';
+  const cr=el('select',{id:'tk-c',disabled:isCod},el('option',{value:'',text:'Pick courier'}),...known.map(c=>el('option',{value:c,text:c,selected:courOf(o)===c})));
   const aw=el('input',{id:'tk-a',type:'text',value:o.awb||'',placeholder:'Tracking / AWB no.',style:'text-transform:uppercase',autocomplete:'off'});pasteScan(aw);
   const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
     if(!cr.value){toast('Pick the courier.');return}if(!aw.value.trim()){toast('Type the tracking number.');aw.focus();return}
@@ -1871,7 +1875,7 @@ function trackSheet(o){
       if(o.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE'}catch(e){}}
       closeOv();toast('Tracking saved');renderAdmin()}catch(e){toast('Could not save: '+e.message);sv.disabled=false}}});
   openOv(el('h3',{text:'Tracking · '+(o.orderNo||'')+' · '+(o.customer||'')}),
-    el('label',{class:'f',for:'tk-c'},'Courier',cr),el('label',{class:'f',for:'tk-a'},'Tracking number',el('div',{class:'row',style:'flex-wrap:nowrap'},aw,
+    el('label',{class:'f',for:'tk-c'},isCod?'Courier (COD — always India Post)':'Courier',cr),el('label',{class:'f',for:'tk-a'},'Tracking number',el('div',{class:'row',style:'flex-wrap:nowrap'},aw,
       el('button',{class:'btn primary',type:'button',text:'📷 Scan',onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})}),photoBtn(t=>{aw.value=t}))),
     el('p',{class:'hint',text:'On a computer: use a USB barcode scanner (click the box, scan), pick a photo of the receipt, or copy a photo and press Ctrl+V in the box.'}),
     el('p',{class:'hint',text:'Saving also ticks the order as dispatched. Then use Track to see where it is, or Send on WhatsApp to give the customer the tracking link.'}),
@@ -1911,7 +1915,7 @@ function viewOrders(){
     el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Pay','Sent','Tracking',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...rows.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched'});cb.checked=o.dispatched==='TRUE';cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE'}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
       return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{text:payTxt(o)}),el('td',{},cb),
-        el('td',{},o.awb?el('div',{},el('div',{class:'hint',style:'font-size:12px',text:(o.courier||'')+' · '+o.awb}),trackBtns(o)):null,el('button',{class:'btn',type:'button',text:o.awb?'Change':'Add tracking',onclick:()=>trackSheet(o)})),
+        el('td',{},o.awb?el('div',{},el('div',{class:'hint',style:'font-size:12px',text:courOf(o)+' · '+o.awb}),trackBtns(o)):null,el('button',{class:'btn',type:'button',text:o.awb?'Change':'Add tracking',onclick:()=>trackSheet(o)})),
         el('td',{},el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>adminOrderSheet(o)})))})))),
     rows.length>300?el('p',{class:'hint',text:'Showing the newest 300. Use search to find older ones.'}):null);
   return[filters,summary,productReport(src,m,orderScope==='month'),el('div',{class:'split'},top('Best products',group(o=>o.product?pkey(o.product)+(o.type==='affordable'?' (A)':' (P)'):'',orderLines(src)),'Product'),top('Top districts',group(o=>o.district),'District')),el('div',{class:'split'},top('Top pincodes',group(o=>o.pincode),'Pincode'),top('By staff',group(o=>(staff.find(s=>s.id===o.staffId)||{}).name||o.staffId),'Staff')),rep,list];
