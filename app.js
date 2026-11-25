@@ -505,6 +505,13 @@ function viewStaff(){
       el('button',{class:'btn',type:'button',text:'Change sheet link',onclick:askServer}),
       el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})));
   if(mgrAccess)return[staffPanel];
+  const ul=el('div',{class:'panel'},el('h3',{text:'Allow older order dates'}),el('div',{class:'empty',text:'Loading…'}));
+  const drawUl=r=>ul.replaceChildren(el('h3',{text:'Allow older order dates'}),
+    el('p',{class:'hint',text:'Sales staff can enter orders for today and yesterday only. Unlock lets one person also enter orders up to 4 days back — for today only. It closes by itself tomorrow.'}),
+    ...all.filter(s=>r.unlocked&&s.id in r.unlocked).map(s=>{const on=r.unlocked[s.id];
+      return el('div',{class:'staffrow'},el('div',{},el('div',{style:'font-weight:600',text:s.name}),el('div',{class:'meta',text:on?'Unlocked today':'Today + yesterday only'})),
+        el('button',{class:'btn'+(on?'':' primary'),type:'button',text:on?'Lock again':'Unlock for today',onclick:async e=>{e.target.disabled=true;try{drawUl(await call('unlockDates',{adminPin,staffId:s.id,off:on}));toast(on?s.name+' locked':s.name+' can enter older orders today')}catch(x){toast(/Unknown action/i.test(x.message)?'Update the sheet script (Code.gs) first.':x.message);e.target.disabled=false}}}))}));
+  call('unlockDates',{adminPin}).then(drawUl).catch(e=>ul.replaceChildren(el('h3',{text:'Allow older order dates'}),el('p',{class:'hint',text:/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not load.'})));
   const rp=el('div',{class:'panel'},el('h3',{text:'Daily report & office rules'}),el('div',{class:'empty',text:'Loading…'}));
   call('reportSettings',{adminPin}).then(r=>{
     const on=el('select',{id:'r-on'},el('option',{value:'1',text:'On, send every day',selected:r.on}),el('option',{value:'0',text:'Off',selected:!r.on}));
@@ -522,7 +529,7 @@ function viewStaff(){
         el('label',{class:'f',for:'r-la'},'Late after',la),el('label',{class:'f',for:'r-mh'},'Minimum hours (early-leave reason)',mh)),
       el('div',{class:'row'},save,now));
   }).catch(e=>rp.replaceChildren(el('h3',{text:'Daily report & office rules'}),el('div',{class:'empty',text:'Update Code.gs in Apps Script to use this. ('+e.message+')'})));
-  return[el('div',{class:'split'},staffPanel,setPanel),rp];
+  return[el('div',{class:'split'},staffPanel,setPanel),ul,rp];
 }
 function changeAdminPin(){let first=null;
   const ask=()=>pinSheet({title:first?'Repeat new PIN':'New admin PIN',onDone:async v=>{
@@ -1743,13 +1750,13 @@ function myOrdersView(edit,d){
   const sum=a=>a.reduce((t,o)=>t+(+o.amount||0),0);
   const thisMonth=d.month===ymOf(new Date());
   const info=el('p',{class:'hint',text:'Today: '+today.length+' orders · '+rs(sum(today))+'  ·  '+MON[+d.month.slice(5)-1]+': '+myOrders.length+' orders · '+rs(sum(myOrders))});
-  /* order date: today, yesterday, or up to 3 days back — a simple dropdown so it works the same on every phone */
-  const backDays=[0,1,2,3].map(i=>addDays(td,-i)), minD=backDays[3];
+  /* order date: today or yesterday; when admin unlocks dates for today, up to 4 days back */
+  const backDays=(d.unlocked?[0,1,2,3,4]:[0,1]).map(i=>addDays(td,-i)), minD=backDays[backDays.length-1];
   const lockD=!!(edit&&edit.date<minD);
   const dLabel=(ds,i)=>(i===0?'Today':i===1?'Yesterday':i+' days ago')+' · '+ds.slice(8)+'/'+ds.slice(5,7);
   const odt=el('select',{id:'o-sdt','aria-label':'Order date'},...(lockD?[el('option',{value:edit.date,text:edit.date.slice(8)+'/'+edit.date.slice(5,7)})]:backDays.map((ds,i)=>el('option',{value:ds,selected:ds===(edit?edit.date:td),text:dLabel(ds,i)}))));
   if(lockD)odt.disabled=true;
-  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date (which day did the customer order?)',odt),el('p',{class:'hint',text:'Forgot to enter yesterday\'s order? Pick Yesterday here before saving. Older than 3 days — ask HR.'})):null;
+  const dateBox=thisMonth?el('div',{class:'panel'},el('label',{class:'f',for:'o-sdt'},'Order date (which day did the customer order?)',odt),el('p',{class:'hint',text:d.unlocked?'Admin has opened older dates for you today only (up to 4 days back).':'Enter every order the same day. Forgot one from yesterday? Pick Yesterday. Older than that — ask admin to unlock.'})):null;
   const form=thisMonth?orderForm(edit,async data=>{
     const want=lockD?edit.date:(odt.value||td);data.date=want;
     let j;

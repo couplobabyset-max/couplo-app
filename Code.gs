@@ -267,6 +267,7 @@ function remove_(name, key) {
 }
 function holidays_() { try { return JSON.parse(setting_('holidays') || '{}') || {}; } catch (e) { return {}; } }
 function setting_(k) { var r = rows_('Settings').filter(function (x) { return x.key === k; })[0]; return r ? r.value : ''; }
+function unlocked_(id, n) { return setting_('unlock_' + id) === n.date; } // admin unlock lasts only for the day it was given
 function bool_(v) { return String(v).toUpperCase() === 'TRUE'; }
 function staffList_() {
   return rows_('Staff').map(function (s) {
@@ -475,7 +476,7 @@ function handle_(b) {
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
         category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
-        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access, myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
+        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access, unlocked: unlocked_(p.id, n), myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
     }
     case 'hrSaveLeads': { // HR staff type the daily lead count for each sales person (same rows the admin Leads tab saves)
       var hr = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
@@ -515,10 +516,11 @@ function handle_(b) {
         return { ok: true, today: n.date, orders: rows_('Orders').filter(function (o) { return o.staffId === me.id && o.date.indexOf(month) === 0; }) };
       var o = cleanOrder_(b.order);
       if (!o.phone && !o.customer) return { ok: false, error: 'Enter customer name or phone' };
-      // staff may pick today or the last 3 days as the order date; anything else falls back to today
-      var oldestOd = Utilities.formatDate(new Date(new Date().getTime() - 3 * 864e5), TZ, 'yyyy-MM-dd');
+      // staff may pick today or yesterday as the order date; when admin unlocks them for today, 3 more days back
+      var oldestOd = ad_(n.date, unlocked_(me.id, n) ? -4 : -1);
       var pickD = String(b.order.date || '');
       var okD = /^\d{4}-\d{2}-\d{2}$/.test(pickD) && pickD <= n.date && pickD >= oldestOd;
+      if (pickD && !okD && b.action === 'addOrder') return { ok: false, error: 'Orders older than yesterday need admin to unlock dates for you today.' };
       if (b.action === 'addOrder') {
         var od = okD ? pickD : n.date;
         var mine = rows_('Orders').filter(function (x) { return x.staffId === me.id && x.date === od; }).length;
@@ -601,6 +603,11 @@ function handle_(b) {
       var od = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
       if (!od) return { ok: false, error: 'Order not found' };
       od.dispatched = b.value ? 'TRUE' : 'FALSE'; od.dispatchedAt = b.value ? (od.dispatchedAt || n.date + ' ' + n.time) : ''; upsert_('Orders', od); return { ok: true };
+    }
+    case 'unlockDates': { // admin lets a sales staff enter older orders (up to 4 days back) — only for today
+      if (b.staffId) upsert_('Settings', { key: 'unlock_' + b.staffId, value: b.off ? '' : n.date });
+      var st = {}; staffList_().filter(function (s) { return s.sales; }).forEach(function (s) { st[s.id] = unlocked_(s.id, n); });
+      return { ok: true, unlocked: st };
     }
     case 'setCod': { // COD tab: courier, tracking no. and status (shipped → delivered → paid, or returned)
       var co = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
