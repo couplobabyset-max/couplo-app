@@ -2366,9 +2366,6 @@ function boot(){
 window.addEventListener('hashchange',()=>{if(location.hash==='#admin'){history.replaceState(null,'',location.pathname);goHome('admin')}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&view==='kiosk'&&API)loadKiosk()});
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).catch(()=>{});
-boot();
-})();
-
 /* ---- AI Assistant (Nov 2026): ask questions about the app's data. Server: aiAsk in Code.gs (Google Gemini). ----
    The chat stays while you move between tabs; it clears on log out. Read only — it never changes data. */
 let aiChat=[],aiBusy=false;
@@ -2402,3 +2399,5 @@ function viewAi(){
     el('p',{class:'hint',text:'Ask in Malayalam, Manglish or English. It reads the last 60 days of orders'+(can('register')?', attendance':'')+(can('work')?', work':'')+(can('sales')?', leads':'')+(!mgrAccess?', ad spend':'')+' and monthly totals. It cannot change anything. Customer names and phone numbers are not sent to the AI.'}),
     aiChat.length?null:chips,log,ta,
     el('div',{class:'row',style:'margin-top:8px'},sendB,aiChat.length?el('button',{class:'btn',type:'button',text:'New chat',onclick:()=>{aiChat=[];renderAdmin()}}):null))]}
+boot();
+})();
