@@ -112,6 +112,18 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);font-weight:500}
 input,select{font:500 15px var(--f-body);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
 .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+/* big tables: scroll inside their own box both ways — header row and first column stay put; ‹ › buttons and mouse drag scroll sideways */
+.tbx{position:relative}
+.tbx .scroll{max-height:70vh;overflow:auto;overscroll-behavior:contain;cursor:grab}
+.tbx .scroll.drag{cursor:grabbing;user-select:none}
+.tbx thead th{z-index:2}
+.tbx tbody th,.tbx thead th:first-child{position:sticky;left:0;background:var(--surface);z-index:1;box-shadow:1px 0 0 var(--line)}
+.tbx thead th:first-child{background:var(--sunk);z-index:3}
+.tbx tbody tr:hover th,.tbx tbody tr:hover td{background:var(--accent-soft)}
+.tbx .sbtn{position:absolute;top:50%;transform:translateY(-50%);z-index:4;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--accent);font-size:22px;line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15);display:none}
+.tbx .sbtn.l{left:6px}.tbx .sbtn.r{right:6px}
+.tbx.can-l .sbtn.l,.tbx.can-r .sbtn.r{display:block}
+.tbx .tbxhint{font-size:12px;color:var(--muted);margin:4px 2px 0}
 table{border-collapse:collapse;font-size:13px;min-width:100%}
 th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
 thead th{position:sticky;top:0;background:var(--sunk);font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}

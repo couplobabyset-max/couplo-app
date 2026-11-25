@@ -1158,6 +1158,22 @@ function viewWeek(){
     strip,kp,missP,nav);
 }
 
+/* A wide table in its own box: scrolls up/down and sideways inside the box (not the whole page).
+   Header row and first column stay visible; ‹ › buttons appear when there is more to the side; drag with the mouse to scroll. */
+function scrollBox(table){
+  const sc=el('div',{class:'scroll'},table);
+  const L=el('button',{type:'button',class:'sbtn l','aria-label':'Scroll left',text:'‹',onclick:()=>sc.scrollBy({left:-sc.clientWidth*.7,behavior:'smooth'})});
+  const R=el('button',{type:'button',class:'sbtn r','aria-label':'Scroll right',text:'›',onclick:()=>sc.scrollBy({left:sc.clientWidth*.7,behavior:'smooth'})});
+  const box=el('div',{class:'tbx'},sc,L,R);
+  const upd=()=>{box.classList.toggle('can-l',sc.scrollLeft>4);box.classList.toggle('can-r',sc.scrollLeft+sc.clientWidth<sc.scrollWidth-4)};
+  sc.addEventListener('scroll',upd,{passive:true});
+  try{new ResizeObserver(upd).observe(sc)}catch(e){}setTimeout(upd,0);
+  let d=null,moved=false;
+  sc.addEventListener('pointerdown',e=>{if(e.pointerType!=='mouse'||e.button!==0)return;d={x:e.clientX,y:e.clientY,l:sc.scrollLeft,t:sc.scrollTop};moved=false});
+  window.addEventListener('pointermove',e=>{if(!d)return;const dx=e.clientX-d.x,dy=e.clientY-d.y;if(!moved&&Math.abs(dx)+Math.abs(dy)<6)return;moved=true;sc.classList.add('drag');sc.scrollLeft=d.l-dx;sc.scrollTop=d.t-dy});
+  window.addEventListener('pointerup',()=>{if(!d)return;d=null;setTimeout(()=>sc.classList.remove('drag'),0)});
+  sc.addEventListener('click',e=>{if(moved){e.stopPropagation();e.preventDefault();moved=false}},true); // a drag is not a tap on a row
+  return box}
 /* Dispatch tab: courier + tracking no. for every order (prepaid too). Customers see it on track.html by their phone number.
    COD always goes by India Post; prepaid picks the courier. Saving a tracking no. also marks the order dispatched. */
 const TRACK_COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
@@ -2300,7 +2316,7 @@ function viewCustomers(){
     el('tbody',{},...rows.map(r=>el('tr',{},...r.map((c,i)=>i?el('td',{class:typeof c==='number'?'mono':'',text:String(c)}):el('th',{text:String(c)})))))));
   const shown=R.list.slice(0,cu.show);
   const listP=el('div',{class:'panel'},el('h3',{text:'Customer list ('+R.list.length+')'}),
-    R.list.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
+    R.list.length?scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
       el('tbody',{},...shown.map(c=>el('tr',{style:'cursor:pointer',onclick:()=>custSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone||''}),el('td',{text:c.district||''}),
         el('td',{text:c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):(leadCache?'—':'…')}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
       el('div',{class:'empty',text:'No customers for these dates and filters.'}),
