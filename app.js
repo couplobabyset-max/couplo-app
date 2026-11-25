@@ -1512,9 +1512,16 @@ function arenaQueue(d,reload){
   const q=(d.queue||[]).slice().sort((a,b)=>a.date.localeCompare(b.date));
   const rowOf=(o,btn)=>el('tr',{},el('td',{},btn),el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{text:(o.customer||'')}),el('td',{text:nm(o.staffId)}));
   const tbl=(rows,head)=>rows.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...[head,'Date','No.','Product','Customer','Sales'].map(t=>el('th',{text:t})))),el('tbody',{},...rows))):el('div',{class:'empty',text:'Nothing pending 🎉'});
-  if(d.cats.includes('Design')){const todo=q.filter(o=>!o.designDoneAt);
-    out.push(el('div',{class:'panel'},el('h3',{text:'🎨 Design pending · '+todo.length}),el('p',{class:'hint',text:'Tap Design done when the design is handed to printing. Design the same day or next day; late design = −5.'}),
-      tbl(todo.map(o=>rowOf(o,el('button',{class:'btn primary',type:'button',text:'Design done',onclick:async e=>{e.target.disabled=true;try{await call('designDone',{staffId:me.id,pin:me.pin,orderId:o.id});toast(o.orderNo+' sent to printing');reload()}catch(x){toast(x.message);e.target.disabled=false}}}))),'')))}
+  if(d.cats.includes('Design')){const todo=q.filter(o=>!o.designDoneAt),notStarted=todo.filter(o=>!o.designStartAt);
+    const hm=t=>String(t||'').slice(11,16);
+    const startBtn=ids=>async e=>{e.target.disabled=true;try{await call('designStart',{staffId:me.id,pin:me.pin,orderIds:ids});toast(ids.length>1?ids.length+' orders started':'Design started');reload()}catch(x){toast(/Unknown action/i.test(x.message)?'Update the sheet script (Code.gs) first.':x.message);e.target.disabled=false}};
+    const doneBtn=o=>el('button',{class:'btn primary',type:'button',text:'Design done',onclick:async e=>{e.target.disabled=true;try{await call('designDone',{staffId:me.id,pin:me.pin,orderId:o.id});toast(o.orderNo+' sent to printing');reload()}catch(x){toast(x.message);e.target.disabled=false}}});
+    const cell=o=>o.designStartAt?el('div',{style:'display:flex;gap:6px;align-items:center;white-space:nowrap'},el('span',{class:'chip in',text:'Started '+hm(o.designStartAt)}),doneBtn(o))
+      :el('button',{class:'btn',type:'button',text:'▶ Start',onclick:startBtn([o.id])});
+    out.push(el('div',{class:'panel'},el('h3',{text:'🎨 Design pending · '+todo.length}),
+      el('p',{class:'hint',text:'Work only from this list. Tap ▶ Start when you actually begin a design, and Design done when it goes to printing. Design the same day or next day; late design = −5.'}),
+      notStarted.length>1?el('button',{class:'btn',type:'button',style:'margin-bottom:8px',text:'▶ Start all '+notStarted.length,onclick:startBtn(notStarted.map(o=>o.id))}):null,
+      tbl(todo.map(o=>rowOf(o,cell(o))),'')))}
   if(d.cats.includes('Printing')){const ready=q.filter(o=>o.designDoneAt),waiting=q.filter(o=>!o.designDoneAt).length;
     out.push(el('div',{class:'panel'},el('h3',{text:'🖨️ Ready to print / dispatch · '+ready.length}),el('p',{class:'hint',text:waiting+' more orders are still with design. Dispatch on the day the design arrives = +2 each.'}),
       tbl(ready.map(o=>rowOf(o,el('button',{class:'btn primary',type:'button',text:'Dispatched',onclick:async e=>{e.target.disabled=true;try{await call('dispatchDone',{staffId:me.id,pin:me.pin,orderId:o.id});toast(o.orderNo+' dispatched');reload()}catch(x){toast(x.message);e.target.disabled=false}}}))),'')))}

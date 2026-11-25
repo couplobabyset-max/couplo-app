@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','designStartAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -1084,6 +1084,7 @@ function arenaSetup_() {
 /* when an order is edited, keep the design / dispatch times it already had */
 function keepStages_(o, old, n) {
   o.designDoneAt = old ? (old.designDoneAt || '') : '';
+  o.designStartAt = old ? (old.designStartAt || '') : '';
   var was = old ? old.dispatchedAt || '' : '';
   o.dispatchedAt = o.dispatched === 'TRUE' ? (was || n.date + ' ' + n.time) : '';
   /* COD tracking (COD tab) is never wiped by an order edit */
@@ -1227,7 +1228,7 @@ function arenaBoard_(day, today, period) {
 
 /* actions any logged-in staff can do (staffId + PIN) */
 function arenaStaffAction_(b, n) {
-  var A = { arenaMe: 1, mediaAdd: 1, mediaLink: 1, designDone: 1, dispatchDone: 1, issueAdd: 1, happySave: 1, accountsSave: 1 };
+  var A = { arenaMe: 1, mediaAdd: 1, mediaLink: 1, designStart: 1, designDone: 1, dispatchDone: 1, issueAdd: 1, happySave: 1, accountsSave: 1 };
   if (!A[b.action]) return null;
   var me = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
   if (!me) return { ok: false, error: 'Staff not found' };
@@ -1242,7 +1243,7 @@ function arenaStaffAction_(b, n) {
       if (can('Media')) out.media = rows_('Media').filter(function (m) { return m.staffId === me.id && m.date >= recent; }).reverse();
       if (can('Design') || can('Printing')) {
         out.queue = rows_('Orders').filter(function (o) { return o.date >= recent && o.dispatched !== 'TRUE'; })
-          .map(function (o) { return { id: o.id, orderNo: o.orderNo, date: o.date, staffId: o.staffId, customer: o.customer, product: o.product, type: o.type, designDoneAt: o.designDoneAt || '' }; });
+          .map(function (o) { return { id: o.id, orderNo: o.orderNo, date: o.date, staffId: o.staffId, customer: o.customer, product: o.product, type: o.type, designStartAt: o.designStartAt || '', designDoneAt: o.designDoneAt || '' }; });
       }
       if (can('Printing') || can('Design')) out.issues = rows_('Issues').filter(function (x) { return x.date >= recent; }).reverse();
       if (can('Accounts')) {
@@ -1267,10 +1268,20 @@ function arenaStaffAction_(b, n) {
       if (link && !/^https?:\/\/(www\.)?instagram\.com\//i.test(link)) return { ok: false, error: 'Paste the Instagram post link' };
       mi.igLink = link; if (mi.status === 'reedit') mi.status = 'pending'; upsert_('Media', mi); return { ok: true, item: mi };
     }
+    case 'designStart': { // Hiba taps Start when she actually begins the design (true start time, not the WhatsApp list time)
+      if (!can('Design')) return { ok: false, error: 'Only design staff' };
+      ordersHeader_();
+      var ids = [].concat(b.orderIds || b.orderId || []), done = [];
+      rows_('Orders').filter(function (x) { return ids.indexOf(x.id) >= 0; }).forEach(function (x) {
+        x.designStartAt = b.undo ? '' : (x.designStartAt || stamp); upsert_('Orders', x); done.push(x);
+      });
+      if (!done.length) return { ok: false, error: 'Order not found' };
+      return { ok: true, orders: done };
+    }
     case 'designDone': {
       if (!can('Design')) return { ok: false, error: 'Only design staff' };
       var o = order(); if (!o) return { ok: false, error: 'Order not found' };
-      o.designDoneAt = b.undo ? '' : (o.designDoneAt || stamp); upsert_('Orders', o); return { ok: true, order: o };
+      ordersHeader_(); o.designDoneAt = b.undo ? '' : (o.designDoneAt || stamp); upsert_('Orders', o); return { ok: true, order: o };
     }
     case 'dispatchDone': {
       if (!can('Printing')) return { ok: false, error: 'Only printing staff' };
