@@ -134,6 +134,11 @@ input,select{font:500 15px var(--f-body);padding:10px 12px;border-radius:10px;bo
 .ccard .who small{display:block;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ccard .ic{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);text-decoration:none;font-size:18px}
 .form1{display:grid;grid-template-columns:1fr;gap:10px}
+/* customer with no first-message date: name cell / card stands out */
+tr.miss>th:first-child{background:#FDECC8 !important;color:#7A4A00;box-shadow:inset 4px 0 0 #E3A21A,1px 0 0 var(--line)}
+tr.miss>th:first-child::after{content:" ⚠";font-size:12px}
+.ccard.miss{background:#FFF7E6;border-color:#E3A21A;box-shadow:inset 4px 0 0 #E3A21A}
+.fchip.warnchip{border-color:#E3A21A;color:#7A4A00}.fchip.warnchip.on{background:#E3A21A;color:#fff}
 table{border-collapse:collapse;font-size:13px;min-width:100%}
 th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
 thead th{position:sticky;top:0;background:var(--sunk);font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}

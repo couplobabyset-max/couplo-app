@@ -1853,7 +1853,7 @@ function myOrdersView(edit,d){
 
 /* Sales staff: their own customers only (built from their own orders, all time). Tap a customer to call / WhatsApp,
    see their orders, or fix name / phone / district / pincode — the fix goes to all of this staff's orders for that customer. */
-let myCustQ='';
+let myCustQ='',myCustMiss=false;
 function myCustomersView(){
   const box=el('div',{class:'panel'},el('h3',{text:'My customers'}),el('div',{class:'empty',text:'Loading your customers…'}));
   (async()=>{
@@ -1865,19 +1865,22 @@ function myCustomersView(){
       .sort((a,b)=>b.last.localeCompare(a.last));
     const rep=list.filter(c=>c.n>1).length;
     const tb=el('tbody',{}),cnt=el('span',{class:'hint',style:'margin:0'}),cards=el('div',{class:'ccards'}),phone=matchMedia('(max-width:640px)').matches;
-    const draw=()=>{const q=myCustQ.trim().toUpperCase();const rows=list.filter(c=>!q||[c.name,c.phone,c.district,c.pincode,...c.os.map(o=>o.orderNo)].some(v=>String(v||'').toUpperCase().includes(q)));
+    const draw=()=>{const q=myCustQ.trim().toUpperCase();const rows=list.filter(c=>(!myCustMiss||!c.fm)&&(!q||[c.name,c.phone,c.district,c.pincode,...c.os.map(o=>o.orderNo)].some(v=>String(v||'').toUpperCase().includes(q))));
       cnt.textContent=rows.length+' of '+list.length;
-      if(phone){cards.replaceChildren(...rows.slice(0,300).map(c=>{const wa=waLink(c.phone);return el('div',{class:'ccard',onclick:()=>myCustSheet(c)},
+      if(phone){cards.replaceChildren(...rows.slice(0,300).map(c=>{const wa=waLink(c.phone);return el('div',{class:'ccard'+(c.fm?'':' miss'),onclick:()=>myCustSheet(c)},
         el('div',{class:'who'},el('b',{text:c.name+(c.n>1?' ⟳':'')}),el('small',{text:[c.phone,c.district].filter(Boolean).join(' · ')}),el('small',{text:c.n+' order'+(c.n>1?'s':'')+' · '+(c.amt?rs(c.amt):'—')+' · last '+dm(c.last)+'/'+c.last.slice(2,4)}),el('small',{style:c.fm?'':'color:var(--warn);font-weight:600',text:c.fm?'First message '+dm(c.fm[0])+'/'+c.fm[0].slice(2,4):'⚠ First message date missing'})),
         c.phone?el('a',{class:'ic',href:'tel:'+String(c.phone).replace(/[^\d+]/g,''),'aria-label':'Call '+c.name,text:'📞',onclick:e=>e.stopPropagation()}):null,
         wa?el('a',{class:'ic',href:wa,target:'_blank',rel:'noopener','aria-label':'WhatsApp '+c.name,text:'💬',onclick:e=>e.stopPropagation()}):null)}));return}
-      tb.replaceChildren(...rows.slice(0,300).map(c=>el('tr',{style:'cursor:pointer',onclick:()=>myCustSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone}),el('td',{text:c.district}),el('td',{class:'mono',text:c.pincode}),
+      tb.replaceChildren(...rows.slice(0,300).map(c=>el('tr',{class:c.fm?'':'miss',style:'cursor:pointer',onclick:()=>myCustSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone}),el('td',{text:c.district}),el('td',{class:'mono',text:c.pincode}),
         el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{style:c.fm?'':'color:var(--warn);font-weight:600',text:c.fm?dm(c.fm[0])+'/'+c.fm[0].slice(2,4):'Missing'}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}))))};
     const qI=el('input',{id:'mc-q',type:'search',placeholder:'Search name, phone, place, order no…',value:myCustQ,oninput:e=>{myCustQ=e.target.value;draw()}});
-    draw();
+    const chA=el('button',{type:'button',class:'fchip',text:'All ('+list.length+')'}),chM=el('button',{type:'button',class:'fchip warnchip',text:'⚠ First message missing ('+list.filter(c=>!c.fm).length+')'});
+    const setMiss=v=>{myCustMiss=v;chA.classList.toggle('on',!v);chM.classList.toggle('on',v);draw()};chA.onclick=()=>setMiss(false);chM.onclick=()=>setMiss(true);
+    setMiss(myCustMiss);
     box.replaceChildren(el('div',{class:'toolbar'},el('h3',{text:'My customers ('+list.length+')'}),cnt),
       el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(list.length)}),el('span',{text:'Customers'})),el('div',{},el('b',{class:'mono',text:String(rep)}),el('span',{text:'Repeat ⟳'})),el('div',{},el('b',{class:'mono',text:String(j.orders.length)}),el('span',{text:'Orders'}))),
       qI,
+      el('div',{class:'fchips'},chA,chM),
       !list.length?el('div',{class:'empty',text:'No customers yet.'}):phone?cards:scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','Pincode','Orders','Total','First message','First order','Last order'].map(h=>el('th',{text:h})))),tb)),
       el('p',{class:'hint',text:'Only your own customers. Tap a customer to call, WhatsApp, see their orders or fix their details. ⟳ = ordered more than once.'}))})();
   return[box]}
@@ -2378,7 +2381,7 @@ function viewCustomers(){
       el('button',{class:'btn',type:'button',text:'📊 Excel',title:'This list (with your filters) as an Excel sheet',onclick:()=>custListXlsx(R)}),
       el('button',{class:'btn',type:'button',text:'📄 PDF',title:'This list (with your filters) as a PDF',onclick:()=>custListPdf(R)})):null),
     R.list.length?scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
-      el('tbody',{},...shown.map(c=>el('tr',{style:'cursor:pointer',onclick:()=>custSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone||''}),el('td',{text:c.district||''}),
+      el('tbody',{},...shown.map(c=>el('tr',{class:leadCache&&!c.lead1&&String(c.phone||'').replace(/\D/g,'').length>=7?'miss':'',style:'cursor:pointer',onclick:()=>custSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone||''}),el('td',{text:c.district||''}),
         fmCell(c),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
       el('div',{class:'empty',text:'No customers for these dates and filters.'}),
     R.list.length>cu.show?el('button',{class:'btn',type:'button',text:'Show more ('+(R.list.length-cu.show)+' left)',onclick:()=>{cu.show+=200;renderAdmin()}}):null,
