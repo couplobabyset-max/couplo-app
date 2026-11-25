@@ -318,6 +318,22 @@ function cleanWorkValue_(kind, v) {
   }
   return v === '' || v == null || isNaN(Number(v)) ? '' : String(Number(v));
 }
+/* reasons for a reprint / damaged product (Nov 2026) — also used by the app's Report form */
+var ISSUE_REASONS = ['Print mistake', 'Wrong name / spelling', 'Wrong design or colour', 'Wrong size', 'Fabric defect', 'Washing / ironing damage', 'Stitching problem', 'Customer changed order', 'Courier / transit damage', 'Other'];
+/* daily work: if REPRINT or DAMAGE is filled, REPRINT / DAMAGE REASON must be filled too. Returns an error text or '' */
+function workReasonError_(items) {
+  var v = {}; (items || []).forEach(function (it) { v[it.taskId] = it.value; });
+  var reprint = String(v['reprint'] == null ? '' : v['reprint']).trim(), damage = Number(v['damage']) || 0;
+  if (!(reprint || damage > 0) || !('reprint-reason' in v) && !taskList_().some(function (t) { return t.id === 'reprint-reason' && t.active; })) return '';
+  return String(v['reprint-reason'] == null ? '' : v['reprint-reason']).trim().length < 3 ? 'Write the reason for the reprint / damage (which order and why)' : '';
+}
+function reasonSetup_() {
+  if (setting_('reasonVersion') === '1') return;
+  var tl = taskList_(), dmg = tl.filter(function (t) { return t.id === 'damage'; })[0];
+  if (!tl.some(function (t) { return t.id === 'reprint-reason'; }))
+    upsert_('Tasks', { id: 'reprint-reason', category: dmg ? dmg.category : 'Printing', name: 'REPRINT / DAMAGE REASON', kind: 'text', order: dmg ? Number(dmg.order) + 0.5 : 99, active: 'TRUE', options: '' });
+  upsert_('Settings', { key: 'reasonVersion', value: '1' });
+}
 function saveWork_(staffId, date, items, n) {
   var tasks = {}; taskList_().forEach(function (t) { tasks[t.id] = t; });
   (items || []).forEach(function (it) {
@@ -438,6 +454,7 @@ function handle_(b) {
   arenaSetup_();
   accessSetup_();
   aiSetup_();
+  reasonSetup_();
   var n = now_();
   switch (b.action) {
     case 'kiosk': {
@@ -533,6 +550,7 @@ function handle_(b) {
       var wd = String(b.date || '');
       var oldest = Utilities.formatDate(new Date(new Date().getTime() - 3 * 864e5), TZ, 'yyyy-MM-dd');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(wd) || wd > n.date || wd < oldest) return { ok: false, error: 'You can only fill today or the last 3 days. Ask HR for older days.' };
+      var we = workReasonError_(b.items); if (we) return { ok: false, error: we };
       saveWork_(w.id, wd, b.items, n);
       return { ok: true, work: workRows_(wd.slice(0, 7), w.id) };
     }
@@ -721,7 +739,7 @@ function handle_(b) {
         name: nm, type: ty, price: Number(pr.price) || '', active: pr.active === false ? 'FALSE' : 'TRUE', order: pr.order == null || pr.order === '' ? 999 : Number(pr.order) });
       return { ok: true, products: productList_() };
     }
-    case 'saveWork': saveWork_(b.staffId, b.date, b.items, n); return { ok: true, work: workRows_(String(b.date).slice(0, 7)) };
+    case 'saveWork': { var we2 = workReasonError_(b.items); if (we2) return { ok: false, error: we2 }; } saveWork_(b.staffId, b.date, b.items, n); return { ok: true, work: workRows_(String(b.date).slice(0, 7)) };
     case 'saveTask': {
       var tt = b.task || {}, tn = String(tt.name || '').trim().toUpperCase();
       if (!tn) return { ok: false, error: 'Enter the work name' };
@@ -1347,7 +1365,10 @@ function arenaStaffAction_(b, n) {
       var kinds = ['reprint', 'damage', 'rework'];
       if (kinds.indexOf(b.kind) < 0) return { ok: false, error: 'Pick reprint, damage or rework' };
       if (!String(b.orderNo || '').trim()) return { ok: false, error: 'Enter the order number' };
-      var x = { id: 'i' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: n.date, orderNo: String(b.orderNo).trim().toUpperCase(), kind: b.kind, blame: String(b.blame || ''), note: String(b.note || '').trim(), by: me.id, status: 'pending', createdAt: stamp };
+      var rsn = String(b.reason || '').trim(), det = String(b.note || '').trim();
+      if (ISSUE_REASONS.indexOf(rsn) < 0) return { ok: false, error: 'Pick the reason' };
+      if (rsn === 'Other' && det.length < 3) return { ok: false, error: 'Type the reason' };
+      var x = { id: 'i' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: n.date, orderNo: String(b.orderNo).trim().toUpperCase(), kind: b.kind, blame: String(b.blame || ''), note: rsn + (det ? ' — ' + det : ''), by: me.id, status: 'pending', createdAt: stamp };
       upsert_('Issues', x); return { ok: true, issue: x };
     }
     case 'happySave': {
@@ -1659,6 +1680,11 @@ function aiContext_(mgr, can, n) {
     orders.forEach(function (o) { var c = aiCustCode_(o.phone, o.customer); if (c) repeat[c] = (repeat[c] || 0) + 1; });
     var rep = Object.keys(repeat).filter(function (c) { return repeat[c] > 1; });
     parts.push('REPEAT CUSTOMERS (all history): ' + rep.length + ' customers ordered more than once, out of ' + Object.keys(repeat).length + ' customers.');
+  }
+  if (sh_('Issues') && (can('orders') || can('work') || can('arena'))) {
+    var iss = rows_('Issues').filter(function (r) { return r.date >= from; });
+    parts.push('REPRINT / DAMAGE / REWORK REPORTS, last ' + AI_DAYS + ' days (note starts with the reason; status pending/approved/rejected; blame = whose mistake):\n' +
+      aiCsv_(['date', 'orderNo', 'kind', 'reason_note', 'blame', 'reportedBy', 'status'], iss.map(function (r) { return [r.date, r.orderNo, r.kind, r.note, nm[r.blame] || r.blame, nm[r.by] || r.by, r.status]; })));
   }
   if (can('register')) {
     var att = rows_('Attendance').filter(function (r) { return r.date >= ad_(n.date, -35); });
