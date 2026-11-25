@@ -1546,7 +1546,7 @@ function setupHealth() {
 function healthCheck() {
   var n = now_(), problems = [], lines = [];
   /* 1. speed: call the live app server like a phone does */
-  var url = ScriptApp.getService().getUrl(), t0 = Date.now(), ok = false;
+  var url = setting_('appUrl') || 'https://script.google.com/macros/s/AKfycbxUUZvu5SU3GLEFSZSFeUFdrLXy0WrOfPlFVGlL_gKnX2oK84mGf08HiD30jdDs4OEX/exec', t0 = Date.now(), ok = false;
   try { var r = UrlFetchApp.fetch(url, { method: 'post', payload: JSON.stringify({ action: 'salesStaff' }), muteHttpExceptions: true, followRedirects: true });
     ok = r.getResponseCode() === 200 && JSON.parse(r.getContentText()).ok; } catch (e) { ok = false; }
   var secs = Math.round((Date.now() - t0) / 100) / 10;
