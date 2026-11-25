@@ -1688,6 +1688,15 @@ function aiContext_(mgr, can, n) {
   if (hidden.length) parts.push('NOT AVAILABLE TO THIS USER: ' + hidden.join(', ') + '. If asked, say this person does not have access to it.');
   return parts.join('\n\n');
 }
+/* the data block is reused for 60 s per person, so follow-up questions answer faster (new orders show within a minute) */
+function aiContextCached_(mgr, can, n) {
+  var cache = CacheService.getScriptCache(), k = 'aiCtx_' + (mgr ? mgr.id : 'owner'), hit = null;
+  try { var parts = cache.get(k + '_n'); if (parts) { var got = cache.getAll(Array.apply(null, Array(Number(parts))).map(function (_, i) { return k + '_' + i; })), out = []; for (var i = 0; i < Number(parts); i++) { if (got[k + '_' + i] == null) { out = null; break; } out.push(got[k + '_' + i]); } if (out) hit = out.join(''); } } catch (e) {}
+  if (hit) return hit;
+  var ctx = aiContext_(mgr, can, n);
+  try { var size = 30000, m = {}, cnt = Math.ceil(ctx.length / size); for (var j = 0; j < cnt; j++) m[k + '_' + j] = ctx.slice(j * size, (j + 1) * size); m[k + '_n'] = String(cnt); cache.putAll(m, 60); } catch (e) {}
+  return ctx;
+}
 function aiAsk_(b, mgr, can, n) {
   var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!key) return { ok: false, error: 'AI is not set up yet. Add GEMINI_API_KEY in Apps Script → Project Settings → Script properties.' };
@@ -1699,28 +1708,27 @@ function aiAsk_(b, mgr, can, n) {
     'You are talking to ' + who + '. Answer ONLY from the data below. Count and add up carefully, row by row; when you give a number, say which dates it covers. ' +
     'If the data does not have the answer, say so plainly — never guess or invent numbers. Reply in the same language and script the user writes in (Malayalam script, Manglish, or English). ' +
     'Keep answers short and practical: lead with the answer, then a small list or table if useful. Use plain text with simple markdown (**bold**, "- " lists). ' +
-    'Customers appear only as anonymous codes; never ask for or reveal names or phone numbers. You can only read data; you cannot change anything in the app.\n\n=== APP DATA ===\n' + aiContext_(mgr, can, n);
+    'Customers appear only as anonymous codes; never ask for or reveal names or phone numbers. You can only read data; you cannot change anything in the app.\n\n=== APP DATA ===\n' + aiContextCached_(mgr, can, n);
   var hist = (Array.isArray(b.history) ? b.history : []).slice(-8).map(function (h) {
     return { role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text || '').slice(0, 4000) }] };
   });
   hist.push({ role: 'user', parts: [{ text: q }] });
   var body = { systemInstruction: { parts: [{ text: sys }] }, contents: hist, generationConfig: { temperature: 0.2, maxOutputTokens: 2048 } };
-  /* Gemini is sometimes busy (503) or a model gets retired (404): retry, then try other Gemini flash models */
-  var tried = [], lastErr = '', models = [model].concat(aiFallbackModels_(key, model));
-  for (var mi = 0; mi < models.length && mi < 4; mi++) {
-    for (var attempt = 0; attempt < 2; attempt++) {
-      var r = aiCall_(key, models[mi], body); tried.push(models[mi] + ':' + r.code);
-      if (r.code === 200) {
-        var cand = (r.json.candidates || [])[0] || {}, txt = ((cand.content && cand.content.parts) || []).map(function (p) { return p.text || ''; }).join('').trim();
-        if (!txt) return { ok: false, error: 'AI gave no answer' + (cand.finishReason ? ' (' + cand.finishReason + ')' : '') + '. Try asking another way.' };
-        return { ok: true, answer: txt };
-      }
-      lastErr = 'AI error ' + r.code + ': ' + ((r.json.error && r.json.error.message) || 'no reply');
-      if (r.code === 404 || r.code === 400 || r.code === 403) break;      // this model will not work: next model
-      if (r.code === 429 && attempt === 1) break;
-      Utilities.sleep(attempt ? 4000 : 2000);                               // busy (503/500/429): wait and try again
+  /* Fast path: start with the model that worked last time (remembered 30 min). If a model is busy (503/500/429)
+     or retired (404), move straight on to the next Gemini flash model — no waiting — so the answer comes quickly. */
+  var cache = CacheService.getScriptCache(), good = cache.get('aiGoodModel'), lastErr = '';
+  var models = [good, model].concat(aiFallbackModels_(key, model)).filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+  for (var mi = 0; mi < models.length && mi < 6; mi++) {
+    var r = aiCall_(key, models[mi], body);
+    if (r.code === 200) {
+      var cand = (r.json.candidates || [])[0] || {}, txt = ((cand.content && cand.content.parts) || []).map(function (p) { return p.text || ''; }).join('').trim();
+      if (!txt) return { ok: false, error: 'AI gave no answer' + (cand.finishReason ? ' (' + cand.finishReason + ')' : '') + '. Try asking another way.' };
+      cache.put('aiGoodModel', models[mi], 1800);
+      return { ok: true, answer: txt, model: models[mi] };
     }
-    if (/API key/i.test(lastErr)) break;
+    if (models[mi] === good) cache.remove('aiGoodModel');
+    lastErr = 'AI error ' + r.code + ': ' + ((r.json.error && r.json.error.message) || 'no reply');
+    if (r.code === 401 || /API key/i.test(lastErr)) break;
   }
   if (/\b(503|429|500)\b/.test(lastErr)) return { ok: false, error: 'Google AI is busy right now. Please try again in a minute.' };
   return { ok: false, error: lastErr };
