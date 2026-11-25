@@ -77,11 +77,11 @@ const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily'||t===
 const can=t=>!mgrAccess||(t!=='ads'&&hasTab(mgrAccess,t)); /* Ads (spend) is owner only */
 /* drops the Leads column (index i) from a header/row list for people without the Leads tab */
 const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
-const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['customers','Customers'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['ads','Ads'],['salary','Salary'],['staff','Staff']];
+const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['customers','Customers'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['ads','Ads'],['salary','Salary'],['staff','Staff'],['ai','✨ AI Assistant']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
-  if(v!=='kiosk')loadKioskStop();if(v!=='admin'){$('#admin').replaceChildren();adminPin=null;mgrAccess=null}window.scrollTo(0,0)}
+  if(v!=='kiosk')loadKioskStop();if(v!=='admin'){$('#admin').replaceChildren();adminPin=null;mgrAccess=null;aiChat=[]}window.scrollTo(0,0)}
 function goHome(prefill){me=null;LS.del('couplo_me');show('home');renderHome(prefill)}
 function openKiosk(){show('kiosk');loadKiosk()}
 function renderHome(prefill){
@@ -312,6 +312,7 @@ function renderAdmin(){
   else if(adminView==='sales')parts.push(...viewSales());
   else if(adminView==='ads')parts.push(...viewAds());
   else if(adminView==='salary')parts.push(...viewSalary());
+  else if(adminView==='ai')parts.push(...viewAi());
   else parts.push(...viewStaff());
   /* tabs: a menu on the left on wide screens, a wrapping bar on top on phones (CSS .adm) */
   $('#admin').replaceChildren(el('div',{class:'adm'},adminNav(),el('div',{class:'admmain'},...parts)));
@@ -2362,3 +2363,37 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&view==='k
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).catch(()=>{});
 boot();
 })();
+
+/* ---- AI Assistant (Nov 2026): ask questions about the app's data. Server: aiAsk in Code.gs (Google Gemini). ----
+   The chat stays while you move between tabs; it clears on log out. Read only — it never changes data. */
+let aiChat=[],aiBusy=false;
+function aiFmt(t){/* tiny safe markdown: **bold**, - lists, line breaks */
+  const box=el('div',{class:'aitext'});
+  String(t||'').split('\n').forEach(line=>{
+    const li=/^\s*[-*•]\s+/.test(line), num=/^\s*\d+[.)]\s+/.test(line);
+    const row=el('div',{style:(li||num)?'padding-left:14px;text-indent:-10px;margin:2px 0':'margin:2px 0;min-height:6px'});
+    const txt=li?'• '+line.replace(/^\s*[-*•]\s+/,''):line;
+    txt.split(/(\*\*[^*]+\*\*)/).forEach(seg=>{if(/^\*\*[^*]+\*\*$/.test(seg))row.append(el('b',{text:seg.slice(2,-2)}));else if(seg)row.append(document.createTextNode(seg.replace(/^#+\s*/,'')))});
+    box.append(row)});
+  return box}
+function viewAi(){
+  const log=el('div',{style:'display:flex;flex-direction:column;gap:10px;margin:10px 0'});
+  const bubble=(m)=>el('div',{style:'max-width:92%;padding:10px 12px;border-radius:14px;line-height:1.45;white-space:normal;word-break:break-word;'+(m.role==='user'?'align-self:flex-end;background:#511F52;color:#fff':'align-self:flex-start;background:var(--card,#f4eef6);border:1px solid rgba(81,31,82,.18)')+(m.err?';border-color:#b3261e;color:#b3261e':'')},m.role==='user'?m.text:aiFmt(m.text));
+  const draw=()=>{log.replaceChildren(...aiChat.map(bubble));if(aiBusy)log.append(el('div',{class:'meta',style:'align-self:flex-start',text:'Thinking…'}));setTimeout(()=>{const last=log.lastElementChild;if(last)last.scrollIntoView({block:'nearest'})},0)};
+  const ta=el('textarea',{rows:'2',placeholder:'Ask anything about orders, staff, attendance… (Malayalam / English)',style:'width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:vertical'});
+  const sendB=el('button',{class:'btn primary',type:'button',text:'Ask'});
+  const ask=async(q)=>{q=String(q||ta.value).trim();if(!q||aiBusy)return;ta.value='';
+    const history=aiChat.filter(m=>!m.err).slice(-8).map(m=>({role:m.role,text:m.text}));
+    aiChat.push({role:'user',text:q});aiBusy=true;sendB.disabled=true;draw();
+    try{const r=await call('aiAsk',{adminPin,question:q,history});aiChat.push({role:'model',text:r.answer})}
+    catch(e){aiChat.push({role:'model',text:/Unknown action|No access for/i.test(e.message)&&!mgrAccess?'Update the sheet script (Code.gs) first.':e.message,err:true})}
+    aiBusy=false;sendB.disabled=false;draw()};
+  sendB.onclick=()=>ask();
+  ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&window.innerWidth>700){e.preventDefault();ask()}});
+  const ideas=['How many orders today, by staff?','Top 5 products this month','Which district gave the most orders this month?','Who came late this week?','Orders not dispatched yet','Compare this month with last month'];
+  const chips=el('div',{class:'row',style:'flex-wrap:wrap;gap:6px'},...ideas.map(t=>el('button',{class:'btn',type:'button',style:'font-size:13px;padding:6px 10px',text:t,onclick:()=>ask(t)})));
+  draw();
+  return [el('div',{class:'panel'},el('h3',{text:'✨ AI Assistant'}),
+    el('p',{class:'hint',text:'Ask in Malayalam, Manglish or English. It reads the last 60 days of orders'+(can('register')?', attendance':'')+(can('work')?', work':'')+(can('sales')?', leads':'')+(!mgrAccess?', ad spend':'')+' and monthly totals. It cannot change anything. Customer names and phone numbers are not sent to the AI.'}),
+    aiChat.length?null:chips,log,ta,
+    el('div',{class:'row',style:'margin-top:8px'},sendB,aiChat.length?el('button',{class:'btn',type:'button',text:'New chat',onclick:()=>{aiChat=[];renderAdmin()}}):null))]}

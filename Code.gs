@@ -421,7 +421,7 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1 };
+var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -437,6 +437,7 @@ function handle_(b) {
   migrate_();
   arenaSetup_();
   accessSetup_();
+  aiSetup_();
   var n = now_();
   switch (b.action) {
     case 'kiosk': {
@@ -630,6 +631,7 @@ function handle_(b) {
       return { ok: true, holidays: h };
     }
     case 'allOrders': return { ok: true, orders: rows_('Orders') };
+    case 'aiAsk': return aiAsk_(b, mgr, can, n);
     case 'leadMatch': return leadMatch_();
     case 'adSpendByAd': return adSpendByAd_(String(b.from || ''), String(b.to || ''));
     case 'saveOrder': {
@@ -1418,7 +1420,7 @@ function arenaAdminAction_(b, n) {
    The owner keeps the admin PIN and sees everything. A staff member can be given some admin tabs
    (Admin → Staff → Edit → "Admin tabs this person can open"). They log in with their own name + PIN
    and only those tabs open; the server also refuses every other action, so hidden data never leaves the sheet. */
-var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff'];
+var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff', 'ai'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
   allOrders: 'orders', leadMatch: 'orders', setCod: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
@@ -1427,6 +1429,7 @@ var ACTION_TAB = {
   saveStaff: 'staff',
   saveProduct: 'products', deleteProduct: 'products',
   saveWork: 'work', saveTask: 'work', deleteTask: 'work',
+  aiAsk: 'ai',
   arenaAdmin: 'arena', mediaDecide: 'arena', issueDecide: 'arena', bonusAdd: 'arena', bonusDelete: 'arena', arenaSettings: 'arena'
   /* not listed = owner only: deleteStaff, sendReportNow, setAdminPin, changing report settings */
 };
@@ -1593,4 +1596,122 @@ function backupSheet_() {
     all.slice(14).forEach(function (f) { f.setTrashed(true); });
     return 'saved to Drive folder "' + name + '" (' + Math.min(all.length, 14) + ' kept)';
   } catch (e) { return 'FAILED — ' + e.message; }
+}
+
+
+/* ---------- AI assistant (Nov 2026) ----------
+   Admin → "AI Assistant" tab. Ask questions about the app's data in Malayalam, Manglish or English.
+   Uses Google Gemini. One-time setup — Apps Script editor → Project Settings (gear) → Script properties → add:
+     GEMINI_API_KEY = key from https://aistudio.google.com/apikey  (free tier is enough)
+     GEMINI_MODEL   = (optional) model name, default gemini-2.5-flash
+   Who can use it: the owner (admin PIN) and staff who have the "AI Assistant" admin tab ticked.
+   It only sees what that person may see: no leads / ad spend / salary unless they have those tabs.
+   Customer names and phone numbers are never sent to Gemini — each customer gets a short code instead. */
+var AI_DAYS = 60; // order / attendance rows sent in detail; older months go as monthly totals
+function aiSetup_() {
+  if (setting_('aiVersion') === '1') return;
+  var st = sh_('Staff'), col = SHEETS.Staff.indexOf('access') + 1;
+  rows_('Staff').forEach(function (r) {
+    if (String(r.name).trim().toLowerCase().indexOf('mashida') !== 0) return;
+    var acc = String(r.access || '').split(',').map(function (x) { return x.trim(); }).filter(String);
+    if (acc.indexOf('ai') < 0) { acc.push('ai'); st.getRange(r._row, col).setValue(acc.join(',')); }
+  });
+  forget_('Staff');
+  upsert_('Settings', { key: 'aiVersion', value: '1' });
+}
+function aiCustCode_(phone, name) {
+  var k = String(phone || '').replace(/\D/g, '').slice(-10) || String(name || '').trim().toLowerCase();
+  if (!k) return '';
+  var h = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, 'couplo:' + k);
+  return 'C' + h.slice(0, 3).map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('').toUpperCase();
+}
+function aiCsv_(head, rows) {
+  var c = function (v) { v = String(v == null ? '' : v).replace(/[\r\n]+/g, ' '); return /[",]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  return [head.join(',')].concat(rows.map(function (r) { return r.map(c).join(','); })).join('\n');
+}
+function aiContext_(mgr, can, n) {
+  var from = ad_(n.date, -AI_DAYS), staff = staffList_(), nm = {};
+  staff.forEach(function (s) { nm[s.id] = s.name; });
+  var parts = [];
+  parts.push('TODAY: ' + n.date + ' ' + n.time + ' (India time). Office hours 10:00–17:30, check-in 9:00–9:30, late after ' + (setting_('lateAfter') || '09:40') + '. Sundays are holidays.');
+  parts.push('STAFF (id, name, categories, active):\n' + aiCsv_(['id', 'name', 'categories', 'active'], staff.map(function (s) { return [s.id, s.name, cats_(s.role, s.sales).join('+'), s.active ? 'yes' : 'no']; })));
+  var hol = holidays_(); if (Object.keys(hol).length) parts.push('OFFICE HOLIDAYS: ' + JSON.stringify(hol));
+  parts.push('PRODUCTS:\n' + aiCsv_(['name', 'type', 'active'], productList_().map(function (p) { return [p.name, p.type, p.active ? 'yes' : 'no']; })));
+
+  var orders = rows_('Orders');
+  if (can('orders') || can('reports') || can('dash')) {
+    var recent = orders.filter(function (o) { return o.date >= from; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    parts.push('ORDERS, last ' + AI_DAYS + ' days (one row per order; customer = anonymous code, same code = same customer; amount in Rs; type premium/affordable; payment prepaid/cod; dispatched yes/no; design_done/dispatched_at are timestamps):\n' +
+      aiCsv_(['date', 'orderNo', 'staff', 'type', 'customer', 'district', 'pincode', 'products', 'qty', 'amount', 'payment', 'dispatched', 'codStatus', 'courier', 'design_done', 'dispatched_at'],
+        recent.map(function (o) {
+          var it = orderItems_(o).map(function (x) { return x.product + (Number(x.qty) > 1 ? ' x' + x.qty : ''); }).join(' + ');
+          return [o.date, o.orderNo, nm[o.staffId] || o.staffId, o.type, aiCustCode_(o.phone, o.customer), o.district, o.pincode, it, o.qty, Math.round(Number(o.amount) || 0), o.payment, o.dispatched === 'TRUE' ? 'yes' : 'no', o.codStatus, o.courier, o.designDoneAt, o.dispatchedAt];
+        })));
+    var mon = {};
+    orders.forEach(function (o) {
+      var m = String(o.date).slice(0, 7); if (!/^\d{4}-\d{2}$/.test(m)) return;
+      var k = m + '|' + (nm[o.staffId] || o.staffId || '-') + '|' + (o.type || '-');
+      mon[k] = mon[k] || { n: 0, amt: 0 }; mon[k].n++; mon[k].amt += Number(o.amount) || 0;
+    });
+    parts.push('ORDER TOTALS BY MONTH (all history; month, staff, type, orders, amount Rs):\n' +
+      aiCsv_(['month', 'staff', 'type', 'orders', 'amount'], Object.keys(mon).sort().map(function (k) { var q = k.split('|'); return [q[0], q[1], q[2], mon[k].n, Math.round(mon[k].amt)]; })));
+    var repeat = {};
+    orders.forEach(function (o) { var c = aiCustCode_(o.phone, o.customer); if (c) repeat[c] = (repeat[c] || 0) + 1; });
+    var rep = Object.keys(repeat).filter(function (c) { return repeat[c] > 1; });
+    parts.push('REPEAT CUSTOMERS (all history): ' + rep.length + ' customers ordered more than once, out of ' + Object.keys(repeat).length + ' customers.');
+  }
+  if (can('register')) {
+    var att = rows_('Attendance').filter(function (r) { return r.date >= ad_(n.date, -35); });
+    parts.push('ATTENDANCE, last 35 days (status in/leave/wfh; in/out times):\n' +
+      aiCsv_(['date', 'staff', 'status', 'in', 'out', 'lateReason', 'earlyReason', 'note'], att.map(function (r) { return [r.date, nm[r.staffId] || r.staffId, r.status, r.in, r.out, r.lateReason, r.earlyReason, r.note]; })));
+  }
+  if (can('work')) {
+    var tasks = {}; taskList_().forEach(function (t) { tasks[t.id] = t.name; });
+    var wk = rows_('Work').filter(function (w) { return w.date >= ad_(n.date, -21); });
+    parts.push('DAILY WORK LOG, last 21 days (value = count, TRUE/FALSE, text, or JSON of item:count):\n' +
+      aiCsv_(['date', 'staff', 'task', 'value'], wk.map(function (w) { return [w.date, nm[w.staffId] || w.staffId, tasks[w.taskId] || w.taskId, w.value]; })));
+  }
+  if (can('sales')) {
+    var ld = rows_('Sales').filter(function (r) { return r.date >= from; });
+    parts.push('LEADS per sales staff per day, last ' + AI_DAYS + ' days (from Leadvyne CRM):\n' +
+      aiCsv_(['date', 'staff', 'leads'], ld.map(function (r) { return [r.date, nm[r.staffId] || r.staffId, Number(r.leads) || 0]; })));
+  }
+  if (!mgr && sh_('AdSpend')) {
+    var sp = rows_('AdSpend').filter(function (r) { return r.date >= from; });
+    parts.push('META AD SPEND per day, last ' + AI_DAYS + ' days (Rs):\n' + aiCsv_(['date', 'amount'], sp.map(function (r) { return [r.date, r.amount]; })));
+  }
+  var hidden = [];
+  if (!can('orders') && !can('reports') && !can('dash')) hidden.push('orders');
+  if (!can('register')) hidden.push('attendance');
+  if (!can('sales')) hidden.push('leads');
+  if (mgr) hidden.push('ad spend', 'salary');
+  if (hidden.length) parts.push('NOT AVAILABLE TO THIS USER: ' + hidden.join(', ') + '. If asked, say this person does not have access to it.');
+  return parts.join('\n\n');
+}
+function aiAsk_(b, mgr, can, n) {
+  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key) return { ok: false, error: 'AI is not set up yet. Add GEMINI_API_KEY in Apps Script → Project Settings → Script properties.' };
+  var q = String(b.question || '').trim().slice(0, 1500);
+  if (!q) return { ok: false, error: 'Type a question' };
+  var model = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || 'gemini-2.5-flash';
+  var who = mgr ? mgr.name : 'Murshid (owner)';
+  var sys = 'You are the AI assistant inside the Couplo Design Studio staff app (a baby clothing brand in Vengara, Malappuram, Kerala that sells custom name-printed newborn baby sets on WhatsApp). ' +
+    'You are talking to ' + who + '. Answer ONLY from the data below. Count and add up carefully, row by row; when you give a number, say which dates it covers. ' +
+    'If the data does not have the answer, say so plainly — never guess or invent numbers. Reply in the same language and script the user writes in (Malayalam script, Manglish, or English). ' +
+    'Keep answers short and practical: lead with the answer, then a small list or table if useful. Use plain text with simple markdown (**bold**, "- " lists). ' +
+    'Customers appear only as anonymous codes; never ask for or reveal names or phone numbers. You can only read data; you cannot change anything in the app.\n\n=== APP DATA ===\n' + aiContext_(mgr, can, n);
+  var hist = (Array.isArray(b.history) ? b.history : []).slice(-8).map(function (h) {
+    return { role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text || '').slice(0, 4000) }] };
+  });
+  hist.push({ role: 'user', parts: [{ text: q }] });
+  var body = { systemInstruction: { parts: [{ text: sys }] }, contents: hist, generationConfig: { temperature: 0.2, maxOutputTokens: 2048 } };
+  var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+    method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, payload: JSON.stringify(body), muteHttpExceptions: true });
+  var code = res.getResponseCode(), j = {};
+  try { j = JSON.parse(res.getContentText()); } catch (e) {}
+  if (code === 429) return { ok: false, error: 'AI is busy (free limit reached). Try again in a minute.' };
+  if (code !== 200) return { ok: false, error: 'AI error ' + code + ': ' + ((j.error && j.error.message) || 'no reply') };
+  var cand = (j.candidates || [])[0] || {}, txt = ((cand.content && cand.content.parts) || []).map(function (p) { return p.text || ''; }).join('').trim();
+  if (!txt) return { ok: false, error: 'AI gave no answer' + (cand.finishReason ? ' (' + cand.finishReason + ')' : '') + '. Try asking another way.' };
+  return { ok: true, answer: txt };
 }
