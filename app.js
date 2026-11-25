@@ -1782,10 +1782,19 @@ function myOrdersView(edit,d){
     else{j=await call('addOrder',{staffId:me.id,pin:me.pin,order:data});toast('Saved · '+j.order.orderNo+(want!==td?' · '+want.slice(8)+'/'+want.slice(5,7):''))}
     if(j&&j.order&&j.order.date!==want)toast('Saved with date '+j.order.date+' — the sheet script (Code.gs) needs the new version. Tell Murshid.');
     ordersHome()},myOrders.map(o=>o.product)):null;
-  const list=el('div',{class:'panel'},el('h3',{text:'My orders'}),myOrders.length?el('div',{class:'scroll'},el('table',{},
-    el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Pay','Sent',''].map(t=>el('th',{text:t})))),
-    el('tbody',{},...myOrders.map(o=>el('tr',{},el('td',{class:'mono',text:o.date.slice(8)+'/'+o.date.slice(5,7)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:(o.customer||'—')+(o.phone?' · '+o.phone:'')}),el('td',{text:o.district}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{class:'mono',text:o.amount?rs(o.amount):'—'}),el('td',{text:payTxt(o)}),el('td',{text:o.dispatched==='TRUE'?'✓':''}),
-      el('td',{},thisMonth?el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>{ordersHome(o);window.scrollTo(0,0)}}):null)))))):el('div',{class:'empty',text:'No orders in this month.'}));
+  /* tracking + COD status of my own orders, so sales can answer "where is my parcel?" and send the tracking link */
+  const cods=myOrders.filter(o=>o.payment==='cod'),stName=o=>(COD_ST.find(x=>x[0]===codSt(o))||['',''])[1];
+  const trk=o=>o.awb?el('div',{},el('div',{class:'hint',style:'font-size:12px;margin:0',text:(courOf(o)?courOf(o)+' · ':'')+o.awb}),trackBtns(o)):el('span',{class:'hint',text:o.dispatched==='TRUE'?'Sent · no tracking yet':'Not sent'});
+  const mq={v:''},tb=el('tbody',{});
+  const drawMy=()=>{const q=mq.v.trim().toUpperCase();tb.replaceChildren(...myOrders.filter(o=>!q||[o.orderNo,o.customer,o.phone,o.awb,o.district].some(v=>String(v||'').toUpperCase().includes(q))).map(o=>el('tr',{},el('td',{class:'mono',text:o.date.slice(8)+'/'+o.date.slice(5,7)}),el('td',{class:'mono',text:o.orderNo}),el('td',{text:(o.customer||'—')+(o.phone?' · '+o.phone:'')}),el('td',{text:o.district}),el('td',{text:o.product+(o.type==='affordable'?' (A)':'')}),el('td',{class:'mono',text:o.amount?rs(o.amount):'—'}),
+      el('td',{},el('div',{text:payTxt(o)}),o.payment==='cod'?el('div',{class:'hint',style:'font-size:12px;margin:0;font-weight:600',text:stName(o)}):null),el('td',{},trk(o)),
+      el('td',{},thisMonth?el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>{ordersHome(o);window.scrollTo(0,0)}}):null))))};
+  drawMy();
+  const codLine=cods.length?el('p',{class:'hint',style:'font-weight:600',text:'COD: '+cods.length+' orders · on the way '+cods.filter(o=>codSt(o)==='shipped').length+' · delivered, cash pending '+cods.filter(o=>codSt(o)==='delivered').length+' · cash received '+cods.filter(o=>codSt(o)==='paid').length+' · returned '+cods.filter(o=>codSt(o)==='returned').length}):null;
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'My orders'}),el('input',{type:'search',placeholder:'Search no., customer, phone, tracking…',oninput:e=>{mq.v=e.target.value;drawMy()}})),codLine,
+    el('p',{class:'hint',text:'Tracking shows here once dispatch adds it. Use Send on WhatsApp to give the customer the tracking details.'}),
+    myOrders.length?el('div',{class:'scroll'},el('table',{},
+    el('thead',{},el('tr',{},...['Date','No.','Customer','District','Product','₹','Pay','Tracking',''].map(t=>el('th',{text:t})))),tb)):el('div',{class:'empty',text:'No orders in this month.'}));
   return[info,dateBox,form,list];
 }
 
