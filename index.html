@@ -124,6 +124,16 @@ input,select{font:500 15px var(--f-body);padding:10px 12px;border-radius:10px;bo
 .tbx .sbtn.l{left:6px}.tbx .sbtn.r{right:6px}
 .tbx.can-l .sbtn.l,.tbx.can-r .sbtn.r{display:block}
 .tbx .tbxhint{font-size:12px;color:var(--muted);margin:4px 2px 0}
+@media (max-width:640px){.tbx .scroll{max-height:none;cursor:auto}.tbx .sbtn{width:32px;height:32px;font-size:20px}}
+/* phone: customer cards instead of a wide table */
+.ccards{display:flex;flex-direction:column;gap:8px}
+.ccard{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface);cursor:pointer}
+.ccard:active{background:var(--accent-soft)}
+.ccard .who{flex:1;min-width:0}
+.ccard .who b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ccard .who small{display:block;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ccard .ic{flex:0 0 auto;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);text-decoration:none;font-size:18px}
+.form1{display:grid;grid-template-columns:1fr;gap:10px}
 table{border-collapse:collapse;font-size:13px;min-width:100%}
 th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
 thead th{position:sticky;top:0;background:var(--sunk);font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}

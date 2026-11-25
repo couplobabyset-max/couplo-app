@@ -1864,9 +1864,13 @@ function myCustomersView(){
       return{key:k,os,name:l.customer||'—',phone:l.phone||'',district:l.district||'',pincode:l.pincode||'',n:os.length,amt:os.reduce((t,o)=>t+(+o.amount||0),0),first:os[0].date,last:l.date}})
       .sort((a,b)=>b.last.localeCompare(a.last));
     const rep=list.filter(c=>c.n>1).length;
-    const tb=el('tbody',{}),cnt=el('span',{class:'hint',style:'margin:0'});
+    const tb=el('tbody',{}),cnt=el('span',{class:'hint',style:'margin:0'}),cards=el('div',{class:'ccards'}),phone=matchMedia('(max-width:640px)').matches;
     const draw=()=>{const q=myCustQ.trim().toUpperCase();const rows=list.filter(c=>!q||[c.name,c.phone,c.district,c.pincode,...c.os.map(o=>o.orderNo)].some(v=>String(v||'').toUpperCase().includes(q)));
       cnt.textContent=rows.length+' of '+list.length;
+      if(phone){cards.replaceChildren(...rows.slice(0,300).map(c=>{const wa=waLink(c.phone);return el('div',{class:'ccard',onclick:()=>myCustSheet(c)},
+        el('div',{class:'who'},el('b',{text:c.name+(c.n>1?' ⟳':'')}),el('small',{text:[c.phone,c.district].filter(Boolean).join(' · ')}),el('small',{text:c.n+' order'+(c.n>1?'s':'')+' · '+(c.amt?rs(c.amt):'—')+' · last '+dm(c.last)+'/'+c.last.slice(2,4)})),
+        c.phone?el('a',{class:'ic',href:'tel:'+String(c.phone).replace(/[^\d+]/g,''),'aria-label':'Call '+c.name,text:'📞',onclick:e=>e.stopPropagation()}):null,
+        wa?el('a',{class:'ic',href:wa,target:'_blank',rel:'noopener','aria-label':'WhatsApp '+c.name,text:'💬',onclick:e=>e.stopPropagation()}):null)}));return}
       tb.replaceChildren(...rows.slice(0,300).map(c=>el('tr',{style:'cursor:pointer',onclick:()=>myCustSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone}),el('td',{text:c.district}),el('td',{class:'mono',text:c.pincode}),
         el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}))))};
     const qI=el('input',{id:'mc-q',type:'search',placeholder:'Search name, phone, place, order no…',value:myCustQ,oninput:e=>{myCustQ=e.target.value;draw()}});
@@ -1874,7 +1878,7 @@ function myCustomersView(){
     box.replaceChildren(el('div',{class:'toolbar'},el('h3',{text:'My customers ('+list.length+')'}),cnt),
       el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(list.length)}),el('span',{text:'Customers'})),el('div',{},el('b',{class:'mono',text:String(rep)}),el('span',{text:'Repeat ⟳'})),el('div',{},el('b',{class:'mono',text:String(j.orders.length)}),el('span',{text:'Orders'}))),
       qI,
-      list.length?scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','Pincode','Orders','Total','First order','Last order'].map(h=>el('th',{text:h})))),tb)):el('div',{class:'empty',text:'No customers yet.'}),
+      !list.length?el('div',{class:'empty',text:'No customers yet.'}):phone?cards:scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','Pincode','Orders','Total','First order','Last order'].map(h=>el('th',{text:h})))),tb)),
       el('p',{class:'hint',text:'Only your own customers. Tap a customer to call, WhatsApp, see their orders or fix their details. ⟳ = ordered more than once.'}))})();
   return[box]}
 function myCustSheet(c){
@@ -1887,9 +1891,9 @@ function myCustSheet(c){
     catch(e){toast(/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':e.message);save.disabled=false}}});
   openOv(el('h3',{text:c.name}),
     el('div',{class:'row'},c.phone?el('a',{class:'btn',href:'tel:'+String(c.phone).replace(/[^\d+]/g,''),text:'📞 Call'}):null,wa?el('a',{class:'btn',href:wa,target:'_blank',rel:'noopener',text:'WhatsApp'}):null),
-    el('div',{class:'stats'},...[[c.n,'Orders'],[rs(c.amt),'Total'],[dm(c.first)+'/'+c.first.slice(2,4),'First order'],[dm(c.last)+'/'+c.last.slice(2,4),'Last order']].map(([v,l])=>el('div',{},el('b',{class:'mono',text:String(v)}),el('span',{text:l})))),
+    el('p',{class:'hint',style:'margin:0'},c.n+' order'+(c.n>1?'s':'')+' · '+(c.amt?rs(c.amt):'—')+' · first '+dm(c.first)+'/'+c.first.slice(2,4)+' · last '+dm(c.last)+'/'+c.last.slice(2,4)),
     el('details',{},el('summary',{text:'✏️ Edit customer details'}),
-      el('div',{class:'form2',style:'margin-top:10px'},f('mc-n','Name',c.name==='—'?'':c.name,{style:'text-transform:uppercase'}),f('mc-p','Phone',c.phone,{type:'tel',inputmode:'tel'}),
+      el('div',{class:matchMedia('(max-width:640px)').matches?'form1':'form2',style:'margin-top:10px'},f('mc-n','Name',c.name==='—'?'':c.name,{style:'text-transform:uppercase'}),f('mc-p','Phone',c.phone,{type:'tel',inputmode:'tel'}),
         f('mc-d','District',c.district,{style:'text-transform:uppercase'}),f('mc-pc','Pincode',c.pincode,{inputmode:'numeric',maxlength:'6'})),
       el('p',{class:'hint',text:'Saving changes these details in all '+c.n+' of your order'+(c.n>1?'s':'')+' for this customer. Changes are logged.'}),save),
     el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Date','No.','Product','₹','Pay','Status'].map(h=>el('th',{text:h})))),
