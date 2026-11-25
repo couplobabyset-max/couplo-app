@@ -1169,7 +1169,7 @@ function scrollBox(table){
   sc.addEventListener('scroll',upd,{passive:true});
   try{new ResizeObserver(upd).observe(sc)}catch(e){}setTimeout(upd,0);
   let d=null,moved=false;
-  sc.addEventListener('pointerdown',e=>{if(e.pointerType!=='mouse'||e.button!==0)return;d={x:e.clientX,y:e.clientY,l:sc.scrollLeft,t:sc.scrollTop};moved=false});
+  sc.addEventListener('pointerdown',e=>{if(e.pointerType!=='mouse'||e.button!==0||e.target===sc||!e.target.closest('table'))return; /* not on the scrollbars */d={x:e.clientX,y:e.clientY,l:sc.scrollLeft,t:sc.scrollTop};moved=false});
   window.addEventListener('pointermove',e=>{if(!d)return;const dx=e.clientX-d.x,dy=e.clientY-d.y;if(!moved&&Math.abs(dx)+Math.abs(dy)<6)return;moved=true;sc.classList.add('drag');sc.scrollLeft=d.l-dx;sc.scrollTop=d.t-dy});
   window.addEventListener('pointerup',()=>{if(!d)return;d=null;setTimeout(()=>sc.classList.remove('drag'),0)});
   sc.addEventListener('click',e=>{if(moved){e.stopPropagation();e.preventDefault();moved=false}},true); // a drag is not a tap on a row
