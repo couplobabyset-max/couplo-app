@@ -842,7 +842,11 @@ function viewWork(){
     people.length?el('div',{},...people.map(s=>{const list=tasksFor(s);const rows=adminWork.filter(w=>w.staffId===s.id&&w.date===adminWorkDate);
       return el('div',{class:'staffrow'},el('div',{},el('div',{style:'font-weight:600',text:s.name+' · '+catOf(s)}),
         el('div',{class:'meta',text:rows.length?list.filter(t=>rows.some(r=>r.taskId===t.id)).map(t=>t.name.toLowerCase()+': '+fmtWork(t,rows.find(r=>r.taskId===t.id).value)).join(' · '):'Nothing saved'})),
-        el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>{openOv(el('h2',{text:s.name+' · '+adminWorkDate}),workForm(list,rows,async items=>{const j=await call('saveWork',{adminPin,staffId:s.id,date:adminWorkDate,items});adminWork=j.work;closeOv();toast('Saved');renderAdmin()}),el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Close',onclick:closeOv})));$('#sheet').style.maxWidth='560px'}}))})):
+        el('button',{class:'btn',type:'button',text:'Edit',onclick:()=>{const old=adminWorkDate;const wd=el('input',{id:'w-move',type:'date',value:old,max:todayStr});
+          openOv(el('h2',{text:s.name}),el('label',{class:'f',for:'w-move'},'Date (change it to move this work to another day)',wd),workForm(list,rows,async items=>{const nd=wd.value||old;
+            let j=await call('saveWork',{adminPin,staffId:s.id,date:nd,items});
+            if(nd!==old){j=await call('saveWork',{adminPin,staffId:s.id,date:old,items:rows.map(r=>({taskId:r.taskId,value:''}))});adminWorkDate=nd;closeOv();toast('Moved to '+dm(nd));if(nd.slice(0,7)!==old.slice(0,7)){loadMonth(nd.slice(0,7));return}reload();return}
+            adminWork=j.work;closeOv();toast('Saved');renderAdmin()}),el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Close',onclick:closeOv})));$('#sheet').style.maxWidth='560px'}}))})):
       el('div',{class:'empty',text:'No work list for any staff yet. Add work below.'}));
   const totals=people.map(s=>{const list=tasksFor(s);const mine=adminWork.filter(w=>w.staffId===s.id);
     return el('div',{class:'panel'},el('h3',{text:s.name+' · '+MON[+m.slice(5)-1]+' total · '+new Set(mine.map(w=>w.date)).size+' days filled'}),
