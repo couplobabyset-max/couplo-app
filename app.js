@@ -1208,7 +1208,7 @@ function viewCod(){
     const cours=[...new Set(COURIERS.concat(all.map(o=>o.courier).filter(Boolean)))];
     box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
-  const list=el('div',{class:'panel'},el('h3',{text:'COD orders'}),el('p',{class:'hint',text:'All COD orders go by India Post (set automatically). Type or scan the tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders'}),el('button',{class:'btn primary',type:'button',text:'📄 Read slip photos',onclick:slipReader})),el('p',{class:'hint',text:'All COD orders go by India Post (set automatically). Type or scan the tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
   return[head,kpis,courP,list].filter(Boolean);
 }
 /* Daily sold — which products were sold on a day and by whom (for Mashida's daily count; admin sees it too) */
@@ -1863,6 +1863,66 @@ function photoBtn(onDone,label){const inp=el('input',{type:'file',accept:'image/
 /* Ctrl+V a receipt photo into a tracking box */
 function pasteScan(input){input.addEventListener('paste',async e=>{const it=[...(e.clipboardData||{}).items||[]].find(x=>x.type&&x.type.startsWith('image/'));if(!it)return;e.preventDefault();toast('Reading the pasted photo…');
   try{input.value=await scanImage(it.getAsFile());input.dispatchEvent(new Event('input'));toast('Read: '+input.value)}catch(er){toast(er.message)}})}
+/* ---------- Read courier slip photos (OCR) ----------
+   A barcode in a WhatsApp photo is usually too small to scan, but the printed text can be read.
+   Reads the tracking no. (India Post EL…IN etc.), the customer's phone numbers and the COD amount,
+   then finds the order by phone so it can be saved in one tap. Several photos at once are fine. */
+const OWN_PHONES=['8590288151','7994288151','9778452249','7736370175'];
+let ocrLib=null,ocrWorker=null;
+function loadOcr(){return ocrLib=ocrLib||new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';sc.onload=()=>ok(window.Tesseract);sc.onerror=()=>{ocrLib=null;no(new Error('Text reader did not load. Check the internet.'))};document.head.append(sc)})}
+async function getOcr(){if(ocrWorker)return ocrWorker;const T=await loadOcr();ocrWorker=await T.createWorker('eng');return ocrWorker}
+const TRK_RE=/\b([A-Z]{2})\s?(\d{9})\s?(IN)\b/i;
+function slipFacts(t){t=String(t||'');const m=t.match(TRK_RE);const awb=m?(m[1]+m[2]+m[3]).toUpperCase():'';
+  const phones=[...new Set((t.replace(/(\d)[ -](\d)/g,'$1$2').match(/(?<!\d)[6-9]\d{9}(?!\d)/g)||[]))].filter(p=>!OWN_PHONES.includes(p));
+  const c=t.match(/COD[^0-9\n]{0,20}(\d[\d,]{1,7})/i);return{awb,phones,cod:c?+c[1].replace(/,/g,''):0}}
+async function imgOf(file){const b=await createImageBitmap(file);return b}
+function tileCanvas(bm,x,y,w,h,scale){const c=document.createElement('canvas');c.width=Math.round(w*scale);c.height=Math.round(h*scale);const g=c.getContext('2d');g.filter='grayscale(1) contrast(1.4)';g.imageSmoothingQuality='high';g.drawImage(bm,x,y,w,h,0,0,c.width,c.height);return c}
+async function readSlip(file,progress){
+  let bar='';try{if('BarcodeDetector' in window){const fm=await BarcodeDetector.getSupportedFormats();const r=await new BarcodeDetector({formats:fm}).detect(await createImageBitmap(file));if(r&&r.length)bar=r[0].rawValue}}catch(e){}
+  const w=await getOcr(),bm=await imgOf(file);
+  const full=tileCanvas(bm,0,0,bm.width,bm.height,Math.min(2,1800/bm.width));
+  await w.setParameters({tessedit_pageseg_mode:'3'});progress&&progress('Reading text…');
+  let text=(await w.recognize(full)).data.text, f=slipFacts(text+'\n'+bar);
+  if(!f.awb&&bar&&!TRK_RE.test(bar))f.awb=awbFrom(bar);
+  if(!f.awb){ /* small print next to the barcode: read the photo in overlapping pieces */
+    await w.setParameters({tessedit_pageseg_mode:'11'});const n=14,th=bm.height/n,tw=bm.width/2,sc=Math.min(2.5,1400/tw);let k=0,tot=(n*2-1)*3;
+    outer:for(let i=0;i<n*2-1;i++)for(let j=0;j<3;j++){k++;progress&&progress('Looking for the tracking no… '+Math.round(100*k/tot)+'%');
+      const t=(await w.recognize(tileCanvas(bm,j*bm.width/4,i*th/2,tw,th,sc))).data.text;text+='\n'+t;const g=slipFacts(t);if(g.awb){f.awb=g.awb;break outer}}
+    const g=slipFacts(text);f.phones=[...new Set(f.phones.concat(g.phones))];if(!f.cod)f.cod=g.cod}
+  return f}
+function slipReader(){
+  if(!allOrdersCache)call('allOrders',{adminPin}).then(j=>{allOrdersCache=j.orders||[]}).catch(()=>{});
+  const pool=()=>{const m={};(allOrdersCache||[]).concat(adminOrders||[]).forEach(o=>m[o.id]=o);return Object.values(m)};
+  const last10=v=>String(v||'').replace(/\D/g,'').slice(-10);
+  const rows=el('div',{});let busy=Promise.resolve(),n=0;
+  const addFile=file=>{n++;const st=el('div',{class:'hint',text:'Waiting…'}),body=el('div',{});
+    const card=el('div',{style:'border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px'},el('b',{text:'Photo '+n}),st,body);rows.prepend(card);
+    busy=busy.then(async()=>{try{const f=await readSlip(file,t=>st.textContent=t);
+      const hits=pool().filter(o=>f.phones.includes(last10(o.phone))).sort((a,b)=>b.date.localeCompare(a.date));
+      st.textContent='Tracking: '+(f.awb||'not found')+' · Phones: '+(f.phones.join(', ')||'—')+(f.cod?' · COD amount ₹'+f.cod:'');
+      const aw=el('input',{type:'text',value:f.awb,placeholder:'Tracking no.',style:'text-transform:uppercase;min-width:150px'});
+      const sel=el('select',{},...hits.map(o=>el('option',{value:o.id,text:(o.orderNo||'')+' · '+dm(o.date)+' · '+(o.customer||'')+' · '+rs(+o.amount||0)+(o.payment==='cod'?' · COD':'')+(o.awb?' · has '+o.awb:'')})),el('option',{value:'',text:'— Type order no. instead —'}));
+      const on=el('input',{type:'text',placeholder:'Order no.',style:'text-transform:uppercase;width:110px;display:'+(hits.length?'none':'')});sel.onchange=()=>{on.style.display=sel.value?'none':''};
+      const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
+        const awb=awbFrom(aw.value);if(!awb){toast('Type the tracking no.');aw.focus();return}
+        const o=sel.value?pool().find(x=>x.id===sel.value):pool().find(x=>String(x.orderNo||'').replace(/\s/g,'').toUpperCase()===on.value.replace(/\s/g,'').toUpperCase());
+        if(!o){toast('Order not found — pick or type the order no.');return}
+        const cv=o.payment==='cod'||/IN$/.test(awb)?(o.payment==='cod'?COD_COURIER:'India Post'):(o.courier||'');
+        sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:o.codStatus||(o.payment==='cod'?'shipped':''),courier:cv,awb});Object.assign(o,j.order||{courier:cv,awb});
+          if(o.dispatched!=='TRUE'){try{await call('setDispatched',{adminPin,id:o.id,value:true});o.dispatched='TRUE'}catch(e){}}
+          body.replaceChildren(el('p',{style:'margin:6px 0;font-weight:600',text:'✅ Saved: '+(o.orderNo||'')+' · '+awb+(cv?' · '+cv:'')}),trackBtns(o))}catch(e){toast('Could not save: '+e.message);sv.disabled=false}}});
+      body.replaceChildren(hits.length?null:el('p',{class:'hint',style:'margin:4px 0',text:'No order with these phone numbers — pick it by order no. (ask in the dispatch group).'}),
+        el('div',{class:'row',style:'align-items:center'},aw,hits.length?sel:null,on,sv))}
+      catch(e){st.textContent='Could not read: '+e.message}})};
+  const inp=el('input',{type:'file',accept:'image/*',multiple:true,style:'display:none',onchange:e=>{[...e.target.files].forEach(addFile);e.target.value=''}});
+  const drop=el('div',{tabindex:'0',style:'border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer',onclick:()=>inp.click(),
+    text:'Tap to pick courier slip photos (several at once is fine) — or click here and press Ctrl+V to paste a photo'});
+  drop.addEventListener('paste',e=>{[...(e.clipboardData||{}).items||[]].filter(x=>x.type&&x.type.startsWith('image/')).forEach(x=>addFile(x.getAsFile()))});
+  openOv(el('h3',{text:'📄 Read courier slip photos'}),
+    el('p',{class:'hint',text:'Reads the tracking no., the customer phone and the COD amount from the slip photo, then finds the order by phone. Check the number, then Save. The first photo takes a little longer (the reader loads once).'}),
+    inp,drop,rows,el('div',{class:'row'},el('button',{class:'btn',type:'button',text:'Close',onclick:()=>{closeOv();renderAdmin()}})));
+  $('#sheet').style.maxWidth='760px';
+}
 /* Quick tracking: order no. (or phone) → tracking no. → saved, next. Built for a USB barcode scanner (it types + Enter). */
 function quickTrack(){
   const pool=()=>{const m={};(allOrdersCache||[]).concat(adminOrders||[]).forEach(o=>m[o.id]=o);return Object.values(m)};
@@ -1943,7 +2003,7 @@ function viewOrders(){
   const q=orderSearch.toLowerCase();
   const rows=src.filter(o=>!q||[o.customer,o.phone,o.district,o.pincode,o.product,o.orderNo,byId[o.staffId]].join(' ').toLowerCase().includes(q)).sort((a,b)=>(b.date+b.createdAt).localeCompare(a.date+a.createdAt));
   const search=el('input',{id:'osearch',type:'search',placeholder:'Search name, phone, district, product…',value:orderSearch,oninput:e=>{orderSearch=e.target.value;clearTimeout(viewOrders._t);viewOrders._t=setTimeout(()=>{renderAdmin();const i=$('#osearch');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},300)}});
-  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'All orders ('+rows.length+')'}),el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'⚡ Quick tracking',onclick:quickTrack}),search)),el('div',{class:'scroll'},el('table',{},
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'All orders ('+rows.length+')'}),el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'⚡ Quick tracking',onclick:quickTrack}),el('button',{class:'btn',type:'button',text:'📄 Slip photos',onclick:slipReader}),search)),el('div',{class:'scroll'},el('table',{},
     el('thead',{},el('tr',{},...['Date','No.','Staff','Customer','Phone','District','Pincode','Product','Type','₹','Pay','Sent','Tracking',''].map(t=>el('th',{text:t})))),
     el('tbody',{},...rows.slice(0,300).map(o=>{const cb=el('input',{type:'checkbox','aria-label':'Dispatched'});cb.checked=o.dispatched==='TRUE';cb.onchange=async()=>{try{await call('setDispatched',{adminPin,id:o.id,value:cb.checked});o.dispatched=cb.checked?'TRUE':'FALSE'}catch(e){cb.checked=!cb.checked;toast('Could not save.')}};
       return el('tr',{},el('td',{class:'mono',text:o.date}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:byId[o.staffId]||o.staffId}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),el('td',{text:o.district||''}),el('td',{class:'mono',text:o.pincode||''}),el('td',{text:o.product||''}),el('td',{text:o.type==='affordable'?'Affordable':'Premium'}),el('td',{class:'mono',text:amt(o)?rs(amt(o)):'—'}),el('td',{text:payTxt(o)}),el('td',{},cb),
