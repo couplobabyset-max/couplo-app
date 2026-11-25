@@ -1813,15 +1813,19 @@ function productReport(src,m,showPrinted){
       el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{class:'mono',text:String(tot.p)}),el('td',{class:'mono',text:String(tot.af)}),el('td',{class:'mono',text:String(tot.q)}),el('td',{class:'mono',text:rs(tot.a)}),...(showPrinted?[el('td',{class:'mono',text:String(tot.pr)})]:[]))))):
       el('div',{class:'empty',text:'No orders with a product in this period.'}));
 }
-/* ---------- courier tracking: Track opens 17TRACK (covers Speed and Safe, ST Courier, DTDC, India Post) with the number filled in ---------- */
+/* ---------- courier tracking ---------- */
 const COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
 /* All COD orders go by India Post — courier is fixed for them */
 const COD_COURIER='India Post';
 const courOf=o=>o&&o.payment==='cod'?COD_COURIER:((o&&o.courier)||'');
-const trackUrl=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
-function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+'\nTrack here: '+trackUrl(o.awb)+'\n\nThank you for choosing Couplo Design Studio 💜'}
+/* India Post parcels go to the official India Post site (it asks for the number + a captcha, so the number is copied for pasting);
+   other couriers keep the 17TRACK link */
+const IP_SITE='https://www.indiapost.gov.in/';
+const isPost=o=>/^[A-Z]{2}\d{9}IN$/i.test(String(o&&o.awb||'').trim())||/india\s*post|speed\s*post/i.test(String(o&&o.courier||''))||(o&&o.payment==='cod');
+const trackUrl=(awb,o)=>(o?isPost(o):/^[A-Z]{2}\d{9}IN$/i.test(String(awb||'').trim()))?IP_SITE:'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
+function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+(isPost(o)?'\nTrack on India Post: '+IP_SITE+' (type the tracking no. in the Track box)':'\nTrack here: '+trackUrl(o.awb,o))+'\n\nThank you for choosing Couplo Design Studio 💜'}
 function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
-  return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb),target:'_blank',rel:'noopener',text:'Track'}),
+  return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb,o),target:'_blank',rel:'noopener',text:isPost(o)?'Track (India Post)':'Track',onclick:()=>{if(isPost(o)){try{navigator.clipboard.writeText(o.awb);toast(o.awb+' copied — paste it in the India Post Track box')}catch(e){}}}}),
     wa?el('a',{class:'btn',href:wa+'?text='+encodeURIComponent(trackMsg(o)),target:'_blank',rel:'noopener',text:'Send on WhatsApp'}):null,
     el('button',{class:'btn',type:'button',text:'Copy',onclick:()=>{try{navigator.clipboard.writeText(trackMsg(o));toast('Tracking message copied')}catch(e){toast('Could not copy')}}}))}
 /* Scan a barcode / QR from the courier receipt with the phone camera. Uses the phone's own barcode reader
