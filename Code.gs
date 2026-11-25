@@ -1705,13 +1705,48 @@ function aiAsk_(b, mgr, can, n) {
   });
   hist.push({ role: 'user', parts: [{ text: q }] });
   var body = { systemInstruction: { parts: [{ text: sys }] }, contents: hist, generationConfig: { temperature: 0.2, maxOutputTokens: 2048 } };
+  /* Gemini is sometimes busy (503) or a model gets retired (404): retry, then try other Gemini flash models */
+  var tried = [], lastErr = '', models = [model].concat(aiFallbackModels_(key, model));
+  for (var mi = 0; mi < models.length && mi < 4; mi++) {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      var r = aiCall_(key, models[mi], body); tried.push(models[mi] + ':' + r.code);
+      if (r.code === 200) {
+        var cand = (r.json.candidates || [])[0] || {}, txt = ((cand.content && cand.content.parts) || []).map(function (p) { return p.text || ''; }).join('').trim();
+        if (!txt) return { ok: false, error: 'AI gave no answer' + (cand.finishReason ? ' (' + cand.finishReason + ')' : '') + '. Try asking another way.' };
+        return { ok: true, answer: txt };
+      }
+      lastErr = 'AI error ' + r.code + ': ' + ((r.json.error && r.json.error.message) || 'no reply');
+      if (r.code === 404 || r.code === 400 || r.code === 403) break;      // this model will not work: next model
+      if (r.code === 429 && attempt === 1) break;
+      Utilities.sleep(attempt ? 4000 : 2000);                               // busy (503/500/429): wait and try again
+    }
+    if (/API key/i.test(lastErr)) break;
+  }
+  if (/\b(503|429|500)\b/.test(lastErr)) return { ok: false, error: 'Google AI is busy right now. Please try again in a minute.' };
+  return { ok: false, error: lastErr };
+}
+function aiCall_(key, model, body) {
   var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
     method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, payload: JSON.stringify(body), muteHttpExceptions: true });
-  var code = res.getResponseCode(), j = {};
-  try { j = JSON.parse(res.getContentText()); } catch (e) {}
-  if (code === 429) return { ok: false, error: 'AI is busy (free limit reached). Try again in a minute.' };
-  if (code !== 200) return { ok: false, error: 'AI error ' + code + ': ' + ((j.error && j.error.message) || 'no reply') };
-  var cand = (j.candidates || [])[0] || {}, txt = ((cand.content && cand.content.parts) || []).map(function (p) { return p.text || ''; }).join('').trim();
-  if (!txt) return { ok: false, error: 'AI gave no answer' + (cand.finishReason ? ' (' + cand.finishReason + ')' : '') + '. Try asking another way.' };
-  return { ok: true, answer: txt };
+  var j = {}; try { j = JSON.parse(res.getContentText()); } catch (e) {}
+  return { code: res.getResponseCode(), json: j };
+}
+/* other Gemini "flash" models this key can use (newest first), looked up from Google and remembered for 6 hours */
+function aiFallbackModels_(key, skip) {
+  var cache = CacheService.getScriptCache(), hit = cache.get('aiModels'), list;
+  if (hit) list = JSON.parse(hit);
+  else {
+    list = [];
+    try {
+      var res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key }, muteHttpExceptions: true });
+      ((JSON.parse(res.getContentText()) || {}).models || []).forEach(function (m) {
+        var id = String(m.name || '').replace(/^models\//, '');
+        if (/^gemini-[\d.]+-flash(-lite)?$/.test(id) && (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0) list.push(id);
+      });
+      var ver = function (x) { return parseFloat(x.split('-')[1]) || 0; };
+      list.sort(function (a, b) { return (ver(b) - ver(a)) || (a.length - b.length); });
+      cache.put('aiModels', JSON.stringify(list), 21600);
+    } catch (e) {}
+  }
+  return list.filter(function (x) { return x !== skip; });
 }
