@@ -421,12 +421,12 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1 };
+var READ_ONLY = { publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1 };
 function doPost(e) {
   var lock = null;
   try {
     var b = JSON.parse(e.postData.contents || '{}');
-    if (!READ_ONLY[b.action]) { lock = LockService.getScriptLock(); lock.waitLock(25000); }
+    if (!READ_ONLY[b.action] && !(b.action === 'unlockDates' && !b.staffId)) { lock = LockService.getScriptLock(); lock.waitLock(25000); } // the admin's unlock check only reads
     return out_(handle_(b));
   } catch (err) {
     return out_({ ok: false, error: String(err && err.message || err) });
@@ -467,6 +467,14 @@ function handle_(b) {
       }
       upsert_('Attendance', rec);
       return { ok: true, kind: kind, time: n.time, rec: rec };
+    }
+    case 'publicTrack': { // customer tracking page: order no. + phone must both match; only shipping facts go back
+      var on = String(b.orderNo || '').replace(/\s+/g, '').toUpperCase(), ph = String(b.phone || '').replace(/\D/g, '').slice(-10);
+      if (on.length < 2 || ph.length !== 10) return { ok: false, error: 'Enter your order number and 10-digit mobile number.' };
+      var hit = rows_('Orders').filter(function (o) { return String(o.orderNo || '').replace(/\s+/g, '').toUpperCase() === on && String(o.phone || '').replace(/\D/g, '').slice(-10) === ph; });
+      if (!hit.length) return { ok: false, error: 'No order found with this order number and mobile number. Please check both, or message us on WhatsApp.' };
+      return { ok: true, orders: hit.map(function (o) { return { orderNo: o.orderNo, date: o.date, product: o.product, cod: o.payment === 'cod',
+        designDone: !!o.designDoneAt, dispatched: o.dispatched === 'TRUE', dispatchedAt: String(o.dispatchedAt || '').slice(0, 10), courier: o.payment === 'cod' ? 'India Post' : (o.courier || ''), awb: o.awb || '', codStatus: o.codStatus || '' }; }) };
     }
     case 'portalStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.active || s.sales; })

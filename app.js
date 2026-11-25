@@ -56,7 +56,7 @@ function notifyAdmin(title,body){try{if(!('Notification' in window)||Notificatio
   if(navigator.serviceWorker&&navigator.serviceWorker.ready)navigator.serviceWorker.ready.then(r=>r.showNotification(title,{body,icon:'icons/icon-192.png',tag:'unlock'})).catch(()=>new Notification(title,{body}));else new Notification(title,{body})}catch(e){}}
 function pollUnlock(){if(unlockTimer||mgrAccess)return;unlockTimer=setInterval(async()=>{if(!adminOpen||mgrAccess||document.hidden)return;
   try{const r=await call('unlockDates',{adminPin});const q=r.requests||{},fresh=Object.keys(q).filter(id=>!(id in unlockReqs));unlockReqs=q;
-    if(fresh.length){fresh.forEach(id=>{notifyAdmin('🔓 '+q[id].name+' asks to enter older orders',(q[id].note||'Tap to open the admin panel'));toast(q[id].name+' asks to unlock older dates')});renderAdmin()}}catch(e){}},60000)}
+    if(fresh.length){fresh.forEach(id=>{notifyAdmin('🔓 '+q[id].name+' asks to enter older orders',(q[id].note||'Tap to open the admin panel'));toast(q[id].name+' asks to unlock older dates')});renderAdmin()}}catch(e){}},180000)}
 function unlockBanner(){if(mgrAccess)return null;const ids=Object.keys(unlockReqs||{});if(!ids.length)return null;
   const act=(id,reject)=>async e=>{e.target.disabled=true;try{const r=await call('unlockDates',{adminPin,staffId:id,reject});unlockReqs=r.requests||{};toast(reject?'Declined':unlockReqsName(id)+' unlocked for today');renderAdmin()}catch(x){toast(x.message);e.target.disabled=false}};
   return el('div',{class:'panel',style:'border:2px solid #7b3fa0'},el('h3',{text:'🔓 Unlock requests · '+ids.length}),
