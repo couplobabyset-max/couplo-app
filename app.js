@@ -2315,7 +2315,9 @@ function viewCustomers(){
   const tbl=(cols,rows)=>el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...cols.map(c=>el('th',{text:c})))),
     el('tbody',{},...rows.map(r=>el('tr',{},...r.map((c,i)=>i?el('td',{class:typeof c==='number'?'mono':'',text:String(c)}):el('th',{text:String(c)})))))));
   const shown=R.list.slice(0,cu.show);
-  const listP=el('div',{class:'panel'},el('h3',{text:'Customer list ('+R.list.length+')'}),
+  const listP=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'Customer list ('+R.list.length+')'}),R.list.length?el('div',{class:'row'},
+      el('button',{class:'btn',type:'button',text:'📊 Excel',title:'This list (with your filters) as an Excel sheet',onclick:()=>custListXlsx(R)}),
+      el('button',{class:'btn',type:'button',text:'📄 PDF',title:'This list (with your filters) as a PDF',onclick:()=>custListPdf(R)})):null),
     R.list.length?scrollBox(el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
       el('tbody',{},...shown.map(c=>el('tr',{style:'cursor:pointer',onclick:()=>custSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone||''}),el('td',{text:c.district||''}),
         el('td',{text:c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):(leadCache?'—':'…')}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
@@ -2366,6 +2368,31 @@ function viewCustomers(){
   const lagP=el('div',{class:'panel'},el('h3',{text:'Days from message to order'}),tbl(['Time taken','Orders','Sales'],R.lagRows.map(r=>[r.l,r.o,rs(r.a)]).concat(R.noLead?[['Number not in CRM',R.noLead,'']]:[])));
   return[head,summary,listP,el('h2',{class:'sect',text:'Ads & messages'}),spendP,adP,convP,mixP,scP,wkP,lagP,el('h2',{class:'sect',text:'Customer reports'}),monthP,distP,topP,fpP,stP,quietP];
 }
+/* Customer list only (same filters and order as on screen) — Excel or PDF */
+const custRow=c=>[c.name+(c.n>1?' (repeat)':''),c.phone||'',c.district||'',c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):'',dm(c.first)+'/'+c.first.slice(2,4),c.lead1?c.lead1.days:'',c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):'',c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):'',dm(c.last)+'/'+c.last.slice(2,4),c.n,c.amt||0,c.staffName||''];
+const CUST_COLS=['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'];
+function custListXlsx(R){
+  if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
+  const aoa=[CUST_COLS.map(c=>c.toUpperCase())].concat(R.list.map(custRow));
+  const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=[24,13,16,12,12,6,30,34,12,7,11,14].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb,ws,'CUSTOMERS');
+  saveFile('COUPLO_CUSTOMERS_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT)}
+function custListPdf(R){
+  const J=window.jspdf&&window.jspdf.jsPDF;if(!J){toast('PDF tool did not load. Check the internet and reload.');return}
+  const doc=new J({unit:'pt',format:'a4',orientation:'landscape'});const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24,TW=W-2*M;let y=0,pg=0;
+  const ws=[.12,.075,.09,.06,.06,.035,.17,.17,.06,.04,.06,.06];const xs=[];let x=M;ws.forEach(w=>{xs.push(x);x+=w*TW});
+  const header=()=>{pg++;doc.setFillColor(81,31,82);doc.rect(0,0,W,50,'F');doc.setTextColor(255);doc.setFont('helvetica','bold');doc.setFontSize(14);doc.text('COUPLO DESIGN STUDIO',M,24);
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text('Customer list  |  '+rpLabel(R.f,R.t)+'  |  '+R.list.length+' customers',M,39);doc.text('Page '+pg,W-M,39,{align:'right'});doc.setTextColor(30);y=66};
+  const row=(cells,bold,fill)=>{doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(7.5);
+    const lines=cells.map((c,i)=>doc.splitTextToSize(pdfTxt(c),ws[i]*TW-6));const h=Math.max(1,...lines.map(l=>l.length))*9+6;
+    if(y+h>H-24){doc.addPage();header();if(!bold)row(CUST_COLS,true,[243,235,243]);doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(7.5)}
+    if(fill){doc.setFillColor(...fill);doc.rect(M,y,TW,h,'F')}
+    lines.forEach((l,i)=>doc.text(l,xs[i]+3,y+10));doc.setDrawColor(222);doc.line(M,y+h,M+TW,y+h);y+=h};
+  header();row(CUST_COLS,true,[243,235,243]);
+  R.list.forEach(c=>{const r=custRow(c);r[10]=r[10]?rsPlain(r[10]):'-';row(r,false)});
+  const tot=R.list.reduce((a,c)=>a+(+c.amt||0),0),ords=R.list.reduce((a,c)=>a+(+c.n||0),0);
+  row(['Total ('+R.list.length+')','','','','','','','','',ords,rsPlain(tot),''],true,[248,244,248]);
+  saveFile('COUPLO_CUSTOMERS_'+R.f+(R.f===R.t?'':'_to_'+R.t)+'.pdf',doc.output('arraybuffer'),'application/pdf')}
 function custXlsx(R){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
   const wb=XLSX.utils.book_new(),add=(name,rows)=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=(rows[1]||rows[0]).map((_,i)=>({wch:i?14:24}));XLSX.utils.book_append_sheet(wb,ws,name)};
