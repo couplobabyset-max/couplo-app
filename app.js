@@ -19,10 +19,19 @@ function el(tag,attrs,...kids){const e=document.createElement(tag);for(const k i
 /* ---------- server link (Google Apps Script) ---------- */
 const LS={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
 let API=(window.COUPLO_API||'').trim()||LS.get('couplo_api')||'';
+/* send app errors to the Errors sheet (max 15 per visit; PIN / validation messages are not errors) */
+let errSent=0;
+function reportErr(msg,where){try{msg=String(msg||'');if(!msg||errSent>=15||!API)return;if(/Wrong PIN|PIN|Enter |Pick |Type |Choose |not found|already|Only |No access|Admin PIN needed|older than yesterday|Reason needed|Create your PIN/i.test(msg))return;errSent++;
+  fetch(API,{method:'POST',body:JSON.stringify({action:'logError',msg,where:where||(typeof adminView!=='undefined'&&adminOpen?'admin:'+adminView:(typeof portalTab!=='undefined'?'staff:'+portalTab:'')),who:(typeof me!=='undefined'&&me&&me.name)||(typeof adminOpen!=='undefined'&&adminOpen?'admin':''),ua:navigator.userAgent})}).catch(()=>{})}catch(e){}}
+window.addEventListener('error',e=>reportErr((e.message||'JS error')+(e.filename?' @'+String(e.filename).split('/').pop()+':'+e.lineno:'')));
+window.addEventListener('unhandledrejection',e=>reportErr('Promise: '+((e.reason&&e.reason.message)||e.reason)));
 async function call(action,data){
   if(!API)throw new Error('No server link');
-  const res=await fetch(API,{method:'POST',body:JSON.stringify({action,...(data||{})})});
-  const j=await res.json();
+  let res,j;const t0=Date.now();
+  try{res=await fetch(API,{method:'POST',body:JSON.stringify({action,...(data||{})})});j=await res.json()}
+  catch(e){reportErr('Network/server: '+e.message+' ('+action+', '+Math.round((Date.now()-t0)/1000)+'s)');throw new Error('Cannot reach the sheet. Check the internet and try again.')}
+  if(!j.ok&&j.error&&!/Wrong PIN|not found|PIN|Only |No access|Admin PIN/i.test(j.error))reportErr('Server: '+j.error+' ('+action+')');
+  if(Date.now()-t0>20000&&action!=='logError')reportErr('Slow: '+action+' took '+Math.round((Date.now()-t0)/1000)+'s');
   if(!j.ok){const er=new Error(j.error||(j.needReason?'Reason needed':j.needPin?'Create your PIN':'Server error'));if(j.needPin){er.needPin=true;er.staffId=j.staffId;er.name=j.name}if(j.needReason){er.need=j.needReason;er.time=j.time;er.inTime=j.in}er.data=j;throw er}
   return j;
 }

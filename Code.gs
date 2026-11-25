@@ -421,7 +421,7 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1 };
+var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -467,6 +467,12 @@ function handle_(b) {
       }
       upsert_('Attendance', rec);
       return { ok: true, kind: kind, time: n.time, rec: rec };
+    }
+    case 'logError': { // app errors from any phone → Errors sheet (append only, no lock)
+      var es = errSheet_(), msg = String(b.msg || '').slice(0, 500);
+      if (!msg) return { ok: true };
+      es.appendRow([n.date + ' ' + n.time, String(b.who || '').slice(0, 40), String(b.where || '').slice(0, 60), msg, String(b.ua || '').slice(0, 120)]);
+      return { ok: true };
     }
     case 'publicTrack': { // customer tracking page: order no. + phone must both match; only shipping facts go back
       var on = String(b.orderNo || '').replace(/\s+/g, '').toUpperCase(), ph = String(b.phone || '').replace(/\D/g, '').slice(-10);
@@ -1520,3 +1526,71 @@ function adSpendSetup() {
   Logger.log('Ad spend filled: ' + (done.join(', ') || 'nothing new')); return done;
 }
 
+
+
+/* ===================== Health check + backup (runs every morning) =====================
+   setupHealth() once from the editor: daily 9:15 AM e-mail to the owner with
+   speed of the app server, app errors of the last day, stuck orders, failed sync — and a copy of this
+   Google Sheet in Drive folder "Couplo App Backups" (last 14 kept). */
+function errSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), sh = ss.getSheetByName('Errors');
+  if (!sh) { sh = ss.insertSheet('Errors'); sh.getRange(1, 1, 1, 5).setValues([['time', 'who', 'where', 'error', 'device']]).setFontWeight('bold'); sh.setFrozenRows(1); }
+  return sh;
+}
+function setupHealth() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'healthCheck') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('healthCheck').timeBased().atHour(9).nearMinute(15).everyDays(1).inTimezone(TZ).create();
+  errSheet_(); DriveApp.getRootFolder(); // asks for Drive permission once (backups)
+  return healthCheck();
+}
+function healthCheck() {
+  var n = now_(), problems = [], lines = [];
+  /* 1. speed: call the live app server like a phone does */
+  var url = ScriptApp.getService().getUrl(), t0 = Date.now(), ok = false;
+  try { var r = UrlFetchApp.fetch(url, { method: 'post', payload: JSON.stringify({ action: 'salesStaff' }), muteHttpExceptions: true, followRedirects: true });
+    ok = r.getResponseCode() === 200 && JSON.parse(r.getContentText()).ok; } catch (e) { ok = false; }
+  var secs = Math.round((Date.now() - t0) / 100) / 10;
+  lines.push('App server: ' + (ok ? 'working' : 'NOT answering') + ' · ' + secs + ' s');
+  if (!ok) problems.push('App server is not answering');
+  else if (secs > 8) problems.push('App is slow (' + secs + ' s for a simple request; normal is 2–3 s)');
+  /* 2. app errors seen on phones in the last day */
+  var since = ad_(n.date, -1) + ' ' + n.time, errs = [];
+  var es = errSheet_(); if (es.getLastRow() >= 2) errs = es.getRange(2, 1, es.getLastRow() - 1, 4).getValues().filter(function (r) { return String(r[0]) >= since; });
+  lines.push('App errors (last 24 h): ' + errs.length);
+  if (errs.length) { problems.push(errs.length + ' app error(s) on staff phones');
+    var top = {}; errs.forEach(function (r) { var k = r[3]; top[k] = (top[k] || []).concat(r[1] || '?'); });
+    Object.keys(top).slice(0, 5).forEach(function (k) { lines.push('  • ' + k + ' — ' + top[k].length + '× (' + top[k].filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', ') + ')'); }); }
+  /* 3. orders: entered yesterday, stuck without dispatch */
+  var ord = rows_('Orders'), yd = ad_(n.date, -1);
+  var yCount = ord.filter(function (o) { return o.date === yd; }).length;
+  var stuck = ord.filter(function (o) { return o.dispatched !== 'TRUE' && o.date && o.date <= ad_(n.date, -3) && o.date >= ad_(n.date, -30); });
+  lines.push('Orders entered for yesterday: ' + yCount);
+  lines.push('Orders 3+ days old, not dispatched: ' + stuck.length + (stuck.length ? ' (' + stuck.slice(0, 10).map(function (o) { return o.orderNo; }).join(', ') + (stuck.length > 10 ? '…' : '') + ')' : ''));
+  if (stuck.length) problems.push(stuck.length + ' order(s) not dispatched after 3 days');
+  /* 4. lead sync freshness */
+  var leadsY = rows_('Sales').filter(function (r) { return r.date === yd; }).length;
+  lines.push('Lead counts synced for yesterday: ' + (leadsY ? 'yes' : 'NO'));
+  if (!leadsY && new Date().getDay() !== 1) problems.push('Leadvyne lead sync has no data for yesterday');
+  /* 5. backup */
+  var b = backupSheet_(); lines.push('Backup: ' + b);
+  if (/fail/i.test(b)) problems.push('Backup failed');
+  var to = Session.getEffectiveUser().getEmail();
+  var subject = (problems.length ? '⚠️ Couplo app: ' + problems.length + ' problem(s)' : '✅ Couplo app OK') + ' · ' + n.date;
+  var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c2630">' +
+    (problems.length ? '<b style="color:#b3261e">Needs attention:</b><ul>' + problems.map(function (p) { return '<li>' + p + '</li>'; }).join('') + '</ul>' : '<b style="color:#1b7f3b">Everything looks fine.</b><br><br>') +
+    lines.map(function (l) { return l.replace(/</g, '&lt;'); }).join('<br>') +
+    '<br><br><span style="color:#888;font-size:12px">Full error list: "Errors" tab of the attendance Google Sheet. Sent every morning by healthCheck().</span></div>';
+  if (to) MailApp.sendEmail({ to: to, subject: subject, htmlBody: html, name: 'Couplo App Health' });
+  return { ok: true, problems: problems, lines: lines };
+}
+function backupSheet_() {
+  try {
+    var name = 'Couplo App Backups', it = DriveApp.getFoldersByName(name), folder = it.hasNext() ? it.next() : DriveApp.createFolder(name);
+    var file = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId());
+    file.makeCopy('COUPLO ATANDENCE backup ' + Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), folder);
+    var all = [], fi = folder.getFiles(); while (fi.hasNext()) all.push(fi.next());
+    all.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+    all.slice(14).forEach(function (f) { f.setTrashed(true); });
+    return 'saved to Drive folder "' + name + '" (' + Math.min(all.length, 14) + ' kept)';
+  } catch (e) { return 'FAILED — ' + e.message; }
+}
