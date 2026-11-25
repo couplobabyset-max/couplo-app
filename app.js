@@ -1828,9 +1828,9 @@ const COURIERS=['Speed and Safe','ST Courier','DTDC','India Post'];
 const COD_COURIER='India Post';
 const courOf=o=>o&&o.payment==='cod'?COD_COURIER:((o&&o.courier)||'');
 /* Each courier's own tracking site. Official sites ask for the number (some with a captcha), so Track copies the number to paste.
-   Speed and Safe has no official site we use, so it keeps 17TRACK with the number filled in. */
+   Speed and Safe = Sree Gokulam Speed & Safe. Any other courier keeps 17TRACK with the number filled in. */
 const IP_SITE='https://www.indiapost.gov.in/';
-const COURIER_SITES=[[/india\s*post|speed\s*post|\bems\b/i,'India Post',IP_SITE],[/dtdc/i,'DTDC','https://www.dtdc.com/track-your-shipment/'],[/\bst\b|st\s*courier/i,'ST Courier','https://stcourier.com/']];
+const COURIER_SITES=[[/india\s*post|speed\s*post|\bems\b/i,'India Post',IP_SITE],[/dtdc/i,'DTDC','https://www.dtdc.com/track-your-shipment/'],[/\bst\b|st\s*courier/i,'ST Courier','https://stcourier.com/'],[/speed\s*(and|&)\s*safe|gokulam/i,'Speed and Safe','https://www.gokulamspeedandsafe.com/speedandsafe-tracking/']];
 const isPost=o=>/^[A-Z]{2}\d{9}IN$/i.test(String(o&&o.awb||'').trim())||/india\s*post|speed\s*post/i.test(String(o&&o.courier||''))||(o&&o.payment==='cod');
 function courierSite(o){if(isPost(o))return['India Post',IP_SITE];const c=String(o&&o.courier||'');const hit=COURIER_SITES.find(([re])=>re.test(c));return hit?[hit[1],hit[2]]:null}
 const t17=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
