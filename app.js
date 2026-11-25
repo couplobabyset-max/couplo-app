@@ -2146,6 +2146,7 @@ const waLink=p=>{let d=String(p||'').replace(/\D/g,'');if(d.length===10)d='91'+d
 const leadsOf=ph=>{if(!leadCache||!leadCache.leads)return[];let d=String(ph||'').replace(/\D/g,'');if(d.length<7)return[];return leadCache.leads[d.slice(-10)]||[]};
 const adKeyOf=L=>!L?'~none':L.ad||'~noad';
 const adLabel=id=>{if(!id)return'';const a=leadCache&&leadCache.ads&&leadCache.ads[id];if(a)return a.name;for(const k in adSpendCache){const x=adSpendCache[k][id];if(x&&x.name)return x.name}return'Ad '+id};
+const adCamp=id=>{if(!id)return'';const a=leadCache&&leadCache.ads&&leadCache.ads[id];if(a&&a.campaign)return a.campaign;for(const k in adSpendCache){const x=adSpendCache[k][id];if(x&&x.campaign)return x.campaign}return''};
 /* the message that led to an order = the newest lead on or before the order day; its ad, or failing that
    the newest ad seen on this number in the 30 days before the order */
 function leadFor(rows,ds){if(!rows.length)return null;let r=null;for(const x of rows){if(x[0].slice(0,10)<=ds)r=x;else break}
@@ -2199,7 +2200,7 @@ function custData(){
   const pOrders=list.flatMap(c=>c.os.filter(o=>inR(o.date)).map((o,i)=>({o,c,isNew:o===c.os[0]})));
   const ag={};pOrders.forEach(({o,isNew})=>{const L=o._lead,k=!L?'~none':L.ad?L.ad:'~noad';
     const r=ag[k]=ag[k]||{k,name:k==='~none'?'Number not in CRM sheet':k==='~noad'?'In CRM, no ad ID (status ad / direct / old lead)':adLabel(k),camp:'',o:0,nw:0,a:0,days:[],first:'',last:''};
-    if(k[0]!=='~'&&leadCache.ads&&leadCache.ads[k])r.camp=leadCache.ads[k].campaign||'';
+    if(k[0]!=='~')r.camp=adCamp(k);
     r.o++;r.a+=(+o.amount||0);if(isNew)r.nw++;if(L){r.days.push(L.days);if(!r.first||L.day<r.first)r.first=L.day;if(!r.last||L.day>r.last)r.last=L.day}});
   const med=a=>{if(!a.length)return null;const b=a.slice().sort((x,y)=>x-y);return b[Math.floor((b.length-1)/2)]};
   const adRows=Object.values(ag).map(r=>({...r,med:med(r.days)})).sort((a,b)=>(a.k[0]==='~')-(b.k[0]==='~')||b.o-a.o||b.a-a.a);
@@ -2277,12 +2278,12 @@ function viewCustomers(){
     el('tbody',{},...rows.map(r=>el('tr',{},...r.map((c,i)=>i?el('td',{class:typeof c==='number'?'mono':'',text:String(c)}):el('th',{text:String(c)})))))));
   const shown=R.list.slice(0,cu.show);
   const listP=el('div',{class:'panel'},el('h3',{text:'Customer list ('+R.list.length+')'}),
-    R.list.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
+    R.list.length?el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Customer','Phone','District','First message','First order','Days','Ad','Campaign','Last order','Orders','Total spent','Staff'].map(h=>el('th',{text:h})))),
       el('tbody',{},...shown.map(c=>el('tr',{style:'cursor:pointer',onclick:()=>custSheet(c)},el('th',{text:c.name+(c.n>1?' ⟳':'')}),el('td',{class:'mono',text:c.phone||''}),el('td',{text:c.district||''}),
-        el('td',{text:c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):(leadCache?'—':'…')}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
+        el('td',{text:c.lead1?dm(c.lead1.day)+'/'+c.lead1.day.slice(2,4):(leadCache?'—':'…')}),el('td',{text:dm(c.first)+'/'+c.first.slice(2,4)}),el('td',{class:'mono',text:c.lead1?String(c.lead1.days):''}),el('td',{text:c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):''}),el('td',{text:c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):''}),el('td',{text:dm(c.last)+'/'+c.last.slice(2,4)}),el('td',{class:'mono',text:String(c.n)}),el('td',{class:'mono',text:c.amt?rs(c.amt):'—'}),el('td',{text:c.staffName})))))):
       el('div',{class:'empty',text:'No customers for these dates and filters.'}),
     R.list.length>cu.show?el('button',{class:'btn',type:'button',text:'Show more ('+(R.list.length-cu.show)+' left)',onclick:()=>{cu.show+=200;renderAdmin()}}):null,
-    R.list.length?el('p',{class:'hint',text:'Tap a customer to see all their orders and messages, call or WhatsApp. ⟳ = repeat customer. First message / Ad = the CRM lead (by phone) that led to their first order; Days = days from that message to the order.'}):null);
+    R.list.length?el('p',{class:'hint',text:'Tap a customer to see all their orders and messages, call or WhatsApp. ⟳ = repeat customer. First message / Ad / Campaign = the CRM lead (by phone) that led to their first order; Days = days from that message to the order.'}):null);
   const monthP=el('div',{class:'panel'},el('h3',{text:'New vs repeat customers · by month'}),
     tbl(['Month','New','Came back','Repeat %','Orders','Sales'],R.monthly.slice().reverse().map(r=>[MON[+r.m.slice(5)-1]+' '+r.m.slice(0,4),r.nw,r.ret,r.rate+'%',r.ords,rs(r.sales)])),
     el('p',{class:'hint',text:'"Came back" = ordered that month but their first order was in an earlier month. Not affected by the filters above.'}));
@@ -2331,7 +2332,7 @@ function custXlsx(R){
   if(typeof XLSX==='undefined'){toast('Excel tool did not load. Check the internet and reload.');return}
   const wb=XLSX.utils.book_new(),add=(name,rows)=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=(rows[1]||rows[0]).map((_,i)=>({wch:i?14:24}));XLSX.utils.book_append_sheet(wb,ws,name)};
   add('CUSTOMERS',[['CUSTOMER','PHONE','DISTRICT','FIRST MESSAGE','DAYS TO ORDER','AD','CAMPAIGN','FIRST ORDER','LAST ORDER','ORDERS (ALL TIME)','TOTAL SPENT','ORDERS IN DATES','SALES IN DATES','REPEAT','STAFF (FIRST ORDER)','FIRST PRODUCT'],
-    ...R.list.map(c=>[c.name,c.phone||'',c.district||'',c.lead1?c.lead1.at:'',c.lead1?c.lead1.days:'',c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):'',c.lead1&&c.lead1.ad&&leadCache.ads[c.lead1.ad]?leadCache.ads[c.lead1.ad].campaign:'',c.first,c.last,c.n,c.amt,c.pn,c.pamt,c.n>1?'YES':'NO',c.staffName,c.firstProd.join(', ')])]);
+    ...R.list.map(c=>[c.name,c.phone||'',c.district||'',c.lead1?c.lead1.at:'',c.lead1?c.lead1.days:'',c.lead1&&c.lead1.ad?adLabel(c.lead1.ad):'',c.lead1&&c.lead1.ad?adCamp(c.lead1.ad):'',c.first,c.last,c.n,c.amt,c.pn,c.pamt,c.n>1?'YES':'NO',c.staffName,c.firstProd.join(', ')])]);
   add('ADS',[['AD','CAMPAIGN','AD ID','ORDERS','NEW CUSTOMERS','SALES','MESSAGES FROM','MESSAGES TO','USUAL DAYS TO ORDER'],...R.adRows.map(r=>[r.name,r.camp,r.k[0]==='~'?'':r.k,r.o,r.nw,r.a,r.first,r.last,r.med==null?'':r.med])]);
   add('LEADS TO ORDERS',[['AD','LEADS','ORDERED','CONVERSION %','SALES','USUAL DAYS TO ORDER'],...R.convRows.map(r=>[r.name,r.leads,r.ord,r.pct,r.a,r.med==null?'':r.med])]);
   if(R.spendRows)add('AD SPEND',[['AD','CAMPAIGN','SPEND','LEADS','COST PER LEAD','ORDERS','COST PER ORDER','SALES','ROAS'],...R.spendRows.map(r=>[r.name,r.camp,Math.round(r.spend),r.leads,r.cpl==null?'':Math.round(r.cpl),r.ord,r.cpo==null?'':Math.round(r.cpo),r.sales,r.roas==null?'':Math.round(r.roas*10)/10])]);
