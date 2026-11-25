@@ -318,14 +318,12 @@ function cleanWorkValue_(kind, v) {
   }
   return v === '' || v == null || isNaN(Number(v)) ? '' : String(Number(v));
 }
-/* reasons for a reprint / damaged product (Nov 2026) — also used by the app's Report form */
-var ISSUE_REASONS = ['Print mistake', 'Wrong name / spelling', 'Wrong design or colour', 'Wrong size', 'Fabric defect', 'Washing / ironing damage', 'Stitching problem', 'Customer changed order', 'Courier / transit damage', 'Other'];
 /* daily work: if REPRINT or DAMAGE is filled, REPRINT / DAMAGE REASON must be filled too. Returns an error text or '' */
 function workReasonError_(items) {
   var v = {}; (items || []).forEach(function (it) { v[it.taskId] = it.value; });
   var reprint = String(v['reprint'] == null ? '' : v['reprint']).trim(), damage = Number(v['damage']) || 0;
   if (!(reprint || damage > 0) || !('reprint-reason' in v) && !taskList_().some(function (t) { return t.id === 'reprint-reason' && t.active; })) return '';
-  return String(v['reprint-reason'] == null ? '' : v['reprint-reason']).trim().length < 3 ? 'Write the reason for the reprint / damage (which order and why)' : '';
+  return String(v['reprint-reason'] == null ? '' : v['reprint-reason']).trim().length < 10 ? 'Write the reason for the reprint / damage (which order and why)' : '';
 }
 function reasonSetup_() {
   if (setting_('reasonVersion') === '1') return;
@@ -472,7 +470,7 @@ function handle_(b) {
       var key = n.date + '__' + s.id;
       var rec = findRow_('Attendance', key);
       if (rec && (rec.status === 'leave' || rec.status === 'wfh')) return { ok: false, error: 'Today is marked as ' + rec.status };
-      var kind, reason = String(b.reason || '').trim();
+      var kind, reason = String(b.reason || '').trim(); if (reason.length < 10) reason = '';
       var toMin = function (t) { var p = String(t).split(':'); return Number(p[0]) * 60 + Number(p[1]); };
       if (!rec || !rec.in) {
         if (toMin(n.time) > toMin(setting_('lateAfter') || '09:40') && !reason) return { ok: false, needReason: 'late', time: n.time };
@@ -1365,10 +1363,9 @@ function arenaStaffAction_(b, n) {
       var kinds = ['reprint', 'damage', 'rework'];
       if (kinds.indexOf(b.kind) < 0) return { ok: false, error: 'Pick reprint, damage or rework' };
       if (!String(b.orderNo || '').trim()) return { ok: false, error: 'Enter the order number' };
-      var rsn = String(b.reason || '').trim(), det = String(b.note || '').trim();
-      if (ISSUE_REASONS.indexOf(rsn) < 0) return { ok: false, error: 'Pick the reason' };
-      if (rsn === 'Other' && det.length < 3) return { ok: false, error: 'Type the reason' };
-      var x = { id: 'i' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: n.date, orderNo: String(b.orderNo).trim().toUpperCase(), kind: b.kind, blame: String(b.blame || ''), note: rsn + (det ? ' — ' + det : ''), by: me.id, status: 'pending', createdAt: stamp };
+      var det = String(b.note || '').trim();
+      if (det.length < 10) return { ok: false, error: 'Write the full reason (at least 10 letters)' };
+      var x = { id: 'i' + new Date().getTime().toString(36) + Math.floor(Math.random() * 1e6).toString(36), date: n.date, orderNo: String(b.orderNo).trim().toUpperCase(), kind: b.kind, blame: String(b.blame || ''), note: det, by: me.id, status: 'pending', createdAt: stamp };
       upsert_('Issues', x); return { ok: true, issue: x };
     }
     case 'happySave': {
@@ -1683,7 +1680,7 @@ function aiContext_(mgr, can, n) {
   }
   if (sh_('Issues') && (can('orders') || can('work') || can('arena'))) {
     var iss = rows_('Issues').filter(function (r) { return r.date >= from; });
-    parts.push('REPRINT / DAMAGE / REWORK REPORTS, last ' + AI_DAYS + ' days (note starts with the reason; status pending/approved/rejected; blame = whose mistake):\n' +
+    parts.push('REPRINT / DAMAGE / REWORK REPORTS, last ' + AI_DAYS + ' days (note = the reason the staff typed; status pending/approved/rejected; blame = whose mistake):\n' +
       aiCsv_(['date', 'orderNo', 'kind', 'reason_note', 'blame', 'reportedBy', 'status'], iss.map(function (r) { return [r.date, r.orderNo, r.kind, r.note, nm[r.blame] || r.blame, nm[r.by] || r.by, r.status]; })));
   }
   if (can('register')) {

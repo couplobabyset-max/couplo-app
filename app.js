@@ -202,16 +202,15 @@ function punchSheet(s,pin){
 
 function reasonSheet(s,kind,time,inTime,send){
   const late=kind==='late';
-  const quick=late?['Traffic / bus late','Hospital / doctor','Family function','Permission taken','Other']:['Feeling unwell','Family emergency','Hospital / doctor','Permission taken','Other'];
-  const txt=el('textarea',{id:'reason',rows:'3',placeholder:'Type the reason…',style:'font:500 15px var(--f-body);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:100%'});
-  const chips=el('div',{class:'row'},...quick.map(q=>el('button',{type:'button',class:'btn',style:'flex:0 0 auto;padding:8px 12px;font-size:14px',text:q,onclick:()=>{txt.value=q==='Other'?'':q;txt.focus()}})));
+  const txt=el('textarea',{id:'reason',rows:'3',placeholder:'Write the real reason in your own words…',style:'font:500 15px var(--f-body);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);width:100%'});
   const ok=el('button',{class:'btn primary big',type:'button',text:(late?'IN':'OUT')+'  ·  '+t12(time)});
-  ok.onclick=async()=>{const r=txt.value.trim();if(r.length<3){toast('Please write the reason.');return}ok.disabled=true;ok.textContent='Saving…';
+  ok.onclick=async()=>{const r=txt.value.trim();if(r.length<10){toast('Please write the full reason (at least 10 letters).');txt.focus();return}ok.disabled=true;ok.textContent='Saving…';
     try{await send(r)}catch(e){closeOv();toast('Could not save. Check the internet and try again.')}};
   const worked=inTime?Math.max(0,toMin(time)-inMin(inTime,ymd(new Date()))):0;
   openOv(el('h2',{text:s.name}),
     el('p',{text:late?('You are coming in at '+t12(time)+'. Why are you late?'):('You came at '+t12(inTime)+' and worked '+fmtMin(worked)+' (less than '+kCfg.minHours+' hours). Why are you leaving early?')}),
-    chips,txt,ok,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv}));
+    txt,ok,el('button',{class:'btn',type:'button',text:'Cancel',onclick:closeOv}));
+  setTimeout(()=>txt.focus(),50);
 }
 
 /* ---------- admin ---------- */
@@ -1566,13 +1565,11 @@ function arenaIssueForm(d,reload){
   const no=el('input',{id:'is-no',type:'text',placeholder:'Order no.',autocomplete:'off'});
   const kd=el('select',{id:'is-k'},el('option',{value:'reprint',text:'Reprint'}),el('option',{value:'damage',text:'Damaged product'}),el('option',{value:'rework',text:'Rework'}));
   const bl=el('select',{id:'is-b'},el('option',{value:'',text:'Whose mistake? (admin decides)'}),...(d.staffNames||[]).filter(s=>s.section).map(s=>el('option',{value:s.id,text:s.name+' · '+SEC_LABEL[s.section]})));
-  const RS=['Print mistake','Wrong name / spelling','Wrong design or colour','Wrong size','Fabric defect','Washing / ironing damage','Stitching problem','Customer changed order','Courier / transit damage','Other'];
-  const rs=el('select',{id:'is-r'},el('option',{value:'',text:'— pick the reason —'}),...RS.map(r=>el('option',{value:r,text:r})));
-  const nt=el('input',{id:'is-n',type:'text',placeholder:'Details (needed if Other)',autocomplete:'off'});
-  const go=el('button',{class:'btn',type:'button',text:'Report',onclick:async()=>{if(!rs.value){toast('Pick the reason');rs.focus();return}if(rs.value==='Other'&&nt.value.trim().length<3){toast('Type the reason');nt.focus();return}
-    go.disabled=true;try{await call('issueAdd',{staffId:me.id,pin:me.pin,orderNo:no.value,kind:kd.value,blame:bl.value,reason:rs.value,note:nt.value});toast('Reported — admin will check');reload()}catch(e){toast(e.message);go.disabled=false}}});
+  const nt=el('input',{id:'is-n',type:'text',placeholder:'What exactly went wrong and why',autocomplete:'off'});
+  const go=el('button',{class:'btn',type:'button',text:'Report',onclick:async()=>{if(nt.value.trim().length<10){toast('Write the full reason (at least 10 letters)');nt.focus();return}
+    go.disabled=true;try{await call('issueAdd',{staffId:me.id,pin:me.pin,orderNo:no.value,kind:kd.value,blame:bl.value,note:nt.value});toast('Reported — admin will check');reload()}catch(e){toast(e.message);go.disabled=false}}});
   const list=(d.issues||[]).slice(0,10).map(x=>el('div',{class:'hint',style:'margin:2px 0',text:dm(x.date)+' · '+x.orderNo+' · '+x.kind+' · '+(x.note||'')+' · '+x.status}));
-  return el('div',{class:'panel'},el('h3',{text:'⚠️ Report reprint / damage / rework'}),el('div',{class:'form2'},el('label',{class:'f',for:'is-no'},'Order',no),el('label',{class:'f',for:'is-k'},'Type',kd),el('label',{class:'f',for:'is-r'},'Reason',rs),el('label',{class:'f',for:'is-b'},'Mistake by',bl),el('label',{class:'f',for:'is-n'},'Details',nt)),go,...list)}
+  return el('div',{class:'panel'},el('h3',{text:'⚠️ Report reprint / damage / rework'}),el('div',{class:'form2'},el('label',{class:'f',for:'is-no'},'Order',no),el('label',{class:'f',for:'is-k'},'Type',kd),el('label',{class:'f',for:'is-b'},'Mistake by',bl),el('label',{class:'f',for:'is-n'},'Reason',nt)),go,...list)}
 
 /* ---- staff: accounts (Mashida) ---- */
 function arenaAccounts(d,reload){
