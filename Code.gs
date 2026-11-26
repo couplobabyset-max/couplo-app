@@ -24,6 +24,7 @@ var SHEETS = {
   Accounts:   ['key','date','staffId','banks','cash','expenses','mismatch','fixed','vendors','note','submittedAt'], // Mashida's daily balance report
   Issues:     ['id','date','orderNo','kind','blame','note','by','status','createdAt'],  // reprint / damage / rework; blame = staff id; status pending | approved | rejected
   Bonus:      ['id','date','staffId','points','note','createdAt'],  // admin +/- points (top reel, mistakes…)
+  CallLog:    ['id','date','time','staffId','phone','outcome'],   // sales staff tap Called / No answer / Not interested on their 📞 Call first list
   AdSpend:    ['date','amount','note']   // Meta ad spend per day (owner only) — split over sales staff by their leads in the Leads tab
 };
 /* daily work items. category = a staff category (Media, Production, Office) OR one staff id (e.g. jaseera).
@@ -448,7 +449,7 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, crmCenter: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
+var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, myCallList: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, crmCenter: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -540,7 +541,7 @@ function handle_(b) {
         att: rows_('Attendance').filter(function (r) { return r.staffId === p.id && r.date.indexOf(mm) === 0; }),
         orders: p.sales ? rows_('Orders').filter(function (o) { return o.staffId === p.id && o.date.indexOf(mm) === 0; }) : [],
         category: myCat, tasks: myCat === 'Regular' ? [] : taskList_().filter(function (t) { return t.active && (myCats.indexOf(t.category) >= 0 || t.category === p.id); }), work: workRows_(mm, p.id),
-        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, access: p.access, unlocked: unlocked_(p.id, n), unlockAsked: !!unlockReq_(p.id, n), myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
+        hr: myCats.indexOf('HR') >= 0 ? hrLeadsData_(mm) : null, callList: !!p.sales && crmCfg_().mods.calls, access: p.access, unlocked: unlocked_(p.id, n), unlockAsked: !!unlockReq_(p.id, n), myLeads: rows_('Sales').filter(function (r) { return r.staffId === p.id && r.date >= ad_(n.date, -40); }).map(function (r) { return { date: r.date, leads: Number(r.leads) || 0 }; }) };
     }
     case 'hrSaveLeads': { // HR staff type the daily lead count for each sales person (same rows the admin Leads tab saves)
       var hr = staffList_().filter(function (x) { return x.id === b.staffId; })[0];
@@ -571,12 +572,14 @@ function handle_(b) {
     case 'salesStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.sales; })
         .map(function (s) { return { id: s.id, name: s.name, order: s.order, hasPin: !!s.pin }; }) };
-    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': case 'myCustomers': case 'editCustomer': case 'setFirstMsg': {
+    case 'staffLogin': case 'addOrder': case 'myOrders': case 'editOrder': case 'askUnlock': case 'myCustomers': case 'editCustomer': case 'setFirstMsg': case 'myCallList': case 'logCall': {
       var me = staffList_().filter(function (x) { return x.id === b.staffId && x.sales; })[0];
       if (!me) return { ok: false, error: 'Not a sales staff' };
       if (me.pin && String(me.pin) !== String(b.pin)) return { ok: false, error: 'Wrong PIN' };
       var month = n.date.slice(0, 7);
       if (b.action === 'staffLogin') return { ok: true, name: me.name };
+      if (b.action === 'myCallList') return crmCallList_(me, n);
+      if (b.action === 'logCall') return crmLogCall_(me, b, n);
       if (b.action === 'askUnlock') {
         if (unlocked_(me.id, n)) return { ok: true, unlocked: true };
         var prev = unlockReq_(me.id, n); if (prev) return { ok: true, asked: true, again: true };
@@ -1878,7 +1881,7 @@ function aiFallbackModels_(key, skip) {
    A lead counts as converted when the same phone (last 10 digits) has an app order on or after the lead's day.
    Settings "crmCfg" = { mods: {target, funnel, timing, speed, mix}: true/false, revTarget: rupees a month } — the owner switches parts on/off.
    Read only. Sends slim rows; the app works out the numbers for any month. */
-var CRM_MODS = ['target', 'funnel', 'timing', 'speed', 'mix'];
+var CRM_MODS = ['target', 'funnel', 'timing', 'speed', 'mix', 'calls'];
 function crmCfg_() {
   var c = {}; try { c = JSON.parse(setting_('crmCfg') || '{}') || {}; } catch (e) { c = {}; }
   var m = c.mods || {}, out = {};
@@ -1913,5 +1916,58 @@ function crmCenter_(mgr, n) {
   return { ok: true, today: n.date, cfg: crmCfg_(), leads: leads, ints: ints, orders: orders,
     orderTarget: arenaNum_('salesMonthTarget') * nSales,
     adspend: mgr ? [] : (sh_('AdSpend') ? rows_('AdSpend').map(function (r) { return [String(r.date), Number(r.amount) || 0]; }) : []),
+    calls: sh_('CallLog') ? rows_('CallLog').map(function (r) { return [r.date, r.staffId, r.phone, r.outcome]; }) : [],
     synced: setting_('leadSyncLast') || '' };
+}
+
+/* ---------- 📞 Call first (sales staff, Nov 2026) ----------
+   Each sales person sees only the CRM leads assigned to them in the last 7 days that have no app order yet,
+   best chances first. Points come from November's real numbers (lead → order):
+     answered the bot 4.9% vs 0.8% · baby 1–6 months 7–9%, newborn 3.7% · asked for several items 24% vs one item 2.6% ·
+     bot "Warm" 13% · most orders come within 2–3 days of the first message.
+   "Not interested" hides the lead; every tap is kept in the CallLog sheet so the owner sees calls per staff. */
+function crmCallList_(me, n) {
+  if (!crmCfg_().mods.calls) return { ok: false, error: 'Call list is switched off by admin' };
+  var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
+  var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
+  var c = function (k) { return head.indexOf(k); };
+  var cPh = c('phone'), cNm = c('name'), cDate = c('date'), cWho = c('assigned to'), cSc = c('score'), cQ = c('qual answers');
+  var from = ad_(n.date, -7), names = {}; names[leadName_(me.name)] = 1; names[leadName_(me.id.split('-')[0])] = 1;
+  var ordered = {}; rows_('Orders').forEach(function (o) { var p = String(o.phone || '').replace(/\D/g, '').slice(-10); if (p.length === 10 && (!ordered[p] || o.date > ordered[p])) ordered[p] = o.date; });
+  var last = {};
+  if (sh_('CallLog')) rows_('CallLog').forEach(function (r) { var k = String(r.phone); if (!last[k] || (r.date + r.time) >= (last[k].date + last[k].time)) last[k] = r; });
+  var out = [];
+  data.forEach(function (r) {
+    if (!names[leadName_(r[cWho])]) return;
+    var full = String(r[cPh] || '').replace(/\D/g, ''); if (full.length < 10) return; var p = full.slice(-10);
+    var d = r[cDate]; if (!d) return; if (!(d instanceof Date)) d = new Date(String(d).trim().replace(' ', 'T')); if (isNaN(d)) return;
+    var day = Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); if (day < from) return;
+    if (ordered[p] && ordered[p] >= day) return;            // already ordered
+    var lc = last[p]; if (lc && lc.outcome === 'not') return; // said not interested
+    var q = {}; try { q = JSON.parse(String(cQ >= 0 ? r[cQ] : '') || '{}') || {}; } catch (e) { q = {}; }
+    var age = String(q['Baby Age'] || '').trim(), look = String(q['Looking For'] || '').trim();
+    var pts = 0, why = [];
+    if (cQ >= 0 && String(r[cQ] || '').trim()) { pts += 2; why.push('Answered bot'); }
+    var am = age.toLowerCase(), mo = parseFloat((am.match(/[\d.]+/) || [''])[0]);
+    if (/new/.test(am)) { pts += 2; why.push('Newborn'); } else if (mo >= 1 && mo <= 6) { pts += 3; why.push('Baby ' + age); } else if (age) why.push('Baby ' + age);
+    var items = look ? look.split(',').length : 0;
+    if (items >= 2) { pts += 3; why.push('Asked ' + items + ' items'); } else if (items === 1) pts += 1;
+    if (String(r[cSc] || '').trim().charAt(0).toUpperCase() === 'W') { pts += 1; why.push('Warm'); }
+    var age_d = Math.round((new Date(n.date + 'T12:00:00') - new Date(day + 'T12:00:00')) / 864e5);
+    if (age_d <= 1) pts += 2; else if (age_d <= 3) pts += 1;
+    if (!lc) pts += 1;
+    out.push({ phone: full, name: String(cNm >= 0 ? r[cNm] : '').replace(/^~/, '').trim(), at: Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm'),
+      age: age, look: look, pts: pts, why: why, last: lc ? { outcome: lc.outcome, date: lc.date, time: lc.time } : null });
+  });
+  out.sort(function (a, b) { return b.pts - a.pts || (a.at < b.at ? 1 : -1); });
+  return { ok: true, today: n.date, list: out.slice(0, 80), total: out.length, notCalled: out.filter(function (x) { return !x.last; }).length };
+}
+function crmLogCall_(me, b, n) {
+  var oc = String(b.outcome || ''); if (['called', 'noans', 'not'].indexOf(oc) < 0) return { ok: false, error: 'Pick what happened' };
+  var p = String(b.phone || '').replace(/\D/g, '').slice(-10); if (p.length !== 10) return { ok: false, error: 'No phone number' };
+  var sh = sh_('CallLog');
+  if (!sh) { sh = SpreadsheetApp.getActiveSpreadsheet().insertSheet('CallLog'); sh.getRange(1, 1, 1, SHEETS.CallLog.length).setValues([SHEETS.CallLog]).setFontWeight('bold'); sh.setFrozenRows(1); }
+  sh.getRange(sh.getLastRow() + 1, 1, 1, 6).setNumberFormat('@').setValues([[Utilities.getUuid().slice(0, 8), n.date, n.time, me.id, p, oc]]);
+  forget_('CallLog');
+  return { ok: true, outcome: oc, date: n.date, time: n.time };
 }

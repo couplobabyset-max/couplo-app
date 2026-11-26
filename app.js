@@ -434,7 +434,7 @@ function actionPlan(day,last7,prev7,T,list){
 /* 📊 CRM Center: leads from the Leadvyne CRM sheet, orders only from the app (matched by phone, last 10 digits).
    Five parts, each switched on/off by the owner (⚙️ at the bottom). Loaded once; Refresh loads it again. */
 let crmData=null,crmBusy=false,crmErr='';
-const CRM_PARTS=[['target','🎯 Target meter & top 3'],['funnel','🔻 Lead → order funnel'],['timing','🕒 When leads come'],['speed','⏱️ Days from first message to order'],['mix','🗣️ Language, bot score & product asked']];
+const CRM_PARTS=[['target','🎯 Target meter & top 3'],['funnel','🔻 Lead → order funnel'],['timing','🕒 When leads come'],['speed','⏱️ Days from first message to order'],['mix','🗣️ Language, bot score & product asked'],['calls','📞 Staff call list (Call first)']];
 /* new Code.gs has crmCenter; until it is deployed, build the same data from the old leadMatch + allOrders (no language / bot score / product) */
 async function crmLoad(){
   try{return await call('crmCenter',{adminPin})}
@@ -445,6 +445,41 @@ async function crmLoad(){
   let cfg=null;try{cfg=JSON.parse(LS.get('crmCfg')||'null')}catch(x){}
   cfg=cfg&&cfg.mods?cfg:{mods:{},revTarget:500000};
   return{ok:true,old:true,today:todayStr,cfg,leads,ints:[],orders,orderTarget:0,adspend:mgrAccess?[]:Object.entries(adminAd||{}),synced:L.synced||''};
+}
+/* 📞 Call first (sales staff): own CRM leads of the last 7 days with no order yet, best chances first (server ranks them) */
+function myCallView(){
+  const H=t=>el('h3',{text:t});
+  const box=el('div',{class:'panel'},H('📞 Call first'),el('div',{class:'empty',text:'Loading your leads…'}));
+  (async()=>{
+    let j;try{j=await call('myCallList',{staffId:me.id,pin:me.pin})}
+    catch(e){box.replaceChildren(H('📞 Call first'),el('div',{class:'empty',text:/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first.':e.message}));return}
+    const OUT={called:'✅ Called',noans:'📵 No answer',not:'🚫 Not interested'};
+    const when=(d,t)=>(d===j.today?'today':dm(d))+' '+t12(t);
+    const icon=(href,t,lbl)=>el('a',{href,target:href.startsWith('http')?'_blank':null,rel:'noopener','aria-label':lbl,text:t,style:'flex:0 0 auto;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);text-decoration:none;font-size:20px'});
+    const card=x=>{
+      const st=el('small',{style:'display:block;font-size:12.5px;'+(x.last?'color:var(--muted)':'color:var(--warn);font-weight:600'),text:x.last?OUT[x.last.outcome]+' · '+when(x.last.date,x.last.time):'Not called yet'});
+      const wa=waLink(x.phone);let wrap;
+      const btn=(oc,t)=>el('button',{class:'btn',type:'button',text:t,style:'flex:1 1 0;min-width:0;padding:10px 6px;font-size:13.5px',onclick:async e=>{const b=e.currentTarget;b.disabled=true;
+        try{const r=await call('logCall',{staffId:me.id,pin:me.pin,phone:x.phone,outcome:oc});x.last={outcome:oc,date:r.date,time:r.time};
+          if(oc==='not'){wrap.remove();toast('Removed from your list')}else{st.textContent=OUT[oc]+' · just now';st.style.color='var(--muted)';st.style.fontWeight='400';toast('Saved')}}
+        catch(er){toast(er.message)}b.disabled=false}});
+      wrap=el('div',{style:'border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--surface);display:flex;flex-direction:column;gap:8px'},
+        el('div',{style:'display:flex;gap:10px;align-items:center'},
+          el('div',{style:'flex:1;min-width:0'},el('b',{style:'display:block;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis',text:x.name||'No name'}),
+            el('small',{class:'mono',style:'display:block;color:var(--muted);font-size:12.5px',text:'+'+x.phone+' · came '+when(x.at.slice(0,10),x.at.slice(11))}),st),
+          icon('tel:+'+x.phone,'📞','Call '+(x.name||'')),wa?icon(wa,'💬','WhatsApp '+(x.name||'')):null),
+        (x.why.length||x.look)?el('div',{style:'display:flex;flex-wrap:wrap;gap:6px'},...x.why.map(w=>el('span',{class:'chip',style:'background:var(--accent-soft);color:var(--accent)',text:w})),
+          x.look?el('span',{class:'chip',style:'background:var(--sunk);color:var(--ink);white-space:normal',text:'Wants: '+x.look}):null):null,
+        el('div',{style:'display:flex;gap:6px'},btn('called','✅ Called'),btn('noans','📵 No answer'),btn('not','🚫 Not int.')));
+      return wrap};
+    const notYet=j.notCalled!=null?j.notCalled:j.list.filter(x=>!x.last).length;
+    box.replaceChildren(H('📞 Call first'),
+      el('div',{class:'stats'},el('div',{},el('b',{class:'mono',text:String(j.total)}),el('span',{text:'Leads, no order yet'})),el('div',{},el('b',{class:'mono',text:String(notYet)}),el('span',{text:'Not called yet'}))),
+      el('p',{class:'hint',text:'Your CRM leads from the last 7 days who have not ordered. Top of the list = best chance: answered the bot, baby 1–6 months, asked for several items, came in the last 1–3 days. After each call, tap what happened.'}),
+      j.list.length?el('div',{style:'display:flex;flex-direction:column;gap:10px'},...j.list.map(card)):el('div',{class:'empty',text:'No leads waiting. 🎉'}),
+      j.total>j.list.length?el('p',{class:'hint',text:'Showing the top '+j.list.length+' of '+j.total+'.'}):null);
+  })();
+  return[box];
 }
 function viewCrm(){
   if(!crmData){
@@ -558,6 +593,16 @@ function viewCrm(){
       el('p',{class:'hint',text:'If Hot leads do not convert better than Cold, the bot score is not worth following.'}),
       el('h3',{style:'margin-top:12px',text:'Product / question the customer picked in the bot'}),itRows.length?tbl(['Asked for','Leads','Ordered','Conversion'],itRows):el('div',{class:'empty',text:'No product picked in the bot this month.'}),
       el('p',{class:'hint',text:Object.values(it).reduce((t,x)=>t+x.n,0)+' of '+U.length+' leads picked something in the bot menu.'})));
+  }
+  if(on('calls')){
+    if(J.old)parts.push(el('div',{class:'panel'},el('h3',{text:'📞 Staff calls'}),el('div',{class:'empty',text:'The staff call list needs the new sheet script (Code.gs). Update it in Apps Script and it shows here.'})));
+    else{const cs=J.calls||[],ids=[...new Set(salesStaff().map(s=>s.id).concat(cs.map(c=>c[1])))];
+      const row=id=>{const mine=cs.filter(c=>c[1]===id),t=mine.filter(c=>c[0]===td),k=o=>t.filter(c=>c[3]===o).length,mm=mine.filter(c=>c[0].slice(0,7)===m);
+        return[name(id),t.length,k('called'),k('noans'),k('not'),mm.length,new Set(mm.map(c=>c[2])).size]};
+      const rows=ids.map(row).filter(r=>r.slice(1).some(Number));
+      parts.push(el('div',{class:'panel'},el('h3',{text:'📞 Staff calls (tapped in Call first)'}),
+        rows.length?tbl(['Staff','Today','✅ Called','📵 No answer','🚫 Not int.',monFull(m),'People'],rows):el('div',{class:'empty',text:'No calls tapped yet.'}),
+        el('p',{class:'hint',text:'Sales staff see a 📞 Call first list on their page (their own CRM leads with no order, best chances first) and tap what happened after each call. These counts come from those taps.'})));}
   }
   if(!parts.length)parts.push(el('div',{class:'empty',text:'All parts are switched off. Turn them on in ⚙️ Settings below.'}));
   /* ---- ⚙️ owner switches ---- */
@@ -1924,15 +1969,15 @@ async function ordersHome(edit){
   myTasks=d.tasks||[];myWork=d.work||[];
   if(d.category==='Regular'&&!me.sales){myTasks=[];myWork=[]} /* Regular staff see only attendance */
   const isProd=/Design|Printing/.test(d.category||'');
-  const tabList=(isProd?[['design',/Design/.test(d.category)?'🎨 Design work':'🖨️ Printing work']]:[]).concat(me.sales?[['day','⭐ My day']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders'],['cust','👥 My customers']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
+  const tabList=(isProd?[['design',/Design/.test(d.category)?'🎨 Design work':'🖨️ Printing work']]:[]).concat(me.sales?[['day','⭐ My day']]:[]).concat(me.sales&&d.callList?[['call','📞 Call first']]:[]).concat([['arena','🏆 Arena'],['att','My attendance']]).concat(me.sales?[['orders','My orders'],['cust','👥 My customers']]:[]).concat(myTasks.length?[['work','My work']]:[]).concat(d.hr?[['leads','Daily leads']]:[]);
   if(portalTab==='auto')portalTab=isProd?'design':me.sales?'day':myTasks.length?'work':'att';
   if(!tabList.some(t=>t[0]===portalTab))portalTab='att';
   me.portalTabs=tabList;const given=ADMIN_TABS.filter(([v])=>hasTab(d.access,v));
   const tabs=el('nav',{class:'tabs',role:'tablist'},...tabList.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':String(portalTab===v),text:t,onclick:()=>{portalTab=v;ordersHome()}})),
     ...given.map(([v,t])=>el('button',{role:'tab',type:'button','aria-selected':'false',text:t,onclick:()=>openMgr(d.access,v)})));
-  const body=portalTab==='design'?myDesignView():portalTab==='day'?myDayView(d):portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):portalTab==='cust'?myCustomersView():myOrdersView(edit,d);
+  const body=portalTab==='design'?myDesignView():portalTab==='day'?myDayView(d):portalTab==='call'?myCallView():portalTab==='arena'?myArenaView():portalTab==='att'?myAttendance(d):portalTab==='work'?myWorkView(d):portalTab==='leads'?hrLeadsView(d):portalTab==='cust'?myCustomersView():myOrdersView(edit,d);
   const warn=me.pin==='1234'?el('div',{class:'banner'},'You are using the default PIN 1234. ',el('button',{class:'btn',type:'button',text:'Change PIN now',onclick:changeMyPin})):null;
-  box.replaceChildren(head,warn,tabs,...body);
+  box.replaceChildren(...[head,warn,tabs,...body].filter(Boolean));
 }
 function changeMyPin(){let first=null;
   const ask=()=>pinSheet({title:first?'Repeat new PIN':'New PIN',onDone:async v=>{
