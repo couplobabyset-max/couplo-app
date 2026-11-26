@@ -435,12 +435,23 @@ function actionPlan(day,last7,prev7,T,list){
    Five parts, each switched on/off by the owner (⚙️ at the bottom). Loaded once; Refresh loads it again. */
 let crmData=null,crmBusy=false,crmErr='';
 const CRM_PARTS=[['target','🎯 Target meter & top 3'],['funnel','🔻 Lead → order funnel'],['timing','🕒 When leads come'],['speed','⏱️ Days from first message to order'],['mix','🗣️ Language, bot score & product asked']];
+/* new Code.gs has crmCenter; until it is deployed, build the same data from the old leadMatch + allOrders (no language / bot score / product) */
+async function crmLoad(){
+  try{return await call('crmCenter',{adminPin})}
+  catch(e){if(!/Unknown action/i.test(e.message))throw e}
+  const[L,O]=await Promise.all([call('leadMatch',{adminPin}),call('allOrders',{adminPin})]);
+  const leads=[];Object.entries(L.leads||{}).forEach(([p,rows])=>rows.forEach(r=>{if(r[3]!=='manual')leads.push([p,r[0],r[2]||'','','',-1])}));
+  const orders=(O.orders||[]).map(o=>[String(o.phone||'').replace(/\D/g,'').slice(-10),String(o.date||''),o.staffId||'',+o.amount||0,(String(o.dispatched).toUpperCase()==='TRUE'||o.awb)?1:0,o.type==='affordable'?'A':'P']);
+  let cfg=null;try{cfg=JSON.parse(LS.get('crmCfg')||'null')}catch(x){}
+  cfg=cfg&&cfg.mods?cfg:{mods:{},revTarget:500000};
+  return{ok:true,old:true,today:todayStr,cfg,leads,ints:[],orders,orderTarget:0,adspend:mgrAccess?[]:Object.entries(adminAd||{}),synced:L.synced||''};
+}
 function viewCrm(){
   if(!crmData){
-    if(!crmBusy&&!crmErr){crmBusy=true;call('crmCenter',{adminPin}).then(j=>{crmData=j}).catch(e=>{crmErr=/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first, then deploy a new version.':e.message}).finally(()=>{crmBusy=false;if(adminView==='crm')renderAdmin()})}
+    if(!crmBusy&&!crmErr){crmBusy=true;crmLoad().then(j=>{crmData=j}).catch(e=>{crmErr=/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first, then deploy a new version.':e.message}).finally(()=>{crmBusy=false;if(adminView==='crm')renderAdmin()})}
     return[el('div',{class:'panel'},el('h3',{text:'📊 CRM Center'}),el('div',{class:'empty',text:crmErr||'Reading the CRM sheet… (takes a few seconds)'}),crmErr?el('button',{class:'btn',type:'button',text:'Try again',onclick:()=>{crmErr='';renderAdmin()}}):null)];
   }
-  const J=crmData,m=adminMonth,td=J.today,cfg=J.cfg,on=k=>cfg.mods[k]!==false;
+  const J=crmData,m=adminMonth,td=J.today||todayStr,cfg=J.cfg,on=k=>cfg.mods[k]!==false;
   const daysIn=monthDates(m).length,mEnd=m+'-'+pad2(daysIn);
   const name=id=>{const s=(staff||[]).find(x=>x.id===id);return s?s.name:(id||'Not assigned')};
   const pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
@@ -533,7 +544,8 @@ function viewCrm(){
       el('p',{class:'hint',text:'For each order this month: days since that phone number first messaged the CRM number (first message ever, not just this month).'})));
   }
   /* ---- 5. language, bot score, product asked ---- */
-  if(on('mix')){
+  if(on('mix')&&J.old)parts.push(el('div',{class:'panel'},el('h3',{text:'🗣️ Language, bot score & product asked'}),el('div',{class:'empty',text:'This part needs the new sheet script (Code.gs). Update it in Apps Script and it shows here.'})));
+  if(on('mix')&&!J.old){
     const grp=f=>{const g={};U.forEach(u=>{const k=f(u);if(k==null)return;const x=g[k]=g[k]||{n:0,o:0};x.n++;if(u.ord)x.o++});return g};
     const lg=grp(u=>u.lg==='ml'?'Malayalam':u.lg==='en'?'English':u.lg?'Other':'Not known');
     const sc=grp(u=>u.sc==='H'?'🔥 Hot':u.sc==='W'?'🌤️ Warm':u.sc==='C'?'❄️ Cold':'Not scored');
@@ -552,7 +564,9 @@ function viewCrm(){
   if(!mgrAccess){
     const chk={};const tI=el('input',{id:'crm-tgt',type:'number',min:'0',inputmode:'numeric',value:String(cfg.revTarget||'')});
     const save=async e=>{e.target.disabled=true;const mods={};CRM_PARTS.forEach(([k])=>mods[k]=chk[k].checked);
-      try{const r=await call('crmSettings',{adminPin,cfg:{mods,revTarget:tI.value===''?0:+tI.value}});crmData.cfg=r.cfg;toast('Saved');renderAdmin()}catch(x){toast(x.message);e.target.disabled=false}};
+      const want={mods,revTarget:tI.value===''?0:+tI.value};
+      try{const r=await call('crmSettings',{adminPin,cfg:want});crmData.cfg=r.cfg;toast('Saved');renderAdmin()}
+      catch(x){if(/Unknown action/i.test(x.message)){LS.set('crmCfg',JSON.stringify(want));crmData.cfg=want;toast('Saved on this phone (until Code.gs is updated)');renderAdmin();return}toast(x.message);e.target.disabled=false}};
     parts.push(el('details',{class:'panel'},el('summary',{style:'cursor:pointer;font-weight:600',text:'⚙️ Settings — switch parts on / off'}),
       ...CRM_PARTS.map(([k,t])=>{chk[k]=el('input',{type:'checkbox',id:'crm-'+k,checked:on(k)});return el('label',{for:'crm-'+k,style:'display:flex;gap:10px;align-items:center;padding:8px 0;font-size:15px'},chk[k],t)}),
       el('label',{class:'f',for:'crm-tgt'},'Monthly sales target (₹)',tI),
