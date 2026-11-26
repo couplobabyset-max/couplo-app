@@ -1885,7 +1885,7 @@ var CRM_MODS = ['target', 'funnel', 'timing', 'speed', 'mix', 'calls'];
 function crmCfg_() {
   var c = {}; try { c = JSON.parse(setting_('crmCfg') || '{}') || {}; } catch (e) { c = {}; }
   var m = c.mods || {}, out = {};
-  CRM_MODS.forEach(function (k) { out[k] = m[k] !== false; });
+  CRM_MODS.forEach(function (k) { out[k] = k === 'calls' ? m[k] === true : m[k] !== false; }); // staff call list stays OFF unless the owner turns it on (staff work only in Leadvyne)
   return { mods: out, revTarget: c.revTarget != null && c.revTarget !== '' ? Number(c.revTarget) || 0 : 500000 };
 }
 function crmCenter_(mgr, n) {

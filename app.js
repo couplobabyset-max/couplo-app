@@ -443,7 +443,7 @@ async function crmLoad(){
   const leads=[];Object.entries(L.leads||{}).forEach(([p,rows])=>rows.forEach(r=>{if(r[3]!=='manual')leads.push([p,r[0],r[2]||'','','',-1])}));
   const orders=(O.orders||[]).map(o=>[String(o.phone||'').replace(/\D/g,'').slice(-10),String(o.date||''),o.staffId||'',+o.amount||0,(String(o.dispatched).toUpperCase()==='TRUE'||o.awb)?1:0,o.type==='affordable'?'A':'P']);
   let cfg=null;try{cfg=JSON.parse(LS.get('crmCfg')||'null')}catch(x){}
-  cfg=cfg&&cfg.mods?cfg:{mods:{},revTarget:500000};
+  cfg=cfg&&cfg.mods?cfg:{mods:{calls:false},revTarget:500000};
   return{ok:true,old:true,today:todayStr,cfg,leads,ints:[],orders,orderTarget:0,adspend:mgrAccess?[]:Object.entries(adminAd||{}),synced:L.synced||''};
 }
 /* 📞 Call first (sales staff): own CRM leads of the last 7 days with no order yet, best chances first (server ranks them) */
