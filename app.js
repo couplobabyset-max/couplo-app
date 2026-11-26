@@ -77,7 +77,7 @@ const hasTab=(acc,t)=>(acc||[]).includes(t)||((t==='dispatch'||t==='daily'||t===
 const can=t=>!mgrAccess||(t!=='ads'&&hasTab(mgrAccess,t)); /* Ads (spend) is owner only */
 /* drops the Leads column (index i) from a header/row list for people without the Leads tab */
 const xL=(a,i)=>can('sales')?a:a.filter((_,j)=>j!==i);
-const ADMIN_TABS=[['dash','Dashboard'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['customers','Customers'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['ads','Ads'],['salary','Salary'],['staff','Staff'],['ai','✨ AI Assistant']];
+const ADMIN_TABS=[['dash','Dashboard'],['crm','📊 CRM Center'],['arena','Arena'],['reports','Reports'],['register','Register'],['orders','Orders'],['customers','Customers'],['dispatch','Dispatch'],['daily','Daily sold'],['cod','COD'],['products','Products'],['work','Work'],['sales','Leads'],['ads','Ads'],['salary','Salary'],['staff','Staff'],['ai','✨ AI Assistant']];
 const TITLES={home:'Couplo Team',kiosk:'Check in / out',orders:'My page',admin:'Admin'};
 function show(v){view=v;adminOpen=v==='admin';['home','kiosk','admin','orders'].forEach(id=>{$('#'+id).hidden=id!==v});
   document.querySelector('.brand h1').textContent=TITLES[v];banner('');
@@ -300,6 +300,7 @@ function renderAdmin(){
   const parts=[el('div',{class:'toolbar'},el('div',{class:'row'},adminView==='dash'||adminView==='customers'?null:monthPicker(),el('button',{class:'btn',type:'button',text:'Refresh',onclick:reload}),back,el('button',{class:'btn',type:'button',text:'Log out',onclick:()=>goHome()})),themeBtn())];
   const ub=unlockBanner();if(ub)parts.push(ub);
   if(adminView==='dash')parts.push(...viewDashboard());
+  else if(adminView==='crm')parts.push(...viewCrm());
   else if(adminView==='arena')parts.push(...viewArena());
   else if(adminView==='reports')parts.push(...viewReports());
   else if(adminView==='register')parts.push(...viewRegister());
@@ -429,6 +430,135 @@ function actionPlan(day,last7,prev7,T,list){
     box.replaceChildren(el('h3',{text:'🎯 Action plan'}),...items,el('p',{class:'hint',style:'margin:0',text:'Worked out from this month\'s targets, leads, orders and Meta spend. Refresh after new orders.'}));
   }catch(e){box.replaceChildren(el('h3',{text:'🎯 Action plan'}),el('div',{class:'hint',text:'Could not work it out: '+e.message}))}})();
   return box;
+}
+/* 📊 CRM Center: leads from the Leadvyne CRM sheet, orders only from the app (matched by phone, last 10 digits).
+   Five parts, each switched on/off by the owner (⚙️ at the bottom). Loaded once; Refresh loads it again. */
+let crmData=null,crmBusy=false,crmErr='';
+const CRM_PARTS=[['target','🎯 Target meter & top 3'],['funnel','🔻 Lead → order funnel'],['timing','🕒 When leads come'],['speed','⏱️ Days from first message to order'],['mix','🗣️ Language, bot score & product asked']];
+function viewCrm(){
+  if(!crmData){
+    if(!crmBusy&&!crmErr){crmBusy=true;call('crmCenter',{adminPin}).then(j=>{crmData=j}).catch(e=>{crmErr=/Unknown action/i.test(e.message)?'Update the sheet script (Code.gs) first, then deploy a new version.':e.message}).finally(()=>{crmBusy=false;if(adminView==='crm')renderAdmin()})}
+    return[el('div',{class:'panel'},el('h3',{text:'📊 CRM Center'}),el('div',{class:'empty',text:crmErr||'Reading the CRM sheet… (takes a few seconds)'}),crmErr?el('button',{class:'btn',type:'button',text:'Try again',onclick:()=>{crmErr='';renderAdmin()}}):null)];
+  }
+  const J=crmData,m=adminMonth,td=J.today,cfg=J.cfg,on=k=>cfg.mods[k]!==false;
+  const daysIn=monthDates(m).length,mEnd=m+'-'+pad2(daysIn);
+  const name=id=>{const s=(staff||[]).find(x=>x.id===id);return s?s.name:(id||'Not assigned')};
+  const pct=(a,b)=>b?Math.round(a/b*100)+'%':'—';
+  const kpi=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+  const tbl=(head,rows,foot)=>el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...head.map(t=>el('th',{text:t})))),
+    el('tbody',{},...rows.map(r=>el('tr',{},el('th',{text:String(r[0])}),...r.slice(1).map(v=>el('td',{class:'mono',text:String(v)}))))),
+    foot?el('tfoot',{},el('tr',{},el('th',{text:String(foot[0])}),...foot.slice(1).map(v=>el('td',{class:'mono',text:String(v)})))):null));
+  /* orders by phone; month orders */
+  const byPh={};J.orders.forEach(o=>{if(o[0].length>=7)(byPh[o[0]]=byPh[o[0]]||[]).push(o)});
+  const mOrd=J.orders.filter(o=>o[1].slice(0,7)===m);
+  /* first lead ever per phone, and this month's leads per phone (first lead of the month decides staff / time) */
+  const first={},mon={};let rowsM=0;
+  J.leads.forEach(l=>{const p=l[0],day=l[1].slice(0,10);if(!first[p]||l[1]<first[p])first[p]=l[1];
+    if(day.slice(0,7)!==m)return;rowsM++;
+    const x=mon[p];if(!x||l[1]<x.t)mon[p]={t:l[1],day,staff:l[2],sc:x?best(x.sc,l[3]):l[3],lg:l[4]||(x&&x.lg)||'',it:l[5]>=0?l[5]:(x?x.it:-1)};
+    else{x.sc=best(x.sc,l[3]);if(x.it<0&&l[5]>=0)x.it=l[5];if(!x.lg&&l[4])x.lg=l[4]}});
+  function best(a,b){const r={H:3,W:2,C:1};return(r[b]||0)>(r[a]||0)?b:a}
+  const U=Object.entries(mon).map(([p,x])=>{const os=(byPh[p]||[]).filter(o=>o[1]>=x.day);return{p,...x,os,ord:os.length>0,amt:os.reduce((t,o)=>t+o[3],0),disp:os.some(o=>o[4])}});
+  const parts=[];
+  const sync=el('p',{class:'hint',style:'margin:0',text:'Leads: Leadvyne CRM sheet'+(J.synced?' (synced '+J.synced+')':'')+'. Orders: only from this app, matched by phone number. CRM "stage" is not used.'});
+  /* ---- 1. target meter + top 3 ---- */
+  if(on('target')){
+    const rev=mOrd.reduce((t,o)=>t+o[3],0),cnt=mOrd.length,tgt=cfg.revTarget||0,ot=J.orderTarget||0;
+    const elapsed=m===td.slice(0,7)?+td.slice(8):(m<td.slice(0,7)?daysIn:0),proj=elapsed?rev/elapsed*daysIn:0;
+    const p=tgt?Math.min(1,rev/tgt):0,R=80,cx=100,cy=95,ang=Math.PI*(1-p),x2=cx+R*Math.cos(ang),y2=cy-R*Math.sin(ang);
+    const arc=`<path d="M20 95 A80 80 0 0 1 180 95" fill="none" stroke="var(--line)" stroke-width="16" stroke-linecap="round"/>`+(p>0?`<path d="M20 95 A80 80 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}" fill="none" stroke="${p>=1?'var(--ok)':'var(--accent)'}" stroke-width="16" stroke-linecap="round"/>`:'')+
+      `<text x="100" y="78" text-anchor="middle" style="font:700 26px var(--f-display)">${tgt?Math.round(rev/tgt*100):0}%</text><text x="100" y="96" text-anchor="middle" class="ax">of ${esc(rs(tgt))}</text>`;
+    const gauge=svgBox(`<svg viewBox="0 0 200 105" width="100%" style="max-width:260px">${arc}</svg>`,'Sales against target');
+    const bySt={};mOrd.forEach(o=>{const s=bySt[o[2]]=bySt[o[2]]||{id:o[2],n:0,amt:0};s.n++;s.amt+=o[3]});
+    const top=Object.values(bySt).filter(s=>s.id).sort((a,b)=>b.amt-a.amt).slice(0,3);
+    const medal=['🥇','🥈','🥉'];
+    const podium=el('div',{style:'display:grid;grid-template-columns:repeat(3,1fr);gap:8px'},...top.map((s,i)=>el('div',{class:'kpi',style:'text-align:center;align-items:center'+(i===0?';border:2px solid var(--accent)':'')},
+      el('div',{style:'font-size:26px',text:medal[i]}),el('b',{style:'font-size:16px',text:name(s.id)}),el('small',{text:s.n+' orders'}),el('small',{class:'mono',style:'font-weight:600;color:var(--ink)',text:rs(s.amt)}))));
+    /* cumulative sales vs a straight target line */
+    const cum=[];let run=0;for(let d=1;d<=daysIn;d++){const ds=m+'-'+pad2(d);run+=mOrd.filter(o=>o[1]===ds).reduce((t,o)=>t+o[3],0);cum.push(ds<=td?run:null)}
+    const W=320,H=150,L=8,B=18,mx=niceMax(Math.max(1,tgt,run)),X=d=>L+(W-L-8)*(d-1)/Math.max(1,daysIn-1),Y=v=>H-B-(H-B-8)*v/mx;
+    const pts=cum.map((v,i)=>v==null?null:X(i+1).toFixed(1)+','+Y(v).toFixed(1)).filter(Boolean).join(' ');
+    const line=svgBox(`<svg viewBox="0 0 ${W} ${H}" width="100%">`+
+      `<line x1="${L}" x2="${W-8}" y1="${H-B}" y2="${H-B}" class="gl"/>`+(tgt?`<line x1="${X(1)}" y1="${Y(tgt/daysIn)}" x2="${X(daysIn)}" y2="${Y(tgt)}" stroke="var(--muted)" stroke-dasharray="4 4" stroke-width="1.5"/>`:'')+
+      (pts?`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>`:'')+
+      [1,8,15,22,daysIn].map(d=>`<text x="${X(d)}" y="${H-4}" text-anchor="middle" class="ax">${d}</text>`).join('')+`</svg>`,'Sales so far against target');
+    parts.push(el('div',{class:'panel'},el('h3',{text:'🎯 Target · '+monFull(m)}),
+      el('div',{style:'display:flex;flex-wrap:wrap;gap:16px;align-items:center'},el('div',{style:'flex:1 1 220px;max-width:280px'},gauge),
+        el('div',{class:'kpis',style:'flex:2 1 260px'},kpi(rs(rev),'Sales so far',cnt+' orders'),kpi(elapsed&&elapsed<daysIn?rs(proj):'—','Month-end at this speed',elapsed&&elapsed<daysIn?(tgt?(proj>=tgt?'✅ will cross target':'short by '+rs(tgt-proj)):''):''),
+          kpi(tgt?rs(Math.max(0,tgt-rev)):'—','Left to target',elapsed<daysIn&&tgt>rev?rs((tgt-rev)/Math.max(1,daysIn-elapsed))+' a day':''),kpi(ot?cnt+' / '+ot:cnt,'Orders',ot?'team order target (Arena)':''))),
+      el('h3',{style:'margin-top:14px',text:'Top 3 this month'}),top.length?podium:el('div',{class:'empty',text:'No orders yet this month.'}),
+      el('h3',{style:'margin-top:14px',text:'Sales so far vs target line'}),line,
+      el('div',{class:'legend'},el('span',{},el('i',{class:'sw',style:'background:var(--accent)'}),'Sales so far'),tgt?el('span',{},el('i',{class:'sw',style:'background:var(--muted)'}),'Where the target needs you'):null)));
+  }
+  /* ---- 2. funnel ---- */
+  if(on('funnel')){
+    const n=U.length,o=U.filter(u=>u.ord).length,d=U.filter(u=>u.disp).length;
+    const fromLead=mOrd.filter(x=>first[x[0]]&&first[x[0]].slice(0,10)<=x[1]).length;
+    const bar=(lbl,v,base,cls)=>el('div',{style:'margin:6px 0'},el('div',{style:'display:flex;justify-content:space-between;font-size:14px'},el('b',{text:lbl}),el('span',{class:'mono',text:v+(base?' · '+pct(v,base):'')})),
+      el('div',{style:'height:14px;background:var(--sunk);border-radius:7px;overflow:hidden'},el('div',{style:`height:100%;width:${n?Math.max(2,v/n*100):0}%;background:var(${cls});border-radius:7px`})));
+    const sp=!mgrAccess?(J.adspend||[]).filter(a=>a[0].slice(0,7)===m).reduce((t,a)=>t+a[1],0):0;
+    const st={};U.forEach(u=>{const s=st[u.staff]=st[u.staff]||{L:0,O:0,A:0,W:0};s.L++;if(u.ord){s.O++;s.A+=u.amt}else if(u.day<=addDays(td,-3))s.W++});
+    const ids=Object.keys(st).sort((a,b)=>st[b].L-st[a].L);
+    parts.push(el('div',{class:'panel'},el('h3',{text:'🔻 Lead → order funnel · '+monFull(m)}),
+      bar('Leads (people)',n,0,'--c-one'),bar('Ordered',o,n,'--accent'),bar('Dispatched',d,n,'--ok'),
+      el('p',{class:'hint',text:rowsM+' CRM rows this month = '+n+' different phone numbers. '+fromLead+' of '+mOrd.length+' orders this month came from a CRM lead; the rest are organic / old customers.'+(sp&&o?' Ad spend per ordered lead: '+rs(sp/o)+'.':'')}),
+      el('h3',{style:'margin-top:10px',text:'By sales staff (who the CRM assigned)'}),
+      tbl(['Staff','Leads','Ordered','Conversion','Sales','No order 3+ days'],ids.map(id=>{const s=st[id];return[name(id),s.L,s.O,pct(s.O,s.L),rs(s.A),s.W]}),
+        ['Total',n,o,pct(o,n),rs(U.reduce((t,u)=>t+u.amt,0)),ids.reduce((t,id)=>t+st[id].W,0)]),
+      el('p',{class:'hint',text:'"Ordered" counts a lead when that phone number has an order in the app on or after the day it first messaged this month — whoever took the order.'})));
+  }
+  /* ---- 3. when leads come ---- */
+  if(on('timing')){
+    const hr=Array.from({length:24},()=>({n:0,o:0})),wd=Array.from({length:7},()=>({n:0,o:0}));
+    const band={office:{n:0,o:0},eve:{n:0,o:0},night:{n:0,o:0}};
+    U.forEach(u=>{const h=+u.t.slice(11,13),mi=h*60+ +u.t.slice(14,16),w=new Date(u.day+'T12:00:00').getDay();
+      hr[h].n++;wd[w].n++;const b=mi>=570&&mi<1050?'office':mi>=1050&&mi<1320?'eve':'night';band[b].n++;if(u.ord){hr[h].o++;wd[w].o++;band[b].o++}});
+    const hl=h=>h===0?'12a':h<12?h+'a':h===12?'12p':(h-12)+'p';
+    const bk=[['office','Office time (9:30 AM – 5:30 PM)'],['eve','Evening (5:30 – 10 PM)'],['night','Night (10 PM – 9:30 AM)']];
+    parts.push(el('div',{class:'panel'},el('h3',{text:'🕒 When leads come · '+monFull(m)}),
+      tbl(['Time','Leads','Share','Ordered','Conversion'],bk.map(([k,t])=>[t,band[k].n,pct(band[k].n,U.length),band[k].o,pct(band[k].o,band[k].n)])),
+      el('h3',{style:'margin-top:12px',text:'Leads by hour'}),el('div',{class:'scroll chartscroll'},colChart(hr.map((x,h)=>({label:hl(h),p:x.n,a:0,sun:h<9||h>=18,tip:hl(h)+': '+x.n+' leads, '+x.o+' ordered'})),true)),
+      el('h3',{style:'margin-top:12px',text:'By day of the week'}),
+      tbl(['Day','Leads','Ordered','Conversion'],[1,2,3,4,5,6,0].map(w=>[DAYS[w].charAt(0)+DAYS[w].slice(1,3).toLowerCase(),wd[w].n,wd[w].o,pct(wd[w].o,wd[w].n)])),
+      el('p',{class:'hint',text:'Time is when the customer first messaged this month (India time). Coloured hours are outside office time.'})));
+  }
+  /* ---- 4. days from first message to order ---- */
+  if(on('speed')){
+    const B=[['Same day',0,0],['Next day',1,1],['2–3 days',2,3],['4–7 days',4,7],['8–30 days',8,30],['More than 30 days',31,1e9]],cnt=B.map(()=>0),ds=[];let none=0;
+    mOrd.forEach(o=>{const f=first[o[0]];if(!f||f.slice(0,10)>o[1]){none++;return}const d=Math.round((new Date(o[1]+'T12:00:00')-new Date(f.slice(0,10)+'T12:00:00'))/864e5);ds.push(d);cnt[B.findIndex(b=>d>=b[1]&&d<=b[2])]++});
+    ds.sort((a,b)=>a-b);const med=ds.length?ds[Math.floor(ds.length/2)]:null,avg=ds.length?ds.reduce((t,v)=>t+v,0)/ds.length:null;
+    parts.push(el('div',{class:'panel'},el('h3',{text:'⏱️ First message → order · '+monFull(m)}),
+      el('div',{class:'kpis'},kpi(med==null?'—':med+(med===1?' day':' days'),'Usual time (median)'),kpi(avg==null?'—':avg.toFixed(1)+' days','Average'),kpi(pct(cnt[0],ds.length),'Order the same day'),kpi(none,'Orders with no CRM lead','organic / old customers')),
+      el('div',{style:'margin-top:10px'},hBars(B.map((b,i)=>[b[0],cnt[i]]))),
+      el('p',{class:'hint',text:'For each order this month: days since that phone number first messaged the CRM number (first message ever, not just this month).'})));
+  }
+  /* ---- 5. language, bot score, product asked ---- */
+  if(on('mix')){
+    const grp=f=>{const g={};U.forEach(u=>{const k=f(u);if(k==null)return;const x=g[k]=g[k]||{n:0,o:0};x.n++;if(u.ord)x.o++});return g};
+    const lg=grp(u=>u.lg==='ml'?'Malayalam':u.lg==='en'?'English':u.lg?'Other':'Not known');
+    const sc=grp(u=>u.sc==='H'?'🔥 Hot':u.sc==='W'?'🌤️ Warm':u.sc==='C'?'❄️ Cold':'Not scored');
+    const it=grp(u=>u.it>=0?J.ints[u.it]:null);
+    const rows=(g,order)=>(order||Object.keys(g).sort((a,b)=>g[b].n-g[a].n)).filter(k=>g[k]).map(k=>[k,g[k].n,g[k].o,pct(g[k].o,g[k].n)]);
+    const itRows=rows(it).slice(0,12);
+    parts.push(el('div',{class:'panel'},el('h3',{text:'🗣️ Language, bot score & product asked · '+monFull(m)}),
+      el('h3',{style:'margin-top:6px',text:'Language the customer wrote in'}),tbl(['Language','Leads','Ordered','Conversion'],rows(lg,['Malayalam','English','Other','Not known'])),
+      el('h3',{style:'margin-top:12px',text:'Bot score (Leadvyne)'}),tbl(['Score','Leads','Ordered','Conversion'],rows(sc,['🔥 Hot','🌤️ Warm','❄️ Cold','Not scored'])),
+      el('p',{class:'hint',text:'If Hot leads do not convert better than Cold, the bot score is not worth following.'}),
+      el('h3',{style:'margin-top:12px',text:'Product / question the customer picked in the bot'}),itRows.length?tbl(['Asked for','Leads','Ordered','Conversion'],itRows):el('div',{class:'empty',text:'No product picked in the bot this month.'}),
+      el('p',{class:'hint',text:Object.values(it).reduce((t,x)=>t+x.n,0)+' of '+U.length+' leads picked something in the bot menu.'})));
+  }
+  if(!parts.length)parts.push(el('div',{class:'empty',text:'All parts are switched off. Turn them on in ⚙️ Settings below.'}));
+  /* ---- ⚙️ owner switches ---- */
+  if(!mgrAccess){
+    const chk={};const tI=el('input',{id:'crm-tgt',type:'number',min:'0',inputmode:'numeric',value:String(cfg.revTarget||'')});
+    const save=async e=>{e.target.disabled=true;const mods={};CRM_PARTS.forEach(([k])=>mods[k]=chk[k].checked);
+      try{const r=await call('crmSettings',{adminPin,cfg:{mods,revTarget:tI.value===''?0:+tI.value}});crmData.cfg=r.cfg;toast('Saved');renderAdmin()}catch(x){toast(x.message);e.target.disabled=false}};
+    parts.push(el('details',{class:'panel'},el('summary',{style:'cursor:pointer;font-weight:600',text:'⚙️ Settings — switch parts on / off'}),
+      ...CRM_PARTS.map(([k,t])=>{chk[k]=el('input',{type:'checkbox',id:'crm-'+k,checked:on(k)});return el('label',{for:'crm-'+k,style:'display:flex;gap:10px;align-items:center;padding:8px 0;font-size:15px'},chk[k],t)}),
+      el('label',{class:'f',for:'crm-tgt'},'Monthly sales target (₹)',tI),
+      el('div',{class:'row'},el('button',{class:'btn primary',type:'button',text:'Save',onclick:save}))));
+  }
+  return[el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'📊 CRM Center'}),el('button',{class:'btn',type:'button',text:'Reload CRM',onclick:()=>{crmData=null;crmErr='';renderAdmin()}})),sync),...parts];
 }
 function viewSales(){
   const list=salesStaff(), m=adminMonth;

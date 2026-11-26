@@ -448,7 +448,7 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
+var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, crmCenter: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -697,6 +697,14 @@ function handle_(b) {
     case 'leadMatch': return leadMatch_();
     case 'saveFirstMsg': return fmSave_(b.phone, b.date, 'admin', n);
     case 'adSpendByAd': return adSpendByAd_(String(b.from || ''), String(b.to || ''));
+    case 'crmCenter': return crmCenter_(mgr, n);
+    case 'crmSettings': { // owner only (not in ACTION_TAB): which CRM Center parts show, and the monthly sales target in rupees
+      var cc = crmCfg_(), inp = b.cfg || {};
+      CRM_MODS.forEach(function (k) { if (inp.mods && k in inp.mods) cc.mods[k] = !!inp.mods[k]; });
+      if (inp.revTarget != null) { var rt = Math.round(Number(inp.revTarget)); if (!(rt >= 0)) return { ok: false, error: 'Type the target in rupees' }; cc.revTarget = rt; }
+      upsert_('Settings', { key: 'crmCfg', value: JSON.stringify(cc) });
+      return { ok: true, cfg: cc };
+    }
     case 'saveOrder': {
       var so = cleanOrder_(b.order); so.id = b.order.id || ('o' + new Date().getTime().toString(36));
       ['orderNo','date','staffId','createdAt'].forEach(function (k) { so[k] = String(b.order[k] || ''); });
@@ -1529,6 +1537,7 @@ var ACTION_TAB = {
   saveProduct: 'products', deleteProduct: 'products',
   saveWork: 'work', saveTask: 'work', deleteTask: 'work',
   aiAsk: 'ai',
+  crmCenter: 'crm',
   arenaAdmin: 'arena', mediaDecide: 'arena', issueDecide: 'arena', bonusAdd: 'arena', bonusDelete: 'arena', arenaSettings: 'arena'
   /* not listed = owner only: deleteStaff, sendReportNow, setAdminPin, changing report settings */
 };
@@ -1861,4 +1870,48 @@ function aiFallbackModels_(key, skip) {
     } catch (e) {}
   }
   return list.filter(function (x) { return x !== skip; });
+}
+
+
+/* ---------- CRM Center (Nov 2026) ----------
+   Leads come from the Leadvyne CRM sheet ("COUPLO LEADS CRM"); orders ONLY from the app (CRM stage / "won" is not trusted).
+   A lead counts as converted when the same phone (last 10 digits) has an app order on or after the lead's day.
+   Settings "crmCfg" = { mods: {target, funnel, timing, speed, mix}: true/false, revTarget: rupees a month } — the owner switches parts on/off.
+   Read only. Sends slim rows; the app works out the numbers for any month. */
+var CRM_MODS = ['target', 'funnel', 'timing', 'speed', 'mix'];
+function crmCfg_() {
+  var c = {}; try { c = JSON.parse(setting_('crmCfg') || '{}') || {}; } catch (e) { c = {}; }
+  var m = c.mods || {}, out = {};
+  CRM_MODS.forEach(function (k) { out[k] = m[k] !== false; });
+  return { mods: out, revTarget: c.revTarget != null && c.revTarget !== '' ? Number(c.revTarget) || 0 : 500000 };
+}
+function crmCenter_(mgr, n) {
+  var data = SpreadsheetApp.openById(LEAD_CRM_ID).getSheetByName('Sheet1').getDataRange().getValues();
+  var head = data.shift().map(function (h) { return String(h).trim().toLowerCase(); });
+  var c = function (name) { return head.indexOf(name); };
+  var cPh = c('phone'), cDate = c('date'), cWho = c('assigned to'), cSc = c('score'), cLg = c('language'), cInt = c('booking time');
+  if (cPh < 0 || cDate < 0) throw new Error('CRM sheet: Phone / Date column not found');
+  var byName = {}; staffList_().forEach(function (s) { byName[leadName_(s.name)] = s.id; byName[leadName_(s.id.split('-')[0])] = s.id; });
+  var ints = [], intIx = {}, leads = [];
+  data.forEach(function (r) {
+    var p = String(r[cPh] || '').replace(/\D/g, ''); if (p.length < 7) return; p = p.slice(-10);
+    var d = r[cDate]; if (!d) return;
+    if (!(d instanceof Date)) d = new Date(String(d).trim().replace(' ', 'T'));
+    if (isNaN(d)) return;
+    var it = cInt >= 0 ? String(r[cInt] || '').trim() : '';
+    if (/^[A-Z0-9_]+$/.test(it) && it.indexOf('_') >= 0) it = ''; // bot codes like CHAT_ORDER_START are not products
+    var ix = -1; if (it) { var k = it.toLowerCase(); if (!(k in intIx)) { intIx[k] = ints.length; ints.push(it.slice(0, 60)); } ix = intIx[k]; }
+    var sc = cSc >= 0 ? String(r[cSc] || '').trim().charAt(0).toUpperCase() : '';
+    var lg = cLg >= 0 ? String(r[cLg] || '').trim().toLowerCase() : '';
+    leads.push([p, Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm'), cWho >= 0 ? (byName[leadName_(r[cWho])] || '') : '', sc, lg, ix]);
+  });
+  var orders = rows_('Orders').map(function (o) {
+    return [String(o.phone || '').replace(/\D/g, '').slice(-10), String(o.date || ''), o.staffId || '', Number(o.amount) || 0,
+            (String(o.dispatched).toUpperCase() === 'TRUE' || o.awb) ? 1 : 0, o.type === 'affordable' ? 'A' : 'P'];
+  });
+  var nSales = staffList_().filter(function (s) { return s.sales && s.active !== false; }).length;
+  return { ok: true, today: n.date, cfg: crmCfg_(), leads: leads, ints: ints, orders: orders,
+    orderTarget: arenaNum_('salesMonthTarget') * nSales,
+    adspend: mgr ? [] : (sh_('AdSpend') ? rows_('AdSpend').map(function (r) { return [String(r.date), Number(r.amount) || 0]; }) : []),
+    synced: setting_('leadSyncLast') || '' };
 }
