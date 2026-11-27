@@ -92,14 +92,14 @@ function site(o){
 }
 
 function card(o){
-  const delivered = /delivered|paid/.test(o.codStatus||"");
+  const delivered = /delivered|paid/.test(o.codStatus||"") || /^delivered$/i.test(o.ipStatus||"");
   const sent = o.dispatched || !!o.awb || delivered;
   const made = o.designDone || sent;
   const steps = [
     ["Order confirmed", fmt(o.date), true],
     ["Design & printing", made ? "Done" : "Your baby set is being made", made],
     ["Shipped", sent ? (o.dispatchedAt ? fmt(o.dispatchedAt) : "Sent") + (o.courier ? " · " + esc(o.courier) : "") : "We'll ship it soon", sent],
-    ["Delivered", delivered ? "Delivered" : (sent ? "On the way" : ""), delivered]
+    ["Delivered", delivered ? "Delivered" : (sent ? (o.ipStatus && !/^returned$/i.test(o.ipStatus) ? "On the way · " + esc(o.ipStatus) : "On the way") : ""), delivered]
   ];
   const nowIdx = steps.findIndex(s => !s[2]);
   let trk = "";

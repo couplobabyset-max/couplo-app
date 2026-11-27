@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','designStartAt','trackBy','trackAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','designStartAt','trackBy','trackAt','ipStatus','ipLast','ipAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -449,7 +449,7 @@ function doGet(e) {
 
 /* actions that only read: they never wait in the queue, so the check-in screen refresh
    and reports don't slow down people who are saving */
-var READ_ONLY = { logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, myCallList: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, crmCenter: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
+var READ_ONLY = { ipPincode: 1, ipTariff: 1, logError: 1, publicTrack: 1, kiosk: 1, portalStaff: 1, salesStaff: 1, portalLogin: 1, myData: 1, staffLogin: 1, myOrders: 1, myCustomers: 1, myCallList: 1, adminCheck: 1, month: 1, allOrders: 1, leadMatch: 1, adSpendByAd: 1, crmCenter: 1, arenaMe: 1, arenaAdmin: 1, aiAsk: 1 };
 function doPost(e) {
   var lock = null;
   try {
@@ -513,7 +513,7 @@ function handle_(b) {
         .sort(function (x, y) { return String(y.date) < String(x.date) ? -1 : String(y.date) > String(x.date) ? 1 : 0; }).slice(0, 10);
       if (!hit.length) return { ok: false, error: 'No recent order found for this mobile number. Use the number you gave when ordering, or message us on WhatsApp.' };
       return { ok: true, orders: hit.map(function (o) { return { orderNo: o.orderNo, date: o.date, product: o.product, cod: o.payment === 'cod',
-        designDone: !!o.designDoneAt, dispatched: o.dispatched === 'TRUE', dispatchedAt: String(o.dispatchedAt || '').slice(0, 10), courier: o.payment === 'cod' ? 'India Post' : (o.courier || ''), awb: o.awb || '', codStatus: o.codStatus || '' }; }) };
+        designDone: !!o.designDoneAt, dispatched: o.dispatched === 'TRUE', dispatchedAt: String(o.dispatchedAt || '').slice(0, 10), courier: o.payment === 'cod' ? 'India Post' : (o.courier || ''), awb: o.awb || '', codStatus: o.codStatus || '', ipStatus: o.ipStatus || '' }; }) };
     }
     case 'portalStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.active || s.sales; })
@@ -569,6 +569,7 @@ function handle_(b) {
       saveWork_(w.id, wd, b.items, n);
       return { ok: true, work: workRows_(wd.slice(0, 7), w.id) };
     }
+    case 'ipPincode': return ipPincodeAction_(b);   // India Post: pincode check in the order form (sales staff or admin)
     case 'salesStaff':
       return { ok: true, staff: staffList_().filter(function (s) { return s.sales; })
         .map(function (s) { return { id: s.id, name: s.name, order: s.order, hasPin: !!s.pin }; }) };
@@ -696,6 +697,10 @@ function handle_(b) {
       return { ok: true, holidays: h };
     }
     case 'allOrders': return { ok: true, orders: rows_('Orders') };
+    case 'ipTrack': return ipTrackAction_(b, n);     // India Post: live tracking for one order
+    case 'ipTariff': return ipTariffAction_(b);      // India Post: shipping charge
+    case 'ipSync': return ipSyncNow_(n);             // India Post: check all open India Post parcels now
+    case 'ipStatus': return ipStatusAction_();       // India Post: is the API connected
     case 'aiAsk': return aiAsk_(b, mgr, can, n);
     case 'leadMatch': return leadMatch_();
     case 'saveFirstMsg': return fmSave_(b.phone, b.date, 'admin', n);
@@ -735,7 +740,7 @@ function handle_(b) {
       var co = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
       if (!co) return { ok: false, error: 'Order not found' };
       var cs = String(b.codStatus || ''); if (['', 'shipped', 'delivered', 'paid', 'returned'].indexOf(cs) < 0) return { ok: false, error: 'Bad status' };
-      co.codStatus = cs; co.courier = String(b.courier || '').trim(); co.awb = String(b.awb || '').trim().toUpperCase();
+      var awb0 = co.awb; co.codStatus = cs; co.courier = String(b.courier || '').trim(); co.awb = String(b.awb || '').trim().toUpperCase(); if (co.awb !== awb0) { co.ipStatus = ''; co.ipLast = ''; co.ipAt = ''; }
       if (cs && cs !== 'returned' && co.dispatched !== 'TRUE') { co.dispatched = 'TRUE'; co.dispatchedAt = co.dispatchedAt || n.date + ' ' + n.time; }
       ordersHeader_(); upsert_('Orders', co);
       return { ok: true, order: co };
@@ -743,7 +748,7 @@ function handle_(b) {
     case 'setTrack': { // Dispatch tab: courier + tracking no. for any order (prepaid or COD); a tracking no. marks it dispatched. Shown to customers on track.html
       var tk = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
       if (!tk) return { ok: false, error: 'Order not found' };
-      tk.awb = String(b.awb || '').replace(/\s+/g, '').toUpperCase();
+      var awb1 = tk.awb; tk.awb = String(b.awb || '').replace(/\s+/g, '').toUpperCase(); if (tk.awb !== awb1) { tk.ipStatus = ''; tk.ipLast = ''; tk.ipAt = ''; }
       tk.courier = tk.payment === 'cod' ? 'India Post' : String(b.courier || '').trim();
       if (tk.awb && !tk.courier) return { ok: false, error: 'Pick the courier.' };
       if (tk.awb && tk.dispatched !== 'TRUE') { tk.dispatched = 'TRUE'; tk.dispatchedAt = tk.dispatchedAt || n.date + ' ' + n.time; }
@@ -1252,7 +1257,7 @@ function keepStages_(o, old, n) {
   var was = old ? old.dispatchedAt || '' : '';
   o.dispatchedAt = o.dispatched === 'TRUE' ? (was || n.date + ' ' + n.time) : '';
   /* COD tracking (COD tab) is never wiped by an order edit */
-  ['codStatus', 'courier', 'awb', 'trackBy', 'trackAt'].forEach(function (k) { o[k] = old ? (old[k] || '') : ''; });
+  ['codStatus', 'courier', 'awb', 'trackBy', 'trackAt', 'ipStatus', 'ipLast', 'ipAt'].forEach(function (k) { o[k] = old ? (old[k] || '') : ''; });
 }
 
 /* ---- dates ---- */
@@ -1534,7 +1539,7 @@ function arenaAdminAction_(b, n) {
 var TABS = ['dash', 'arena', 'reports', 'register', 'orders', 'products', 'work', 'sales', 'salary', 'staff', 'ai'];
 var ACTION_TAB = {
   month: '*', reportSettings: '*',
-  allOrders: 'orders', leadMatch: 'orders', saveFirstMsg: 'orders', setCod: 'orders', setTrack: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
+  allOrders: 'orders', ipTrack: 'orders', ipTariff: 'orders', ipSync: 'orders', ipStatus: 'orders', leadMatch: 'orders', saveFirstMsg: 'orders', setCod: 'orders', setTrack: 'orders', saveOrder: 'orders', deleteOrder: 'orders', setDispatched: 'orders',
   saveAtt: 'register', deleteAtt: 'register', saveHoliday: 'register',
   saveSales: 'sales', savePay: 'salary', emailSlips: 'salary',
   saveStaff: 'staff',
@@ -1971,4 +1976,185 @@ function crmLogCall_(me, b, n) {
   sh.getRange(sh.getLastRow() + 1, 1, 1, 6).setNumberFormat('@').setValues([[Utilities.getUuid().slice(0, 8), n.date, n.time, me.id, p, oc]]);
   forget_('CallLog');
   return { ok: true, outcome: oc, date: n.date, time: n.time };
+}
+
+/* ============================================================
+   India Post API (Nov 2026) — DOP developer portal (CEPT)
+   Owner puts these in Apps Script → Project Settings → Script properties (never in the app files):
+     INDIAPOST_USER   portal API username
+     INDIAPOST_PASS   portal API password
+     INDIAPOST_BASE   optional. Default = test server https://test.cept.gov.in/beextcustomer
+                      (change to the live address India Post gives you after testing)
+     INDIAPOST_FROM_PIN  optional. Our booking pincode (default 676304, Vengara)
+   Then run indiaPostSetup() once from the editor: it tests the login and turns on the hourly tracking check.
+   ============================================================ */
+var IP_TEST_BASE = 'https://test.cept.gov.in/beextcustomer';
+function ipCfg_() {
+  var p = PropertiesService.getScriptProperties();
+  return { user: String(p.getProperty('INDIAPOST_USER') || '').trim(), pass: String(p.getProperty('INDIAPOST_PASS') || ''),
+           base: String(p.getProperty('INDIAPOST_BASE') || IP_TEST_BASE).trim().replace(/\/+$/, ''),
+           fromPin: String(p.getProperty('INDIAPOST_FROM_PIN') || '676304').replace(/\D/g, '') };
+}
+/* access token lasts 15 min → kept 13 min in the script cache; refresh token (30 min) is tried before a full login */
+function ipToken_(force) {
+  var c = ipCfg_(), cache = CacheService.getScriptCache();
+  if (!c.user || !c.pass) throw new Error('India Post login is not set. Add INDIAPOST_USER and INDIAPOST_PASS in Script properties.');
+  if (!force) { var t = cache.get('ip_at'); if (t) return t; }
+  var save = function (d) {
+    if (!d || !d.access_token) return '';
+    cache.put('ip_at', d.access_token, Math.max(60, Math.min(780, (Number(d.expires_in) || 900) - 120)));
+    if (d.refresh_token) cache.put('ip_rt', d.refresh_token, Math.max(60, Math.min(1500, (Number(d.refresh_expires_in) || 1800) - 300)));
+    return d.access_token;
+  };
+  var rt = cache.get('ip_rt');
+  if (rt) {
+    try {
+      var r0 = UrlFetchApp.fetch(c.base + '/v1/access/TokenWithRtoken', { method: 'post', headers: { Authorization: 'Bearer ' + rt, accept: 'application/json' }, muteHttpExceptions: true });
+      if (r0.getResponseCode() === 200) { var a0 = save((JSON.parse(r0.getContentText() || '{}') || {}).data); if (a0) return a0; }
+    } catch (e) {}
+  }
+  var r = UrlFetchApp.fetch(c.base + '/v1/access/login', { method: 'post', contentType: 'application/json', headers: { accept: 'application/json' },
+    payload: JSON.stringify({ username: c.user, password: c.pass }), muteHttpExceptions: true });
+  var j = {}; try { j = JSON.parse(r.getContentText() || '{}'); } catch (e) {}
+  var at = save(j.data);
+  if (!at) throw new Error('India Post login failed (' + r.getResponseCode() + ')' + (j.message ? ': ' + j.message : '') + '. Check INDIAPOST_USER / INDIAPOST_PASS.');
+  return at;
+}
+/* one API call; logs in again once if the token was refused */
+function ipCall_(method, path, query, body) {
+  var c = ipCfg_(), qs = query ? Object.keys(query).filter(function (k) { return query[k] !== '' && query[k] != null; })
+    .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(query[k]); }).join('&') : '';
+  var url = c.base + path + (qs ? '?' + qs : '');
+  for (var tryN = 0; tryN < 2; tryN++) {
+    var opt = { method: method, headers: { Authorization: 'Bearer ' + ipToken_(tryN > 0), accept: 'application/json' }, muteHttpExceptions: true };
+    if (body) { opt.contentType = 'application/json'; opt.payload = JSON.stringify(body); }
+    var r = UrlFetchApp.fetch(url, opt), code = r.getResponseCode(), txt = r.getContentText() || '';
+    if (code === 401 && tryN === 0) { CacheService.getScriptCache().removeAll(['ip_at', 'ip_rt']); continue; }
+    var j = {}; try { j = JSON.parse(txt); } catch (e) { j = { raw: txt.slice(0, 300) }; }
+    j._code = code;
+    return j;
+  }
+}
+function ipErr_(j) { return (j && (j.message || j.error || (j.errors && JSON.stringify(j.errors)) || j.raw)) || ('India Post error ' + (j && j._code)); }
+
+/* ---- pincode check (order form) ---- */
+function ipPincodeAction_(b) {
+  var okUser = false, pin = setting_('adminPin');
+  if (pin && String(b.adminPin) === pin) okUser = true;
+  else if (b.adminPin && mgrOf_(b.adminPin)) okUser = true;
+  else { var s = staffList_().filter(function (x) { return x.id === b.staffId; })[0]; okUser = !!s && (!s.pin || String(s.pin) === String(b.pin)); }
+  if (!okUser) return { ok: false, error: 'Wrong PIN' };
+  var pc = String(b.pincode || '').replace(/\D/g, '');
+  if (pc.length !== 6) return { ok: false, error: 'Pincode needs 6 digits.' };
+  var cache = CacheService.getScriptCache(), hit = cache.get('ip_pc_' + pc);
+  if (hit) return JSON.parse(hit);
+  var j = ipCall_('get', '/v1/pincode-search', { pincode: pc, limit: 50 });
+  if (j._code !== 200 && j._code !== 404) return { ok: false, error: ipErr_(j) };
+  var list = (j.data || []).map(function (o) { return { office: o.office_name, type: o.office_type_code, delivery: o.delivery_office_flag === true, city: o.city_name, taluk: o.taluk_name, district: o.district_name || '', state: o.state_name }; });
+  var out = { ok: true, pincode: pc, valid: list.length > 0, offices: list.slice(0, 20),
+              state: list[0] ? list[0].state : '', district: list[0] ? (list[0].district || list[0].city || '') : '', taluk: list[0] ? list[0].taluk : '' };
+  cache.put('ip_pc_' + pc, JSON.stringify(out), 21600);
+  return out;
+}
+
+/* ---- shipping charge ---- */
+function ipTariffAction_(b) {
+  var c = ipCfg_(), to = String(b.pincode || '').replace(/\D/g, ''), g = Math.round(Number(b.grams) || 0);
+  if (to.length !== 6) return { ok: false, error: 'Pincode needs 6 digits.' };
+  if (!(g > 0)) return { ok: false, error: 'Type the weight in grams.' };
+  var cod = Number(b.codAmount) > 0, j;
+  if (b.service === 'speed') j = ipCall_('get', '/v1/speed-post/tariffs', { 'product-code': b.productCode || 'SP', weight: g, 'source-pincode': c.fromPin, 'destination-pincode': to,
+      length: b.l || '', width: b.w || '', height: b.h || '' });
+  else j = ipCall_('get', '/v1/business-parcel-tariff/calculate', { 'product-code': b.productCode || 'BP', weight: g, 'source-pincode': c.fromPin, 'destination-pincode': to,
+      length: b.l || '', width: b.w || '', height: b.h || '', cod: cod ? 'true' : '', 'cod-amount': cod ? Math.round(Number(b.codAmount)) : '' });
+  if (j._code !== 200 || j.success === false) return { ok: false, error: ipErr_(j) };
+  var d = j.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : j;
+  return { ok: true, from: c.fromPin, to: to, grams: g, service: b.service === 'speed' ? 'Speed Post' : 'Business Parcel',
+    total: Number(d.final_amount || d.total_amount || d.totalAmount || d.total || 0), base: Number(d.base_tariff || 0), cod: Number(d.cod_charges || 0),
+    tax: Number(d.total_tax || 0), chargeable: Number(d.chargeable_weight || g), deliveryType: d.delivery_type || '', raw: d };
+}
+
+/* ---- tracking ---- */
+function ipIsIP_(o) { return !!o.awb && (o.payment === 'cod' || /india\s*post/i.test(o.courier || '') || /^[A-Z]{2}\d{9}IN$/.test(o.awb)); }
+function ipFinal_(o) { return /^delivered$/i.test(o.ipStatus || '') || /^returned$/i.test(o.ipStatus || '') || o.codStatus === 'paid' || o.codStatus === 'returned'; }
+/* sort one tracking reply into our words: delivered / returned / on the way */
+function ipKind_(status, hist) {
+  var txt = [status].concat((hist || []).slice(-2).map(function (h) { return h.status; })).join(' | ');
+  if (/return|rts\b|sent back|redirect(ed)? to sender|to sender/i.test(txt)) return 'returned';
+  if (/(^|[^n])delivered/i.test(String(status || '')) && !/not delivered|undelivered|non.?delivered|attempt/i.test(String(status || ''))) return 'delivered';
+  return 'transit';
+}
+function ipNorm_(x) {
+  if (!x || typeof x !== 'object') return null;
+  var no = String(x.trackingNumber || x.tracking_number || x.article_number || x.articleNumber || x.barcode || x.consignment_number || '').toUpperCase();
+  var hist = (x.history || x.events || x.tracking_details || x.trackingDetails || []).map(function (h) {
+    return { time: String(h.timestamp || h.event_date || h.date || h.dateTime || ''), place: String(h.location || h.office || h.office_name || ''), status: String(h.status || h.event || h.event_description || h.description || '') }; });
+  hist.sort(function (a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
+  var st = String(x.currentStatus || x.current_status || x.status || x.booking_status || (hist.length ? hist[hist.length - 1].status : '') || '');
+  return { awb: no, status: st, kind: ipKind_(st, hist), history: hist, origin: x.origin || '', destination: x.destination || '', eta: x.estimatedDelivery || '' };
+}
+/* save the result on the order; COD: shipped → delivered, or → returned. 'Cash received' is never changed by this */
+function ipApply_(o, t, n) {
+  var last = t.history.length ? t.history[t.history.length - 1] : null;
+  o.ipStatus = t.kind === 'delivered' ? 'Delivered' : t.kind === 'returned' ? 'Returned' : (t.status || 'In transit').slice(0, 60);
+  o.ipLast = last ? (String(last.time).slice(0, 16).replace('T', ' ') + ' · ' + last.place + ' · ' + last.status).slice(0, 180) : '';
+  o.ipAt = n.date + ' ' + n.time;
+  if (o.payment === 'cod' && o.codStatus !== 'paid') {
+    if (t.kind === 'delivered' && (o.codStatus === '' || o.codStatus === 'shipped')) o.codStatus = 'delivered';
+    if (t.kind === 'returned' && o.codStatus !== 'returned') o.codStatus = 'returned';
+  }
+  if (o.dispatched !== 'TRUE') { o.dispatched = 'TRUE'; o.dispatchedAt = o.dispatchedAt || n.date + ' ' + n.time; }
+}
+function ipTrackAction_(b, n) {
+  var o = rows_('Orders').filter(function (x) { return x.id === b.id; })[0];
+  var awb = String((o && o.awb) || b.awb || '').replace(/\s+/g, '').toUpperCase();
+  if (!awb) return { ok: false, error: 'No tracking no.' };
+  var j = ipCall_('get', '/v1/tracking/' + encodeURIComponent(awb));
+  if (j._code === 404) return { ok: true, found: false, awb: awb };
+  if (j._code !== 200 || j.success === false) return { ok: false, error: ipErr_(j) };
+  var t = ipNorm_(j.data || j); if (!t) return { ok: false, error: 'India Post sent no tracking data.' };
+  t.awb = t.awb || awb;
+  if (o && o.awb === awb) { ordersHeader_(); ipApply_(o, t, n); upsert_('Orders', o); }
+  return { ok: true, found: true, tracking: t, order: o || null };
+}
+/* bulk: every India Post order with a tracking no. that is not finished (last 60 days) */
+function ipSyncNow_(n) {
+  n = n || now_();
+  var since = ad_(n.date, -60), open = rows_('Orders').filter(function (o) { return ipIsIP_(o) && !ipFinal_(o) && String(o.date) >= since; });
+  if (!open.length) return { ok: true, checked: 0, changed: 0, delivered: 0, returned: 0 };
+  var byAwb = {}; open.forEach(function (o) { (byAwb[o.awb] = byAwb[o.awb] || []).push(o); });
+  var awbs = Object.keys(byAwb), changed = 0, dl = 0, rt = 0, errs = [];
+  ordersHeader_();
+  for (var i = 0; i < awbs.length; i += 50) {
+    var part = awbs.slice(i, i + 50), j = ipCall_('post', '/v1/tracking/bulk', null, { bulk: part });
+    if (j._code !== 200 || j.success === false) { errs.push(ipErr_(j)); continue; }
+    var d = j.data, items = Array.isArray(d) ? d : (d && typeof d === 'object') ? (d.results || d.items || d.articles || Object.keys(d).map(function (k) { var v = d[k]; if (v && typeof v === 'object' && !v.trackingNumber) v.trackingNumber = k; return v; })) : [];
+    items.forEach(function (x) {
+      var t = ipNorm_(x); if (!t || !byAwb[t.awb]) return;
+      byAwb[t.awb].forEach(function (o) {
+        var before = o.ipStatus + '|' + o.codStatus; ipApply_(o, t, n); upsert_('Orders', o);
+        if (before !== o.ipStatus + '|' + o.codStatus) { changed++; if (t.kind === 'delivered') dl++; if (t.kind === 'returned') rt++; }
+      });
+    });
+  }
+  upsert_('Settings', { key: 'ipLastSync', value: n.date + ' ' + n.time + ' · ' + awbs.length + ' checked' + (errs.length ? ' · error: ' + String(errs[0]).slice(0, 120) : '') });
+  return { ok: !errs.length || changed > 0, error: errs[0] || '', checked: awbs.length, changed: changed, delivered: dl, returned: rt };
+}
+function syncIndiaPost() { // hourly trigger (office hours only)
+  var n = now_(), h = Number(n.time.slice(0, 2));
+  if (h < 8 || h > 21) return;
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(20000)) return;
+  try { ipSyncNow_(n); } catch (e) { upsert_('Settings', { key: 'ipLastSync', value: n.date + ' ' + n.time + ' · error: ' + String(e.message || e).slice(0, 150) }); }
+  finally { lock.releaseLock(); }
+}
+function ipStatusAction_() {
+  var c = ipCfg_(), on = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'syncIndiaPost'; });
+  return { ok: true, set: !!(c.user && c.pass), test: c.base === IP_TEST_BASE, base: c.base, fromPin: c.fromPin, hourly: on, lastSync: setting_('ipLastSync') || '' };
+}
+/* run once from the Apps Script editor after adding the Script properties */
+function indiaPostSetup() {
+  ipToken_(true);
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'syncIndiaPost') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('syncIndiaPost').timeBased().everyHours(1).create();
+  Logger.log('India Post login OK (' + ipCfg_().base + '). Hourly tracking check is on.');
 }

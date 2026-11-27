@@ -965,6 +965,16 @@ function orderForm(o,onSave,extra){
   const lph=el('label',{class:'f',for:'o-ph'},'Phone',el('div',{style:'display:flex;gap:6px'},ccs,ph));
   const [di,ldi]=f('o-di','District',{type:'text',value:o.district||'',list:datalist('dl-dist',DISTRICTS),autocomplete:'off'});
   const [pc,lpc]=f('o-pc','Pincode',{type:'text',inputmode:'numeric',maxlength:'6',value:o.pincode||''});
+  /* India Post pincode check: shows the post office + state under the box; fills District if it is empty */
+  const pcInfo=el('small',{class:'hint',style:'display:block;margin:4px 0 0;font-weight:600'});lpc.append(pcInfo);
+  const pcCheck=async()=>{const v=pc.value.replace(/\D/g,'');pcInfo.style.color='';if(v.length!==6){pcInfo.textContent='';return}
+    pcInfo.textContent='Checking pincode…';try{const j=await ipPincode(v);if(pc.value.replace(/\D/g,'')!==v)return;
+      if(!j.valid){pcInfo.style.color='#c0392b';pcInfo.textContent='⚠ India Post does not know this pincode — check it with the customer.';return}
+      const po=(j.offices||[]).find(x=>x.delivery)||(j.offices||[])[0]||{};
+      pcInfo.style.color='#1e7e4a';pcInfo.textContent='✓ '+[po.office,j.taluk,j.district,j.state].filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i).join(' · ');
+      if(!di.value.trim()&&j.district){const dd=pkey(j.district);di.value=DISTRICTS.find(x=>x===dd||dd.includes(x))||dd}}
+    catch(e){pcInfo.textContent=/not set|Unknown action/i.test(e.message)?'':'Pincode check: '+e.message}};
+  pc.addEventListener('input',()=>{clearTimeout(pcCheck._t);pcCheck._t=setTimeout(pcCheck,350)});if(o.pincode)setTimeout(pcCheck,0);
   /* Type first, then one or more products. Each product line has its own qty and ₹; the total adds up by itself. */
   let type=o.type==='affordable'?'affordable':'premium';
   const type0=type;
@@ -1498,7 +1508,7 @@ function trackCell(o,onSent){
     sv.disabled=true;try{const j=await call('setTrack',{adminPin,id:o.id,courier,awb:aw.value});Object.assign(o,j.order||{});toast((o.orderNo||'Order')+(o.awb?' · tracking saved':' saved'));if(o.awb&&onSent)onSent()}
     catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message)}sv.disabled=false}});
   const by=o.trackBy?el('span',{class:'hint',style:'margin:0;font-size:11px;white-space:nowrap',text:'by '+o.trackBy+(o.trackAt?' · '+String(o.trackAt).slice(8,10)+'/'+String(o.trackAt).slice(5,7)+' '+String(o.trackAt).slice(11):'')}):null;
-  return el('div',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'},cr,aw,scb,sv,...(by?[by]:[]))}
+  return el('div',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'},cr,aw,scb,sv,...(by?[by]:[]),...[ipBadge(o),ipCheckBtn(o)].filter(Boolean))}
 /* COD — only cash-on-delivery orders: courier, tracking no., shipped → delivered → cash received (or returned) */
 let codF={preset:'w8',from:'',to:'',show:'open',q:''};
 const COD_ST=[['','Not shipped'],['shipped','Shipped'],['delivered','Delivered (cash pending)'],['paid','Cash received'],['returned','Returned (RTO)']];
@@ -1582,11 +1592,11 @@ function viewCod(){
           catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);sv.disabled=false}}});
         return el('tr',{class:codSt(o)==='paid'?'sent':''},el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
           el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
-          el('td',{},cr),el('td',{style:'white-space:nowrap'},aw,scb,sv),el('td',{},t1),el('td',{},t2),el('td',{style:'white-space:nowrap'},rb,trackBtns(o)))})))):el('div',{class:'empty',text:'No COD orders here.'});
+          el('td',{},cr),el('td',{style:'white-space:nowrap'},aw,scb,sv),el('td',{},t1),el('td',{},t2),el('td',{style:'white-space:nowrap'},rb,trackBtns(o),ipBadge(o),ipCheckBtn(o,draw)))})))):el('div',{class:'empty',text:'No COD orders here.'});
     const cours=[...new Set(COURIERS.concat(all.map(o=>o.courier).filter(Boolean)))];
     box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
-  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders'}),el('button',{class:'btn primary',type:'button',text:'📄 Read slip photos',onclick:slipReader})),el('p',{class:'hint',text:'All COD orders go by India Post. Scan or type the tracking no. and Save. Then tick ① Delivered when the customer gets the parcel (cash is now with the post office), and ② Cash received when the post office pays the money to us.'}),box);
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders'}),el('div',{class:'row'},ipSyncBtn(),el('button',{class:'btn',type:'button',text:'📮 Shipping charge',onclick:()=>ipTariffSheet()}),el('button',{class:'btn primary',type:'button',text:'📄 Read slip photos',onclick:slipReader}))),el('p',{class:'hint',text:'All COD orders go by India Post. Scan or type the tracking no. and Save. Then tick ① Delivered when the customer gets the parcel (cash is now with the post office), and ② Cash received when the post office pays the money to us.'}),box);
   return[head,kpis,courP,list].filter(Boolean);
 }
 /* Daily sold — which products were sold on a day and by whom (for Mashida's daily count; admin sees it too) */
@@ -2282,6 +2292,45 @@ function courierSite(o){if(isPost(o))return['India Post',IP_SITE];const c=String
 const t17=awb=>'https://t.17track.net/en#nums='+encodeURIComponent(String(awb||'').trim());
 const trackUrl=(awb,o)=>{const cs=o?courierSite(o):(/^[A-Z]{2}\d{9}IN$/i.test(String(awb||'').trim())?['India Post',IP_SITE]:null);return cs?cs[1]:t17(awb)};
 function trackMsg(o){return 'Hi '+(o.customer?String(o.customer).split(' ')[0]:'')+', your Couplo order'+(o.orderNo?' '+o.orderNo:'')+' has been shipped'+(o.courier?' via '+o.courier:'')+'.\nTracking no: '+o.awb+(courierSite(o)?'\nTrack on '+courierSite(o)[0]+': '+courierSite(o)[1]+' (type the tracking no. in the Track box)':'\nTrack here: '+trackUrl(o.awb,o))+'\nOrder status anytime: https://couplobabyset-max.github.io/couplo-app/track.html'+'\n\nThank you for choosing Couplo Design Studio 💜'}
+/* ---- India Post API (Nov 2026): pincode check, live tracking, shipping charge. Server: ip* actions in Code.gs ---- */
+const ipCache={};
+function ipSyncBtn(){return el('button',{class:'btn',type:'button',text:'📮 Update all India Post',title:'Checks every open India Post parcel now (it also runs by itself every hour)',onclick:async e=>{const b=e.currentTarget;b.disabled=true;b.textContent='Checking…';
+  try{const j=await call('ipSync',{adminPin});toast(j.checked?j.checked+' checked · '+j.delivered+' delivered · '+j.returned+' returned'+(j.error?' · '+j.error:''):'No open India Post parcels');Object.keys(rpCache).forEach(k=>delete rpCache[k]);renderAdmin()}
+  catch(er){toast(/not set/i.test(er.message)?'India Post login is not set in Apps Script yet.':/Unknown action|No access/i.test(er.message)?'Update the sheet script (Code.gs) first.':'India Post: '+er.message)}b.disabled=false;b.textContent='📮 Update all India Post'}})}
+const ipAuth=()=>adminOpen&&adminPin?{adminPin}:me?{staffId:me.id,pin:me.pin}:{adminPin};
+async function ipPincode(pc){if(ipCache[pc])return ipCache[pc];const j=await call('ipPincode',{...ipAuth(),pincode:pc});return ipCache[pc]=j}
+const isIP=o=>!!o.awb&&(o.payment==='cod'||/india\s*post/i.test(o.courier||'')||/^[A-Z]{2}\d{9}IN$/.test(o.awb));
+function ipBadge(o){if(!isIP(o)||!o.ipStatus)return null;const st=o.ipStatus,c=/^delivered$/i.test(st)?'#1e7e4a':/^returned$/i.test(st)?'#c0392b':'#7b3fa0';
+  return el('span',{title:(o.ipLast||'')+(o.ipAt?'\nChecked '+o.ipAt:''),style:'display:inline-block;font-size:11px;font-weight:700;color:#fff;background:'+c+';border-radius:10px;padding:2px 8px;white-space:nowrap',text:'📮 '+st})}
+function ipCheckBtn(o,after){if(!isIP(o)||!adminOpen)return null;
+  return el('button',{class:'btn',type:'button',text:'📮 Check',title:'Live status from India Post',onclick:async e=>{const b=e.currentTarget;b.disabled=true;
+    try{const j=await call('ipTrack',{adminPin,id:o.id});if(j.order)Object.assign(o,j.order);ipShow(o,j);if(after)after()}
+    catch(er){toast(/not set/i.test(er.message)?'India Post login is not set in Apps Script yet.':/Unknown action|No access/i.test(er.message)?'Update the sheet script (Code.gs) first.':'India Post: '+er.message)}b.disabled=false}})}
+function ipShow(o,j){
+  const t=j.tracking,box=el('div',{class:'panel'},el('h3',{text:'📮 India Post · '+(o.awb||'')}),
+    !j.found?el('p',{class:'hint',text:'India Post has no record of this number yet. It shows after the parcel is booked at the post office.'}):
+    el('div',{},el('p',{style:'font-size:17px;font-weight:700;margin:4px 0',text:t.status||'—'}),
+      t.eta?el('p',{class:'hint',text:'Expected: '+t.eta}):null,
+      el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['When','Where','What'].map(x=>el('th',{text:x})))),
+        el('tbody',{},...t.history.slice().reverse().map(h=>el('tr',{},el('td',{class:'mono',text:String(h.time).slice(0,16).replace('T',' ')}),el('td',{text:h.place}),el('td',{text:h.status}))))))),
+    o.payment==='cod'&&o.codStatus?el('p',{class:'hint',text:'COD status now: '+((COD_ST.find(x=>x[0]===o.codStatus)||['',''])[1])}):null,
+    el('button',{class:'btn primary',type:'button',text:'Close',onclick:()=>closeOv()}));
+  openOv(box)}
+/* shipping charge calculator (Business Parcel / Speed Post from our pincode) */
+function ipTariffSheet(o){o=o||{};
+  const f=(id,l,a)=>{const i=el('input',{id,...a});return[i,el('label',{class:'f',for:id},l,i)]};
+  const [pc,lpc]=f('ipt-pc','To pincode',{inputmode:'numeric',maxlength:'6',value:o.pincode||''}),[g,lg]=f('ipt-g','Weight (grams)',{inputmode:'numeric',value:'500'}),
+    [ca,lca]=f('ipt-c','COD amount (₹, empty = prepaid)',{inputmode:'numeric',value:o.payment==='cod'?String(+o.amount||''):''});
+  const sv=el('select',{id:'ipt-s'},el('option',{value:'bp',text:'Business Parcel'}),el('option',{value:'speed',text:'Speed Post'}));
+  const outB=el('div',{style:'margin-top:10px'});
+  const go=el('button',{class:'btn primary',type:'button',text:'Get charge',onclick:async()=>{go.disabled=true;outB.textContent='Asking India Post…';
+    try{const j=await call('ipTariff',{adminPin,pincode:pc.value,grams:g.value,codAmount:ca.value,service:sv.value});
+      outB.replaceChildren(el('p',{style:'font-size:22px;font-weight:800;margin:4px 0',class:'mono',text:rs(j.total)}),
+        el('p',{class:'hint',text:j.service+' · '+j.from+' → '+j.to+' · '+j.chargeable+' g'+(j.deliveryType?' · '+j.deliveryType:'')}),
+        el('p',{class:'hint',text:'Postage '+rs(j.base)+(j.cod?' · COD charge '+rs(j.cod):'')+' · GST '+rs(j.tax)}))}
+    catch(e){outB.textContent=/not set/i.test(e.message)?'India Post login is not set in Apps Script yet.':'India Post: '+e.message}go.disabled=false}});
+  openOv(el('div',{class:'panel'},el('h3',{text:'📮 India Post shipping charge'}),el('div',{class:'form2'},lpc,lg,lca,el('label',{class:'f',for:'ipt-s'},'Service',sv)),
+    el('div',{class:'row'},go,el('button',{class:'btn',type:'button',text:'Close',onclick:()=>closeOv()})),outB))}
 function trackBtns(o){if(!o.awb)return null;const wa=waLink(o.phone);
   return el('span',{style:'display:inline-flex;gap:6px;flex-wrap:wrap'},el('a',{class:'btn',href:trackUrl(o.awb,o),target:'_blank',rel:'noopener',text:courierSite(o)?'Track ('+courierSite(o)[0]+')':'Track',onclick:()=>{const cs=courierSite(o);if(cs){try{navigator.clipboard.writeText(o.awb);toast(o.awb+' copied — paste it in the '+cs[0]+' Track box')}catch(e){}}}}),
     wa?el('a',{class:'btn',href:wa+'?text='+encodeURIComponent(trackMsg(o)),target:'_blank',rel:'noopener',text:'Send on WhatsApp'}):null,
