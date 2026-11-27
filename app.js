@@ -1563,10 +1563,10 @@ function viewCod(){
   const draw=()=>{
     const q=codF.q.trim().toUpperCase();
     const base=all.filter(o=>!q||[o.orderNo,o.customer,o.phone,o.district,o.pincode,o.awb,o.courier].some(v=>String(v||'').toUpperCase().includes(q)));
-    const groups={open:o=>['','shipped','delivered'].includes(codSt(o)),'':o=>codSt(o)==='',shipped:o=>codSt(o)==='shipped',delivered:o=>codSt(o)==='delivered',paid:o=>codSt(o)==='paid',returned:o=>codSt(o)==='returned',all:()=>true};
+    const groups={open:o=>['','shipped','delivered'].includes(codSt(o)),'':o=>codSt(o)==='',shipped:o=>codSt(o)==='shipped',delivered:o=>codSt(o)==='delivered',delivall:o=>['delivered','paid'].includes(codSt(o)),paid:o=>codSt(o)==='paid',returned:o=>codSt(o)==='returned',all:()=>true};
     const rows=base.filter(groups[codF.show]).sort((a,b)=>a.date.localeCompare(b.date));
     const chip=(k,t)=>el('button',{type:'button',class:'fchip'+(codF.show===k?' on':''),text:t+' ('+base.filter(groups[k]).length+')',onclick:()=>{codF.show=k;draw()}});
-    const chips=el('div',{class:'fchips'},chip('open','All open'),chip('','Not shipped'),chip('shipped','On the way'),chip('delivered','At post office'),chip('paid','Cash received'),chip('returned','Returned'),chip('all','All'));
+    const chips=el('div',{class:'fchips'},chip('open','All open'),chip('','Not shipped'),chip('shipped','On the way'),chip('delivall','✅ Delivered (all)'),chip('delivered','At post office'),chip('paid','Cash received'),chip('returned','Returned'),chip('all','All'));
     const qI=el('input',{id:'cod-q',type:'search',placeholder:'Search order no, customer, phone, tracking…',value:codF.q,oninput:e=>{codF.q=e.target.value;clearTimeout(draw._t);draw._t=setTimeout(()=>{draw();const i=$('#cod-q');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},250)}});
     const xl=el('button',{class:'btn',type:'button',text:'Download Excel ('+rows.length+')',disabled:!rows.length,onclick:()=>{
       const aoa=[['DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','QTY','COD AMOUNT','STAFF','COURIER','TRACKING NO','STATUS']].concat(rows.map(o=>[o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',+o.qty||1,amt(o),nm(o.staffId),COD_COURIER,o.awb||'',(COD_ST.find(x=>x[0]===codSt(o))||['',''])[1]]));
