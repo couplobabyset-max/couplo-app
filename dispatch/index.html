@@ -75,9 +75,27 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 .bc svg{max-width:100%;height:28mm}
 .sheet.a5 .bc svg{height:20mm}
 .red .txt,.red .brand{color:#C8323C}
+/* ---------- COD / India Post sheet: A5 portrait, From/To slip on top, order details below ---------- */
+.sheet.cod{width:148mm;height:210mm;flex-direction:column;page:cod}
+.cod .slip{height:105mm;flex:0 0 105mm;padding:7mm 8mm;position:relative;border-bottom:.6mm dashed #444;overflow:hidden}
+.cod .odn{position:absolute;top:6mm;right:8mm;font-size:5mm;font-weight:700;letter-spacing:.3mm}
+.cod .cid{text-align:center;font-weight:700;font-size:6.6mm;margin-top:3mm;letter-spacing:.2mm}
+.cod .amt{display:table;margin:2.5mm auto 0;border:.5mm solid #111;padding:1.2mm 4mm;font-weight:700;font-size:5mm}
+.cod .mid{display:flex;gap:4mm;margin-top:4mm}
+.cod .to{flex:0 0 72mm;min-width:0}
+.cod .hd{font-weight:700;font-size:5mm;margin-bottom:1.5mm}
+.cod .to .txt{font-size:4.1mm;line-height:1.25;padding-left:5mm}
+.cod .stk{flex:1;height:20mm;border:.3mm dotted #bbb;border-radius:1mm}
+.cod .from{position:absolute;right:8mm;bottom:7mm;width:60mm;font-size:3.9mm;font-weight:700;line-height:1.35}
+.cod .from .hd{font-size:4.6mm}
+.cod .dz{flex:1;display:flex;gap:5mm;padding:7mm 8mm;overflow:hidden}
+.cod .dz.top{border-bottom:.6mm dashed #444}
+.cod .col{flex:1;min-width:0;display:flex;flex-direction:column}
+.cod .dz .txt{font-size:4.2mm}.cod .dz .txt.sm{font-size:3.4mm}
 #printArea{display:none}
 @media print{
   @page{size:A5 landscape;margin:0}
+  @page cod{size:A5 portrait;margin:0}
   body{background:#fff}
   header,nav,main,#toast,#cam{display:none!important}
   #printArea{display:block}
@@ -103,6 +121,8 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
     <h2>2. Check the label</h2>
     <label>Brand</label>
     <div class="chips" id="brandChips"></div>
+    <div id="codWrap" hidden><label>COD amount (₹)</label><input id="codAmt" inputmode="numeric" autocomplete="off" placeholder="1500">
+      <p class="hint">India Post slip. Leave the amount empty for a prepaid India Post parcel (no COD box).</p></div>
     <label>Order no. (barcode)</label>
     <input id="odno" autocomplete="off" style="text-transform:uppercase">
     <label>Address side</label>
@@ -119,6 +139,7 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
     <h2>Print list (<span id="qn">0</span>)</h2>
     <div id="qList"></div>
     <button class="btn" id="printAll" type="button">Print all</button>
+    <button class="btn" id="printCod" type="button" hidden>Print COD / India Post slips</button>
   </div>
 
   <p class="hint" style="text-align:center">Paper: A5. In the print window choose A5, Landscape, margins None, scale 100%.</p>
@@ -224,12 +245,21 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 });
 
 /* =================== LABELS =================== */
-const BRANDS=[['couplo','Couplo'],['pt','Print & Trend']];
+const BRANDS=[['couplo','Couplo'],['pt','Print & Trend'],['cod','COD · India Post']];
+const IP_CID='1175767464'; /* India Post contract customer ID — fixed, never changes */
+const IP_FROM=['COUPLO DESIGN STUDIO','OORAGAM, CHERUR ROAD','676519','8590288151'];
 let brand=LS.get('dp_brand')||'couplo', paper='a5', queue=[];
 try{queue=JSON.parse(LS.get('dp_queue')||'[]')}catch(e){queue=[]}
 function chips(box,list,cur,on){box.innerHTML='';list.forEach(([v,t])=>{const b=document.createElement('button');b.type='button';b.className='chip'+(v===cur?' on':'');b.textContent=t;b.onclick=()=>on(v);box.appendChild(b)})}
-function drawBrand(){chips($('#brandChips'),BRANDS,brand,v=>{brand=v;LS.set('dp_brand',v);drawBrand();preview()})}
-function drawPaper(){$('#pageSize').textContent='@media print{@page{size:A5 landscape;margin:0}}'}
+function drawBrand(){chips($('#brandChips'),BRANDS,brand,v=>{brand=v;if(v!=='cod')LS.set('dp_brand',v);drawBrand();preview()});
+  $('#codWrap').hidden=brand!=='cod'}
+function drawPaper(portrait){$('#pageSize').textContent='@media print{@page{size:A5 '+(portrait?'portrait':'landscape')+';margin:0}}'}
+const amtOf=v=>String(v||'').replace(/[^\d]/g,'');
+/* COD amount from the pasted text: "COD 1500" / "COD amount: 1,500", else the total of the Balance lines */
+function codFrom(text){const t=clean(text);if(!/\bcod\b/i.test(t))return null;
+  const m=t.match(/\bcod\b\s*(?:amount|amt)?\s*[:\-=]?\s*(?:rs\.?|₹|inr)?\s*(\d[\d,]*)/i);if(m)return amtOf(m[1]);
+  let sum=0;(t.match(/balance\s*(?:amount|amt)?\s*[:\-=]?\s*(?:rs\.?|₹|inr)?\s*\d[\d,]*/gi)||[]).forEach(x=>sum+=+amtOf(x.replace(/^\D*/,'')));
+  return sum?String(sum):''}
 
 const clean=s=>String(s||'').replace(/[‎‏‪-‮⁦-⁩]/g,'').replace(/\r/g,'').replace(/[ \t]+$/gm,'');
 const tidy=a=>a.join('\n').replace(/\n{3,}/g,'\n\n').trim();
@@ -266,8 +296,24 @@ function halvesOf(L){
     if(j<0)break;slots.splice(j-1,2,slots[j-1].concat(slots[j]))}
   return[{a:1}].concat(slots.map(d=>({d})));
 }
-const pagesOf=L=>Math.ceil(halvesOf(L).length/2);
+/* COD sheet: details under the slip (up to 4), extra items 4 per half on the next pages */
+function codZones(L){const d=fixL(L).dets.filter(x=>x.trim()),z=[d.slice(0,4)];for(let i=4;i<d.length;i+=4)z.push(d.slice(i,i+4));return z}
+const pagesOf=L=>L.brand==='cod'?1+Math.ceil((codZones(L).length-1)/2):Math.ceil(halvesOf(L).length/2);
+function zoneHTML(d,cls){if(!d||!d.length)return'<div class="dz'+(cls||'')+'"></div>';
+  const sm=d.length>2,cols=d.length===1?[d]:[d.filter((x,i)=>i%2===0),d.filter((x,i)=>i%2===1)];
+  return'<div class="dz'+(cls||'')+'">'+cols.map(c=>'<div class="col">'+c.map(t=>'<div class="txt'+(sm?' sm':'')+'">'+esc(t)+'</div>').join('<div class="cut"></div>')+'</div>').join('')+'</div>'}
+function codHTML(L,only){
+  const a=amtOf(L.cod),z=codZones(L);
+  const slip='<div class="slip">'+(L.odno?'<div class="odn">'+esc(L.odno)+'</div>':'')+
+    '<div class="cid">CID : '+IP_CID+'</div>'+(a?'<div class="amt">COD AMOUNT : '+esc(a)+'/-</div>':'')+
+    '<div class="mid"><div class="to"><div class="hd">To,</div><div class="txt">'+esc(L.addr)+'</div></div><div class="stk"></div></div>'+
+    '<div class="from"><div class="hd">From,</div>'+IP_FROM.map(esc).join('<br>')+'</div></div>';
+  const out=['<div class="sheet cod">'+slip+zoneHTML(z[0])+'</div>'];
+  for(let i=1;i<z.length;i+=2)out.push('<div class="sheet cod">'+zoneHTML(z[i],' top')+zoneHTML(z[i+1])+'</div>');
+  return only?out[only-1]:out.join('');
+}
 function sheetsHTML(L,only){
+  if(L.brand==='cod')return codHTML(L,only);
   const red=L.brand==='pt';
   const head=red?'<div class="brand"><div class="pt">PRINT&amp;TREND</div><div class="sub">VENGARA<br>8590288151</div><div class="rule"></div></div>'
                :'<div class="brand"><img src="../icons/logo.png" alt="Couplo"><div class="sub">VENGARA<br>8590288151</div><div class="rule"></div></div>';
@@ -277,7 +323,7 @@ function sheetsHTML(L,only){
   return only?out[only-1]:out.join('');
 }
 function drawCodes(root){root.querySelectorAll('svg.bcode').forEach(s=>{try{JsBarcode(s,s.dataset.v,{format:'CODE128',displayValue:true,fontSize:24,height:80,margin:10,width:3})}catch(e){}})}
-const cur=()=>({brand,odno:$('#odno').value.replace(/\s+/g,'').toUpperCase(),addr:$('#addr').value,dets:[...document.querySelectorAll('#dets textarea')].map(t=>t.value)});
+const cur=()=>({brand,cod:brand==='cod'?amtOf($('#codAmt').value):'',odno:$('#odno').value.replace(/\s+/g,'').toUpperCase(),addr:$('#addr').value,dets:[...document.querySelectorAll('#dets textarea')].map(t=>t.value)});
 function drawDets(list){
   const box=$('#dets');box.innerHTML='';
   list.forEach((d,i)=>{const lb=document.createElement('label');lb.innerHTML='Item '+(i+1)+(odOf(d)?' · '+esc(odOf(d)):'')+' <a href="#" style="float:right;color:var(--bad)">Remove</a>';
@@ -293,46 +339,52 @@ function preview(){
   if($('#editCard').hidden)return;
   const L=cur(),pv=$('#pv');pv.innerHTML=sheetsHTML(L);drawCodes(pv);
   const w=pv.clientWidth,sc=w/(210*3.7795);let y=0;
-  [...pv.children].forEach(sh=>{sh.style.transform='scale('+sc+')';sh.style.marginBottom=(-148*3.7795*(1-sc)+6)+'px'});
+  [...pv.children].forEach(sh=>{const p=sh.classList.contains('cod'),s2=w/((p?148:210)*3.7795);sh.style.transform='scale('+s2+')';sh.style.marginBottom=(-(p?210:148)*3.7795*(1-s2)+6)+'px'});
   pv.style.height='auto';
   const n=pagesOf(L);
-  $('#pageHint').textContent=n<2?'Fits on one A5 page.':'2 pages (front + back of one paper): print page 1, turn the paper over, print page 2 (or use two-sided printing).';
+  $('#pageHint').textContent=n<2?'Fits on one A5 page'+(L.brand==='cod'?' (portrait).':'.'):'2 pages (front + back of one paper): print page 1, turn the paper over, print page 2 (or use two-sided printing).';
   pageBtns($('#pageBtns'),L,(L,k)=>printSheets([L],k));
 }
-['odno','addr'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearTimeout(preview._t);preview._t=setTimeout(preview,250)}));
+['odno','addr','codAmt'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearTimeout(preview._t);preview._t=setTimeout(preview,250)}));
 $('#pasteBtn').onclick=async()=>{try{$('#paste').value=await navigator.clipboard.readText();$('#splitBtn').click()}catch(e){toast('Long-press the box and choose Paste.')}};
 $('#splitBtn').onclick=()=>{
   const t=$('#paste').value.trim();if(!t){toast('Paste the WhatsApp order first.');return}
   const r=split(t);$('#odno').value=r.odno;$('#addr').value=r.addr;drawDets(r.dets);
-  if(/^M/i.test(r.odno)&&!LS.get('dp_brand'))brand='pt';
+  const ca=codFrom(t);brand=ca!==null?'cod':(LS.get('dp_brand')||'couplo');$('#codAmt').value=ca||'';
+  if(brand!=='cod'&&/^M/i.test(r.odno)&&!LS.get('dp_brand'))brand='pt';
+  if(ca!==null)setTimeout(()=>toast(ca?'COD order · ₹'+ca+' — check the amount.':'COD order — type the COD amount.',4000),300);
   $('#editCard').hidden=false;drawBrand();preview();
   if(!r.addr)toast('No address found. Paste the address message too, or type it in the Address box.',4500);
   else if(r.dets.length>1)toast(r.dets.length+' items for '+r.odno+' · one address',3000);
   $('#editCard').scrollIntoView({behavior:'smooth'});
 };
 function printSheets(list,only){
+  drawPaper(list.length&&list.every(L=>L.brand==='cod'));
   const pa=$('#printArea');pa.innerHTML=list.map(L=>sheetsHTML(L,only)).join('');drawCodes(pa);
   const imgs=[...pa.querySelectorAll('img')];
   Promise.all(imgs.map(i=>i.complete?1:new Promise(r=>{i.onload=i.onerror=r}))).then(()=>setTimeout(()=>window.print(),150));
 }
-$('#printOne').onclick=()=>{const L=cur();if(!L.addr.trim()&&!L.dets.join('').trim())return;printSheets([L],pagesOf(L)>1?1:0);if(pagesOf(L)>1)toast('Page 1 printing. Then turn the paper over and tap "Print page 2".',5000)};
+$('#printOne').onclick=()=>{const L=cur();if(!L.addr.trim()&&!L.dets.join('').trim())return;if(L.brand==='cod'&&!L.cod&&!confirm('No COD amount. Print as a prepaid India Post slip?'))return;printSheets([L],pagesOf(L)>1?1:0);if(pagesOf(L)>1)toast('Page 1 printing. Then turn the paper over and tap "Print page 2".',5000)};
 function saveQ(){LS.set('dp_queue',JSON.stringify(queue));drawQ()}
 function drawQ(){
   queue.forEach(fixL);
   $('#qCard').hidden=!queue.length;$('#qn').textContent=queue.length;
   $('#qList').innerHTML='';queue.forEach((L,i)=>{const d=document.createElement('div');d.className='q';d.style.flexWrap='wrap';
     const n=pagesOf(L);
-    d.innerHTML='<b>'+esc(L.odno||'(no order no.)')+'</b><span>'+esc((L.addr.split('\n').find(x=>x.trim()&&!/od\s*no|courier/i.test(x))||'').slice(0,18))+(L.dets.length>1?' · '+L.dets.length+' items':'')+'</span><button type="button">Remove</button>';
+    d.innerHTML='<b>'+esc(L.odno||'(no order no.)')+'</b><span>'+esc((L.addr.split('\n').find(x=>x.trim()&&!/od\s*no|courier/i.test(x))||'').slice(0,18))+(L.dets.length>1?' · '+L.dets.length+' items':'')+(L.brand==='cod'?' · COD'+(L.cod?' ₹'+esc(L.cod):''):'')+'</span><button type="button">Remove</button>';
     d.querySelector('button').onclick=()=>{queue.splice(i,1);saveQ()};
     if(n>1){const pb=document.createElement('div');pb.className='row';pb.style.width='100%';pageBtns(pb,L,(L,k)=>printSheets([L],k));d.appendChild(pb)}
     $('#qList').appendChild(d)});
-  const multi=queue.filter(L=>pagesOf(L)>1).length;
-  $('#printAll').textContent=multi?'Print all one-page labels ('+(queue.length-multi)+')':'Print all';
+  const multi=queue.filter(L=>pagesOf(L)>1).length,one=queue.filter(L=>pagesOf(L)<2),nc=one.filter(L=>L.brand==='cod').length,nl=one.length-nc;
+  $('#printAll').textContent=(nl?'Print '+(multi?'one-page ':'')+'labels ('+nl+')':'Print labels');$('#printAll').hidden=!nl;
+  $('#printCod').textContent='Print COD / India Post slips ('+nc+')';$('#printCod').hidden=!nc;
 }
 $('#addQ').onclick=()=>{const L=cur();if(!L.addr.trim())return toast('Address is empty.');queue.push(L);saveQ();
   $('#paste').value='';$('#editCard').hidden=true;toast((L.odno||'Label')+' added. Paste the next order.');window.scrollTo({top:0,behavior:'smooth'})};
-$('#printAll').onclick=()=>{const one=queue.filter(L=>pagesOf(L)<2);if(!one.length)return toast('Print the 2-page ones with their page buttons.');printSheets(one);
-  setTimeout(()=>{if(confirm('Printed? Remove the printed one-page labels from the list?')){queue=queue.filter(L=>pagesOf(L)>1);saveQ()}},1500)};
+/* landscape labels and portrait COD slips print as two separate jobs */
+function printGroup(isCod){const pick=L=>pagesOf(L)<2&&(L.brand==='cod')===isCod,one=queue.filter(pick);if(!one.length)return toast('Print the 2-page ones with their page buttons.');printSheets(one);
+  setTimeout(()=>{if(confirm('Printed? Remove these from the list?')){queue=queue.filter(L=>!pick(L));saveQ()}},1500)}
+$('#printAll').onclick=()=>printGroup(false);$('#printCod').onclick=()=>printGroup(true);
 window.addEventListener('resize',preview);
 drawBrand();drawPaper();drawQ();
 
