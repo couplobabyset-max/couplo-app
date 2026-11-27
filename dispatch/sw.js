@@ -1,6 +1,6 @@
 // Couplo Dispatch: newest copy first; the saved copy opens when the internet is off or slow (4 s). The sheet API is never cached.
-const CACHE='couplo-dispatch-v1';
-const SHELL=['./','index.html','manifest.webmanifest','../icons/icon-192.png','../icons/icon-512.png','../icons/logo.png'];
+const CACHE='couplo-dispatch-v2';
+const SHELL=['./','index.html','manifest.webmanifest','icons/icon-192.png','icons/icon-512.png','../icons/logo.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).catch(()=>{}));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('couplo-dispatch')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{
