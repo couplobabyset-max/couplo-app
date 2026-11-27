@@ -10,7 +10,7 @@ var SHEETS = {
   Attendance: ['key','date','staffId','status','in','out','note','lateReason','earlyReason'],
   Sales:      ['key','date','staffId','leads','premium','affordable','amount','calls','answered','missed','called'],
   Pay:        ['key','month','staffId','advance','extra','note'],
-  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','designStartAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
+  Orders:     ['id','orderNo','date','staffId','type','customer','phone','district','pincode','product','qty','amount','dispatched','note','createdAt','items','designDoneAt','dispatchedAt','payment','codStatus','courier','awb','designStartAt','trackBy','trackAt'],  // items = JSON list when one order has several products; designDoneAt / dispatchedAt = when Hiba / Jaseera finished it
   Products:   ['id','name','type','price','active','order'],
   Tasks:      ['id','category','name','kind','order','active','options'],
   Work:       ['key','date','staffId','taskId','value','updatedAt'],
@@ -748,6 +748,7 @@ function handle_(b) {
       if (tk.awb && !tk.courier) return { ok: false, error: 'Pick the courier.' };
       if (tk.awb && tk.dispatched !== 'TRUE') { tk.dispatched = 'TRUE'; tk.dispatchedAt = tk.dispatchedAt || n.date + ' ' + n.time; }
       if (tk.awb && tk.payment === 'cod' && !tk.codStatus) tk.codStatus = 'shipped';
+      tk.trackBy = mgr ? mgr.name : 'Owner'; tk.trackAt = n.date + ' ' + n.time; // who saved the tracking no. (Dispatch app or Dispatch tab)
       ordersHeader_(); upsert_('Orders', tk);
       return { ok: true, order: tk };
     }
@@ -1251,7 +1252,7 @@ function keepStages_(o, old, n) {
   var was = old ? old.dispatchedAt || '' : '';
   o.dispatchedAt = o.dispatched === 'TRUE' ? (was || n.date + ' ' + n.time) : '';
   /* COD tracking (COD tab) is never wiped by an order edit */
-  ['codStatus', 'courier', 'awb'].forEach(function (k) { o[k] = old ? (old[k] || '') : ''; });
+  ['codStatus', 'courier', 'awb', 'trackBy', 'trackAt'].forEach(function (k) { o[k] = old ? (old[k] || '') : ''; });
 }
 
 /* ---- dates ---- */

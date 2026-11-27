@@ -348,9 +348,9 @@ function guessCourier(a){
   if(/^\d{8}$/.test(a))return'Speed and Safe';
   return LS.get('dp_lastCourier')||'';
 }
-/* Only the owner and Mashida log in here. The order list is kept on the phone and refreshed in the background, so opening is quick. */
-const ALLOWED=/mashida/i;
-const slim=o=>({id:o.id,orderNo:o.orderNo,date:o.date,customer:o.customer,district:o.district,product:o.product,payment:o.payment,courier:o.courier,awb:o.awb,dispatched:o.dispatched});
+/* Every staff with a PIN can log in (the server still needs their Orders access); each saved tracking no. records who saved it. The order list is kept on the phone and refreshed in the background, so opening is quick. */
+const ALLOWED=/./;
+const slim=o=>({id:o.id,orderNo:o.orderNo,date:o.date,customer:o.customer,district:o.district,product:o.product,payment:o.payment,courier:o.courier,awb:o.awb,dispatched:o.dispatched,trackBy:o.trackBy,trackAt:o.trackAt});
 function cacheOrders(list){const since=new Date(Date.now()-90*864e5).toISOString().slice(0,10);try{LS.set('dp_orders',JSON.stringify(list.filter(o=>!o.date||String(o.date)>=since).map(slim)))}catch(e){}}
 try{const c=JSON.parse(LS.get('dp_orders')||'null');if(Array.isArray(c))orders=c}catch(e){}
 function fillWho(staff){const s=$('#lgWho');const cur=s.value;
@@ -403,7 +403,7 @@ function pickOrder(code){
   ord=hits[0];ordGroup=hits;awb='';courier='';
   $('#n1').className='num done';$('#n2').className='num now';
   $('#ordBox').innerHTML='<div class="val">'+esc(grpText(hits))+'</div>'+(hits.length>1?'<b>'+hits.length+' items, one parcel</b> · ':'')+esc(ord.customer||'')+' · '+esc(ord.district||'')+' · '+esc(hits.map(o=>o.product).filter(Boolean).join(' + '))+(grpCod(hits)?' · <b>COD</b>':'')+
-    (ord.awb?'<div class="bad" style="margin-top:4px">Already has tracking: '+esc(ord.courier||'')+' '+esc(ord.awb)+' (scan again to replace)</div>':'');
+    (ord.awb?'<div class="bad" style="margin-top:4px">Already has tracking: '+esc(ord.courier||'')+' '+esc(ord.awb)+(ord.trackBy?' · by '+esc(ord.trackBy)+' '+esc(String(ord.trackAt||'').slice(5)):'')+' (scan again to replace)</div>':'');
   $('#awbBox').textContent='Barcode / QR on the courier\'s slip.';$('#scan2').disabled=false;$('#saveBtn').disabled=true;$('#courWrap').hidden=true;
   setTimeout(()=>openCam(2),400);
 }
@@ -427,7 +427,7 @@ $('#saveBtn').onclick=async()=>{
   if(!ord||!awb||!courier)return;$('#saveBtn').disabled=true;
   try{for(const o of ordGroup){const j=await call('setTrack',{adminPin:token,id:o.id,courier,awb});Object.assign(o,j.order||{courier,awb})}
     LS.set('dp_lastCourier',courier);if(navigator.vibrate)navigator.vibrate(120);
-    logToday.unshift({o:grpText(ordGroup),a:awb,c:courier,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog();
+    logToday.unshift({o:grpText(ordGroup),a:awb,c:courier,w:whoName,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog();
     toast('✓ '+grpText(ordGroup)+' saved. Scan the next label.');reset();setTimeout(()=>openCam(1),700)}
   catch(e){toast(e.message,4000);$('#saveBtn').disabled=false}
 };
@@ -444,12 +444,12 @@ function qDraw(){
   $('#qSave').disabled=!(qG.length&&a&&qCr);
 }
 $('#qOrd').oninput=()=>{qG=findGroup($('#qOrd').value);const o=qG[0];
-  $('#qInfo').innerHTML=o?esc(grpText(qG))+' · '+esc(o.customer||'')+' · '+esc(o.district||'')+(grpCod(qG)?' · <b>COD</b>':'')+(o.awb?' <span class="bad">(has '+esc(o.awb)+')</span>':''):($('#qOrd').value.trim()?(orders?'<span class="bad">Not in the Couplo app</span>':'Orders loading…'):'');qDraw()};
+  $('#qInfo').innerHTML=o?esc(grpText(qG))+' · '+esc(o.customer||'')+' · '+esc(o.district||'')+(grpCod(qG)?' · <b>COD</b>':'')+(o.awb?' <span class="bad">(has '+esc(o.awb)+(o.trackBy?' · by '+esc(o.trackBy):'')+')</span>':''):($('#qOrd').value.trim()?(orders?'<span class="bad">Not in the Couplo app</span>':'Orders loading…'):'');qDraw()};
 $('#qAwb').oninput=()=>{const a=$('#qAwb').value.trim();if(a&&!grpCod(qG))qCr=guessCourier(a)||qCr;qDraw()};
 $('#qOrd').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#qAwb').focus()}});
 $('#qAwb').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(!$('#qSave').disabled)$('#qSave').click()}});
 async function saveGroup(g,cr,awb){for(const o of g){const j=await call('setTrack',{adminPin:token,id:o.id,courier:cr,awb});Object.assign(o,j.order||{})}
-  LS.set('dp_lastCourier',cr);logToday.unshift({o:grpText(g),a:awb,c:cr,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog()}
+  LS.set('dp_lastCourier',cr);logToday.unshift({o:grpText(g),a:awb,c:cr,w:whoName,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog()}
 $('#qSave').onclick=async()=>{const awb=$('#qAwb').value.replace(/\s+/g,'').toUpperCase();$('#qSave').disabled=true;
   try{await saveGroup(qG,qCr,awb);toast('✓ '+grpText(qG)+' saved');$('#qOrd').value='';$('#qAwb').value='';qG=[];$('#qInfo').textContent='';qDraw();$('#qOrd').focus()}
   catch(e){toast(e.message,4000);$('#qSave').disabled=false}};
@@ -521,14 +521,14 @@ async function photoCard(file){
   const on=bd.querySelector('.on'),aw=bd.querySelector('.aw'),oi=bd.querySelector('.oi'),cc=bd.querySelector('.cc'),sv=bd.querySelector('button');
   let cr='';
   const findO=()=>{g=findGroup(on.value);const o=g[0];
-    oi.innerHTML=o?(g.length>1?'<b>'+esc(grpText(g))+'</b><br>':'')+esc((o.customer||'')+' · '+(o.district||'')+(grpCod(g)?' · COD':''))+(o.awb?' <span class="bad">(has '+esc(o.awb)+')</span>':''):(on.value.trim()?'<span class="bad">Not in the Couplo app</span>':'');dc()};
+    oi.innerHTML=o?(g.length>1?'<b>'+esc(grpText(g))+'</b><br>':'')+esc((o.customer||'')+' · '+(o.district||'')+(grpCod(g)?' · COD':''))+(o.awb?' <span class="bad">(has '+esc(o.awb)+(o.trackBy?' · by '+esc(o.trackBy):'')+')</span>':''):(on.value.trim()?'<span class="bad">Not in the Couplo app</span>':'');dc()};
   const dc=()=>{const cod=grpCod(g);if(cod)cr='India Post';chips(cc,(cod?['India Post']:COURIERS).map(c=>[c,c]),cr,v=>{cr=v;dc()});sv.disabled=!(g.length&&aw.value.trim()&&cr)};
   if(g.length)on.value=lbl;if(a){aw.value=a;cr=guessCourier(a)}
   on.oninput=findO;aw.oninput=()=>{if(!cr)cr=guessCourier(aw.value);dc()};findO();
   if(!codes.length)oi.innerHTML+='<div class="hint" style="margin:0">No barcode read — type the numbers from the photo.</div>';
   sv.onclick=async()=>{sv.disabled=true;const awv=aw.value.replace(/\s+/g,'').toUpperCase();
     try{for(const o of g){const j=await call('setTrack',{adminPin:token,id:o.id,courier:cr,awb:awv});Object.assign(o,j.order||{})}LS.set('dp_lastCourier',cr);
-      logToday.unshift({o:grpText(g),a:awv,c:cr,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog();
+      logToday.unshift({o:grpText(g),a:awv,c:cr,w:whoName,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog();
       bd.innerHTML='<div class="ok"><b>✓ '+esc(grpText(g))+'</b><br>'+esc(cr)+' · '+esc(awv)+'</div>'}
     catch(e){toast(e.message,4000);sv.disabled=false}};
 }

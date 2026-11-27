@@ -1378,7 +1378,8 @@ function trackCell(o,onSent){
     if(aw.value.trim()&&!courier){toast('Pick the courier.');cr.focus();return}
     sv.disabled=true;try{const j=await call('setTrack',{adminPin,id:o.id,courier,awb:aw.value});Object.assign(o,j.order||{});toast((o.orderNo||'Order')+(o.awb?' · tracking saved':' saved'));if(o.awb&&onSent)onSent()}
     catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message)}sv.disabled=false}});
-  return el('div',{style:'display:flex;gap:6px;align-items:center'},cr,aw,scb,sv)}
+  const by=o.trackBy?el('span',{class:'hint',style:'margin:0;font-size:11px;white-space:nowrap',text:'by '+o.trackBy+(o.trackAt?' · '+String(o.trackAt).slice(8,10)+'/'+String(o.trackAt).slice(5,7)+' '+String(o.trackAt).slice(11):'')}):null;
+  return el('div',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'},cr,aw,scb,sv,...(by?[by]:[]))}
 /* COD — only cash-on-delivery orders: courier, tracking no., shipped → delivered → cash received (or returned) */
 let codF={preset:'w8',from:'',to:'',show:'open',q:''};
 const COD_ST=[['','Not shipped'],['shipped','Shipped'],['delivered','Delivered (cash pending)'],['paid','Cash received'],['returned','Returned (RTO)']];
