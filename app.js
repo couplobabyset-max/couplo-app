@@ -366,7 +366,7 @@ function viewAds(){
   const kpi=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
   const cpl7=last7.L?last7.Sp/last7.L:0, cplP=prev7.L?prev7.Sp/prev7.L:0;
   const month=el('div',{class:'panel'},el('h3',{text:'This month · '+monFull(m)}),el('div',{class:'kpis'},
-    kpi(rs(T.Sp),'Ad spend',m===td.slice(0,7)?'till yesterday':''),kpi(rs(T.Sp*(1+GST_RATE)),'Ad spend + GST','18% GST: '+rs(T.Sp*GST_RATE)),kpi(T.L,'Leads'),kpi(per(T.Sp,T.L),'Cost / lead'),kpi(T.O,'Orders',T.L?Math.round(T.O/T.L*100)+'% of leads':''),
+    kpi(rs(T.Sp),'Ad spend',m===td.slice(0,7)?'till yesterday':''),kpi(rs(T.Sp*(1+GST_RATE)),'Ad spend + GST',rs(T.Sp)+' + '+rs(T.Sp*GST_RATE)+' GST (18%)'),kpi(T.L,'Leads'),kpi(per(T.Sp,T.L),'Cost / lead'),kpi(T.O,'Orders',T.L?Math.round(T.O/T.L*100)+'% of leads':''),
     kpi(per(T.Sp,T.O),'Cost / order'),kpi(rs(T.Am),'Sales'),kpi(roas(T.Am,T.Sp),'ROAS','sales ÷ ad spend')));
   const week=el('div',{class:'panel'},el('h3',{text:'Last 7 days'+(m===td.slice(0,7)?' (till yesterday)':' of the month')}),el('div',{class:'kpis'},
     kpi(rs(last7.Sp),'Ad spend',chg(last7.Sp,prev7.Sp,0)),kpi(last7.L,'Leads',chg(last7.L,prev7.L,1)),kpi(cpl7?rs(cpl7):'—','Cost / lead',chg(cpl7,cplP,-1)),
@@ -685,9 +685,13 @@ function weeklyReport(list,owner){
     const c=cur.T,p=prev.T;
     parts.push(el('h3',{style:'margin-top:10px',text:'📊 This week vs last week'}),el('div',{class:'kpis'},
       kpi(c.L,'Leads',chg(c.L,p.L,1)),kpi(c.O,'Orders',chg(c.O,p.O,1)),kpi(pc(c.O,c.L),'Conversion',p.L?'last week '+pc(p.O,p.L):''),kpi(rs(c.Am),'Sales',chg(c.Am,p.Am,1)),
-      ...(owner?[kpi(rs(c.Sp),'Ad spend (no GST)',chg(c.Sp,p.Sp,0)),kpi(rs(gst(c.Sp)),'Ad spend + GST',rs(c.Sp*GST_RATE)+' GST (18%)'),
+      ...(owner?[kpi(rs(c.Sp),'Ad spend (no GST)',chg(c.Sp,p.Sp,0)),kpi(rs(gst(c.Sp)),'Ad spend + GST',rs(c.Sp)+' + '+rs(c.Sp*GST_RATE)+' GST'),
         kpi(per(gst(c.Sp),c.L),'Cost / lead (+GST)',p.L&&p.Sp?'last week '+per(gst(p.Sp),p.L):''),kpi(per(gst(c.Sp),c.O),'Cost / order (+GST)',p.O&&p.Sp?'last week '+per(gst(p.Sp),p.O):''),
         kpi(c.Sp?(c.Am/gst(c.Sp)).toFixed(1)+'x':'—','ROAS (+GST)','sales ÷ spend with GST')]:[])));
+    if(owner&&c.Sp){const g=c.Sp*GST_RATE,row=(a,b,bold)=>el('div',{style:'display:flex;justify-content:space-between;gap:10px;padding:4px 0'+(bold?';border-top:1px solid var(--line);font-weight:700':'')},el('span',{text:a}),el('span',{class:'mono',text:b}));
+      parts.push(el('div',{style:'margin-top:10px;padding:10px 12px;background:var(--sunk);border-radius:12px'},el('b',{text:'🧮 Ad spend calculation · '+dlabel(wkPick)}),
+        row('Ad spend (Meta, without GST)',rs(c.Sp)),row('GST 18%  ('+rs(c.Sp)+' × 18%)',rs(g)),row('Total paid (with GST)',rs(c.Sp+g),1),
+        c.L?row('Cost / lead  ('+rs(c.Sp+g)+' ÷ '+c.L+' leads)',rs((c.Sp+g)/c.L)):null,c.O?row('Cost / order  ('+rs(c.Sp+g)+' ÷ '+c.O+' orders)',rs((c.Sp+g)/c.O)):null))}
     /* ---- 3. per person ---- */
     const head=['Name','Leads','Orders','Last week','Conversion','Sales'].concat(perW?['Target']:[]).concat(owner?['Ad spend','+ GST','Cost / lead','Cost / order']:[]);
     parts.push(el('h3',{style:'margin-top:12px',text:'👥 Each sales person'}),el('div',{class:'scroll'},el('table',{},
