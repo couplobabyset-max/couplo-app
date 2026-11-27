@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#511F52">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>Couplo Dispatch</title>
+<style>
+:root{--p:#511F52;--bg:#F3F5F7;--card:#fff;--line:#E2E5EA;--mut:#6B7280;--ok:#0F7B3E;--bad:#B42318}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:#111;-webkit-tap-highlight-color:transparent}
+header{background:var(--p);color:#fff;padding:12px 16px calc(12px);padding-top:calc(12px + env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
+header h1{font-size:18px;margin:0;flex:1}
+header button{background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:8px;padding:6px 10px;font-size:13px}
+nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav button{flex:1;border:0;background:none;padding:14px 4px;font-size:15px;font-weight:600;color:var(--mut);border-bottom:3px solid transparent}
+nav button.on{color:var(--p);border-bottom-color:var(--p)}
+main{padding:14px;max-width:640px;margin:0 auto;padding-bottom:90px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.card h2{font-size:15px;margin:0 0 10px}
+label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+input,select,textarea{width:100%;font:inherit;font-size:16px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#fff}
+textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:700;background:var(--p);color:#fff;margin-top:12px}
+.btn.alt{background:#fff;color:var(--p);border:1.5px solid var(--p)}
+.btn.big{padding:20px;font-size:18px}
+.btn:disabled{opacity:.5}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.hint{font-size:13px;color:var(--mut);margin:6px 0 0}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:9px 14px;font-size:14px;font-weight:600}
+.chip.on{border-color:var(--p);background:var(--p);color:#fff}
+.step{display:flex;gap:10px;align-items:flex-start}
+.num{flex:0 0 28px;height:28px;border-radius:50%;background:var(--line);color:var(--mut);display:grid;place-items:center;font-weight:700;font-size:14px}
+.num.done{background:var(--ok);color:#fff}.num.now{background:var(--p);color:#fff}
+.val{font-family:ui-monospace,Menlo,monospace;font-size:18px;font-weight:700;word-break:break-all}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+#cam{position:fixed;inset:0;background:#000;z-index:50;display:none;flex-direction:column}
+#cam.on{display:flex}
+#reader{flex:1;width:100%}
+#reader video{object-fit:cover}
+#camTop{color:#fff;padding:14px;padding-top:calc(14px + env(safe-area-inset-top));font-size:16px;font-weight:600;text-align:center}
+#camBot{padding:14px;padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+#camBot .row input{background:#222;color:#fff;border-color:#444}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111;color:#fff;padding:12px 16px;border-radius:12px;font-size:14px;z-index:60;max-width:90%;text-align:center}
+.log{font-size:14px}.log div{padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.q{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.q b{flex:1}
+.ph{border-top:1px solid var(--line);padding-top:12px;margin-top:12px;display:flex;gap:10px}
+.ph img{width:72px;height:96px;object-fit:cover;border-radius:8px;flex:0 0 72px}
+.ph .bd{flex:1;min-width:0}.ph input{padding:8px 10px;font-size:15px;margin-top:4px}
+.ph .chip{padding:6px 10px;font-size:12px}.ph .btn{padding:10px;font-size:14px;margin-top:8px}.q button{border:0;background:none;color:var(--bad);font-size:14px}
+/* label preview (screen) */
+.pv{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:10px}
+.pv .sheet{transform-origin:top left}
+/* ---------- the printed sheet: A4/A5 landscape, address half | details half ---------- */
+.sheet{width:297mm;height:210mm;display:flex;background:#fff;color:#111;font-family:Arial,Helvetica,sans-serif;page-break-after:always;break-after:page;overflow:hidden}
+.sheet.a5{width:210mm;height:148mm}
+.half{flex:1;padding:14mm 12mm;display:flex;flex-direction:column;overflow:hidden}
+.half+.half{border-left:1.2mm dotted #333}
+.brand{text-align:center;margin-bottom:5mm}
+.brand img{height:22mm;max-width:80%;filter:brightness(0)}
+.brand .pt{font-family:Georgia,"Times New Roman",serif;font-size:13mm;letter-spacing:.5mm;line-height:1}
+.brand .sub{font-size:5mm;letter-spacing:.3mm;margin-top:1mm}
+.brand .rule{height:.8mm;background:#222;width:70%;margin:4mm auto 0}
+.txt{white-space:pre-wrap;font-size:6.3mm;line-height:1.22;text-transform:uppercase;font-weight:500}
+.sheet.a5 .txt{font-size:4.6mm}.sheet.a5 .brand img{height:15mm}.sheet.a5 .brand .pt{font-size:9mm}.sheet.a5 .half{padding:9mm 8mm}
+.bc{margin-top:auto;text-align:center}
+.bc svg{max-width:100%;height:28mm}
+.sheet.a5 .bc svg{height:20mm}
+.red .txt,.red .brand{color:#C8323C}
+#printArea{display:none}
+@media print{
+  @page{size:A5 landscape;margin:0}
+  body{background:#fff}
+  header,nav,main,#toast,#cam{display:none!important}
+  #printArea{display:block}
+}
+</style>
+<style id="pageSize"></style>
+</head>
+<body>
+<header><h1>Couplo Dispatch</h1><button id="who" hidden></button></header>
+<nav><button data-t="label" class="on">Labels</button><button data-t="scan">Scan &amp; Track</button></nav>
+
+<main>
+<!-- ================= LABELS ================= -->
+<section id="t-label">
+  <div class="card">
+    <h2>1. Paste the WhatsApp order</h2>
+    <textarea id="paste" placeholder="Paste both parts: order details + address (each starts with ODNO)"></textarea>
+    <p class="hint">Paste the full WhatsApp message. The app splits it at the second "ODNO" line.</p>
+    <div class="row"><button class="btn alt" id="pasteBtn" type="button">Paste from clipboard</button><button class="btn" id="splitBtn" type="button">Make label</button></div>
+  </div>
+
+  <div class="card" id="editCard" hidden>
+    <h2>2. Check the label</h2>
+    <label>Brand</label>
+    <div class="chips" id="brandChips"></div>
+    <label>Order no. (barcode)</label>
+    <input id="odno" autocomplete="off" style="text-transform:uppercase">
+    <label>Address side</label>
+    <textarea id="addr"></textarea>
+    <label>Order details side</label>
+    <textarea id="det"></textarea>
+    <div class="pv" id="pv"></div>
+    <div class="row"><button class="btn alt" id="addQ" type="button">+ Add to print list</button><button class="btn" id="printOne" type="button">Print now</button></div>
+  </div>
+
+  <div class="card" id="qCard" hidden>
+    <h2>Print list (<span id="qn">0</span>)</h2>
+    <div id="qList"></div>
+    <button class="btn" id="printAll" type="button">Print all</button>
+  </div>
+
+  <p class="hint" style="text-align:center">Paper: A5. In the print window choose A5, Landscape, margins None, scale 100%.</p>
+
+</section>
+
+<!-- ================= SCAN ================= -->
+<section id="t-scan" hidden>
+  <div class="card" id="loginCard" hidden>
+    <h2>Log in</h2>
+    <label>Who are you?</label>
+    <select id="lgWho"><option value="">Loading…</option></select>
+    <label>PIN</label>
+    <input id="lgPin" type="password" inputmode="numeric" autocomplete="off">
+    <button class="btn" id="lgBtn" type="button">Log in</button>
+    <p class="hint">Staff need "Orders" access in the Couplo app (Admin → Staff → Edit).</p>
+  </div>
+
+  <div id="scanBody" hidden>
+    <div class="card">
+      <div class="step"><div class="num now" id="n1">1</div><div style="flex:1">
+        <b>Scan the Couplo label</b>
+        <div id="ordBox" class="hint">Barcode at the bottom of the address side.</div>
+      </div></div>
+      <button class="btn big" id="scan1" type="button">📷 Scan label</button>
+    </div>
+
+    <div class="card">
+      <div class="step"><div class="num" id="n2">2</div><div style="flex:1">
+        <b>Scan the courier slip</b>
+        <div id="awbBox" class="hint">Barcode / QR on the courier's slip.</div>
+      </div></div>
+      <button class="btn big" id="scan2" type="button" disabled>📷 Scan courier slip</button>
+      <div id="courWrap" hidden><label>Courier</label><div class="chips" id="courChips"></div></div>
+      <button class="btn" id="saveBtn" type="button" disabled>✓ Save tracking</button>
+    </div>
+
+    <div class="card">
+      <h2>Courier sent photos on WhatsApp?</h2>
+      <p class="hint" style="margin-top:0">Save the photos from WhatsApp, then pick them here. The app reads the barcodes in each photo. Pick many at once.</p>
+      <input type="file" id="photos" accept="image/*" multiple hidden>
+      <button class="btn big alt" id="photoBtn" type="button">🖼 Pick parcel photos</button>
+      <div id="photoList"></div>
+    </div>
+
+    <div class="card"><h2>Saved today (<span id="logN">0</span>)</h2><div class="log" id="log"></div>
+      <button class="btn alt" id="reload" type="button">↻ Reload orders</button></div>
+  </div>
+</section>
+</main>
+
+<div id="cam">
+  <div id="camTop">Point at the barcode</div>
+  <div id="reader"></div>
+  <div id="camBot">
+    <div class="row"><input id="manual" placeholder="Or type the number" autocomplete="off" style="text-transform:uppercase"><button class="btn" id="manualOk" type="button" style="flex:0 0 80px;margin:0">OK</button></div>
+    <button class="btn alt" id="camClose" type="button">Cancel</button>
+  </div>
+</div>
+
+<div id="printArea"></div>
+<div id="fileReader" style="display:none"></div>
+<div id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+/* Couplo Dispatch — labels from the WhatsApp order text + barcode scanning of tracking numbers.
+   Talks to the same Apps Script as the Couplo app (setTrack), so tracking shows in the Dispatch tab and on track.html. */
+const API_DEFAULT="https://script.google.com/macros/s/AKfycbxUUZvu5SU3GLEFSZSFeUFdrLXy0WrOfPlFVGlL_gKnX2oK84mGf08HiD30jdDs4OEX/exec";
+const LS={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
+const API=LS.get('couplo_api')||API_DEFAULT;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m,ms){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,ms||2800)}
+async function call(action,data){
+  let j;try{const r=await fetch(API,{method:'POST',body:JSON.stringify({action,...(data||{})})});j=await r.json()}
+  catch(e){throw new Error('Cannot reach the sheet. Check the internet.')}
+  if(!j.ok)throw new Error(j.error||'Server error');return j;
+}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  $('#t-label').hidden=b.dataset.t!=='label';$('#t-scan').hidden=b.dataset.t!=='scan';
+  if(b.dataset.t==='scan')scanInit();
+});
+
+/* =================== LABELS =================== */
+const BRANDS=[['couplo','Couplo'],['pt','Print & Trend']];
+let brand=LS.get('dp_brand')||'couplo', paper='a5', queue=[];
+try{queue=JSON.parse(LS.get('dp_queue')||'[]')}catch(e){queue=[]}
+function chips(box,list,cur,on){box.innerHTML='';list.forEach(([v,t])=>{const b=document.createElement('button');b.type='button';b.className='chip'+(v===cur?' on':'');b.textContent=t;b.onclick=()=>on(v);box.appendChild(b)})}
+function drawBrand(){chips($('#brandChips'),BRANDS,brand,v=>{brand=v;LS.set('dp_brand',v);drawBrand();preview()})}
+function drawPaper(){$('#pageSize').textContent='@media print{@page{size:A5 landscape;margin:0}}'}
+
+const clean=s=>String(s||'').replace(/[‎‏‪-‮⁦-⁩]/g,'').replace(/\r/g,'').replace(/[ \t]+$/gm,'');
+function split(text){
+  const lines=clean(text).split('\n');
+  const idx=lines.map((l,i)=>/^\s*od\s*no\b/i.test(l)?i:-1).filter(i=>i>=0);
+  let det,addr;
+  if(idx.length>=2){det=lines.slice(0,idx[1]);addr=lines.slice(idx[1])}
+  else{ // no second ODNO: split at the first blank-line gap after an "expecting/contact/balance" line
+    const k=lines.findIndex((l,i)=>i>0&&!l.trim()&&/contact|balance|courier/i.test(lines.slice(0,i).join(' '))&&lines.slice(i+1).some(x=>x.trim()));
+    det=k>0?lines.slice(0,k):lines;addr=k>0?lines.slice(k):[];
+  }
+  const tidy=a=>a.join('\n').replace(/\n{3,}/g,'\n\n').trim();
+  const m=clean(text).match(/od\s*no\s*[:\-.]?\s*([^\n]+)/i);
+  return{det:tidy(det),addr:tidy(addr),odno:m?m[1].replace(/[^A-Za-z0-9\-]/g,'').toUpperCase():''};
+}
+function sheetHTML(L){
+  const red=L.brand==='pt';
+  const head=red?'<div class="brand"><div class="pt">PRINT&amp;TREND</div><div class="sub">VENGARA<br>8590288151</div><div class="rule"></div></div>'
+               :'<div class="brand"><img src="icons/logo.png" alt="Couplo"><div class="sub">VENGARA<br>8590288151</div><div class="rule"></div></div>';
+  const bc=L.odno?'<div class="bc"><svg class="bcode" data-v="'+esc(L.odno)+'"></svg></div>':'';
+  return '<div class="sheet'+(paper==='a5'?' a5':'')+(red?' red':'')+'"><div class="half">'+head+'<div class="txt">'+esc(L.addr)+'</div>'+bc+'</div><div class="half"><div class="txt">'+esc(L.det)+'</div></div></div>';
+}
+function drawCodes(root){root.querySelectorAll('svg.bcode').forEach(s=>{try{JsBarcode(s,s.dataset.v,{format:'CODE128',displayValue:true,fontSize:24,height:80,margin:10,width:3})}catch(e){}})}
+const cur=()=>({brand,odno:$('#odno').value.replace(/\s+/g,'').toUpperCase(),addr:$('#addr').value,det:$('#det').value});
+function preview(){
+  if($('#editCard').hidden)return;
+  const pv=$('#pv');pv.innerHTML=sheetHTML(cur());drawCodes(pv);
+  const sh=pv.firstChild,w=pv.clientWidth,mm=paper==='a5'?210:297,hmm=paper==='a5'?148:210;
+  const px=mm*3.7795,sc=w/px;sh.style.transform='scale('+sc+')';pv.style.height=(hmm*3.7795*sc)+'px';
+}
+['odno','addr','det'].forEach(id=>$('#'+id).addEventListener('input',()=>{clearTimeout(preview._t);preview._t=setTimeout(preview,250)}));
+$('#pasteBtn').onclick=async()=>{try{$('#paste').value=await navigator.clipboard.readText();$('#splitBtn').click()}catch(e){toast('Long-press the box and choose Paste.')}};
+$('#splitBtn').onclick=()=>{
+  const t=$('#paste').value.trim();if(!t){toast('Paste the WhatsApp order first.');return}
+  const r=split(t);$('#odno').value=r.odno;$('#addr').value=r.addr;$('#det').value=r.det;
+  if(/^M/i.test(r.odno)&&!LS.get('dp_brand'))brand='pt';
+  $('#editCard').hidden=false;drawBrand();preview();
+  if(!r.addr)toast('Could not find the address part. Type it in the Address box.',4000);
+  $('#editCard').scrollIntoView({behavior:'smooth'});
+};
+function printSheets(list){
+  const pa=$('#printArea');pa.innerHTML=list.map(sheetHTML).join('');drawCodes(pa);
+  const imgs=[...pa.querySelectorAll('img')];
+  Promise.all(imgs.map(i=>i.complete?1:new Promise(r=>{i.onload=i.onerror=r}))).then(()=>setTimeout(()=>window.print(),150));
+}
+$('#printOne').onclick=()=>{const L=cur();if(!L.addr.trim()&&!L.det.trim())return;printSheets([L])};
+function saveQ(){LS.set('dp_queue',JSON.stringify(queue));drawQ()}
+function drawQ(){
+  $('#qCard').hidden=!queue.length;$('#qn').textContent=queue.length;
+  $('#qList').innerHTML='';queue.forEach((L,i)=>{const d=document.createElement('div');d.className='q';
+    d.innerHTML='<b>'+esc(L.odno||'(no order no.)')+'</b><span>'+esc((L.addr.split('\n').find(x=>x.trim()&&!/od\s*no|courier/i.test(x))||'').slice(0,22))+'</span><button type="button">Remove</button>';
+    d.querySelector('button').onclick=()=>{queue.splice(i,1);saveQ()};$('#qList').appendChild(d)});
+}
+$('#addQ').onclick=()=>{const L=cur();if(!L.addr.trim())return toast('Address is empty.');queue.push(L);saveQ();
+  $('#paste').value='';$('#editCard').hidden=true;toast((L.odno||'Label')+' added. Paste the next order.');window.scrollTo({top:0,behavior:'smooth'})};
+$('#printAll').onclick=()=>{if(!queue.length)return;printSheets(queue);
+  setTimeout(()=>{if(confirm('Printed? Clear the print list?')){queue=[];saveQ()}},1500)};
+window.addEventListener('resize',preview);
+drawBrand();drawPaper();drawQ();
+
+/* =================== SCAN & TRACK =================== */
+const COURIERS=['Speed and Safe','India Post','ST Courier','DTDC','Professional Couriers'];
+let token=LS.get('dp_token')||'', whoName=LS.get('dp_who')||'', orders=null, ord=null, awb='', courier='', inited=false;
+let logToday=[];try{const l=JSON.parse(LS.get('dp_log')||'{}');logToday=l.d===new Date().toDateString()?l.items:[]}catch(e){}
+
+function guessCourier(a){
+  a=a.toUpperCase();
+  if(/^[A-Z]{2}\d{9}IN$/.test(a))return'India Post';
+  if(/^[DZXIVNP]\d{8}$/.test(a)||/^7X\d+/.test(a))return'DTDC';
+  if(/^\d{8}$/.test(a))return'Speed and Safe';
+  return LS.get('dp_lastCourier')||'';
+}
+async function scanInit(){
+  if(inited)return;inited=true;
+  if(token){$('#scanBody').hidden=false;showWho();loadOrders();return}
+  $('#loginCard').hidden=false;
+  try{const j=await call('portalStaff');const s=$('#lgWho');
+    s.innerHTML='<option value="">Choose…</option><option value="__admin">Owner (admin PIN)</option>'+j.staff.filter(x=>x.hasPin).sort((a,b)=>(a.order||0)-(b.order||0)).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')}
+  catch(e){toast(e.message)}
+}
+$('#lgBtn').onclick=async()=>{
+  const w=$('#lgWho').value,p=$('#lgPin').value.trim();if(!w||!p)return toast('Choose your name and type the PIN.');
+  const t=w==='__admin'?p:'m:'+w+':'+p;$('#lgBtn').disabled=true;
+  try{const j=await call('allOrders',{adminPin:t});token=t;whoName=w==='__admin'?'Owner':$('#lgWho').selectedOptions[0].text;
+    LS.set('dp_token',t);LS.set('dp_who',whoName);orders=j.orders||[];$('#loginCard').hidden=true;$('#scanBody').hidden=false;showWho();toast('Logged in · '+orders.length+' orders')}
+  catch(e){toast(/No access/i.test(e.message)?'No Orders access. Ask Murshid to tick "Orders" for you.':/PIN/i.test(e.message)?'Wrong PIN.':e.message,4000)}
+  finally{$('#lgBtn').disabled=false}
+};
+function showWho(){const b=$('#who');b.hidden=false;b.textContent=whoName+' · Log out';b.onclick=()=>{if(!confirm('Log out?'))return;['dp_token','dp_who'].forEach(LS.del);location.reload()}}
+async function loadOrders(){
+  try{const j=await call('allOrders',{adminPin:token});orders=j.orders||[];toast(orders.length+' orders loaded')}
+  catch(e){if(/PIN|access/i.test(e.message)){LS.del('dp_token');toast('Please log in again.');setTimeout(()=>location.reload(),1500)}else toast(e.message,4000)}
+}
+$('#reload').onclick=loadOrders;
+const norm=s=>String(s||'').replace(/[^A-Z0-9]/gi,'').toUpperCase();
+function pickOrder(code){
+  if(!orders){toast('Orders still loading…');return}
+  const k=norm(code);const hits=orders.filter(o=>norm(o.orderNo)===k).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  if(!hits.length){$('#ordBox').innerHTML='<span class="bad">'+esc(code)+' is not in the Couplo app yet.</span> Ask sales staff to enter it, then tap Reload.';return}
+  ord=hits[0];awb='';courier='';
+  $('#n1').className='num done';$('#n2').className='num now';
+  $('#ordBox').innerHTML='<div class="val">'+esc(ord.orderNo)+'</div>'+esc(ord.customer||'')+' · '+esc(ord.district||'')+' · '+esc(ord.product||'')+(ord.payment==='cod'?' · <b>COD</b>':'')+
+    (ord.awb?'<div class="bad" style="margin-top:4px">Already has tracking: '+esc(ord.courier||'')+' '+esc(ord.awb)+' (scan again to replace)</div>':'');
+  $('#awbBox').textContent='Barcode / QR on the courier\'s slip.';$('#scan2').disabled=false;$('#saveBtn').disabled=true;$('#courWrap').hidden=true;
+  setTimeout(()=>openCam(2),400);
+}
+function pickAwb(code){
+  let a=String(code||'').trim();
+  try{if(/^https?:/i.test(a)){const u=new URL(a);a=[...u.searchParams.values()].find(v=>/[A-Z0-9]{6,}/i.test(v))||u.pathname.split('/').filter(Boolean).pop()||a}}catch(e){}
+  awb=a.replace(/\s+/g,'').toUpperCase();
+  if(ord&&norm(awb)===norm(ord.orderNo)){toast('That is the Couplo label again. Scan the courier slip.');return}
+  courier=ord&&ord.payment==='cod'?'India Post':guessCourier(awb);
+  $('#n2').className='num done';
+  $('#awbBox').innerHTML='<div class="val">'+esc(awb)+'</div>';
+  $('#courWrap').hidden=false;drawCour();
+}
+function drawCour(){
+  const cod=ord&&ord.payment==='cod';
+  chips($('#courChips'),(cod?['India Post']:COURIERS).map(c=>[c,c]),courier,v=>{courier=v;drawCour()});
+  $('#saveBtn').disabled=!(awb&&courier);
+  if(!courier)$('#saveBtn').textContent='Pick the courier';else $('#saveBtn').textContent='✓ Save '+courier+' tracking';
+}
+$('#saveBtn').onclick=async()=>{
+  if(!ord||!awb||!courier)return;$('#saveBtn').disabled=true;
+  try{const j=await call('setTrack',{adminPin:token,id:ord.id,courier,awb});Object.assign(ord,j.order||{courier,awb});
+    LS.set('dp_lastCourier',courier);if(navigator.vibrate)navigator.vibrate(120);
+    logToday.unshift({o:ord.orderNo,a:awb,c:courier,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog();
+    toast('✓ '+ord.orderNo+' saved. Scan the next label.');reset();setTimeout(()=>openCam(1),700)}
+  catch(e){toast(e.message,4000);$('#saveBtn').disabled=false}
+};
+function reset(){ord=null;awb='';courier='';$('#n1').className='num now';$('#n2').className='num';$('#ordBox').textContent='Barcode at the bottom of the address side.';
+  $('#awbBox').textContent='Barcode / QR on the courier\'s slip.';$('#scan2').disabled=true;$('#saveBtn').disabled=true;$('#saveBtn').textContent='✓ Save tracking';$('#courWrap').hidden=true}
+function drawLog(){$('#logN').textContent=logToday.length;$('#log').innerHTML=logToday.map(x=>'<div><b>'+esc(x.o)+'</b><span>'+esc(x.c)+' · '+esc(x.a)+'</span><span class="hint" style="margin:0">'+x.t+'</span></div>').join('')}
+drawLog();
+
+/* ---------- photos sent by the courier office on WhatsApp ---------- */
+$('#photoBtn').onclick=()=>{if(!orders)return toast('Orders still loading…');$('#photos').click()};
+$('#photos').onchange=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await photoCard(f)};
+let fq=null;
+async function decodeAll(file){
+  const found=new Set();
+  if('BarcodeDetector' in window){try{const bd=new BarcodeDetector();const bmp=await createImageBitmap(file);(await bd.detect(bmp)).forEach(r=>found.add(r.rawValue))}catch(e){}}
+  if(found.size<2){ // no native detector (iPhone) or it missed one: try the whole photo and pieces of it
+    if(!fq)fq=new Html5Qrcode('fileReader',{verbose:false});
+    const img=await new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=no;i.src=URL.createObjectURL(file)});
+    const W=img.naturalWidth,H=img.naturalHeight;
+    const parts=[[0,0,1,1],[0,0,.5,1],[.5,0,.5,1],[0,0,1,.5],[0,.5,1,.5],[0,.33,1,.34],[.25,.25,.5,.5]];
+    for(const[x,y,w,h]of parts){
+      const c=document.createElement('canvas'),sc=Math.min(2,1600/Math.max(w*W,h*H)*1.5);c.width=w*W*sc;c.height=h*H*sc;
+      c.getContext('2d').drawImage(img,x*W,y*H,w*W,h*H,0,0,c.width,c.height);
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.95));
+      try{const t=await fq.scanFile(new File([blob],'p.jpg',{type:'image/jpeg'}),false);if(t)found.add(t)}catch(e){}
+    }
+  }
+  return[...found].map(v=>String(v).trim()).filter(Boolean);
+}
+async function photoCard(file){
+  const box=document.createElement('div');box.className='ph';
+  box.innerHTML='<img alt=""><div class="bd"><div class="hint" style="margin:0">Reading barcodes…</div></div>';
+  box.querySelector('img').src=URL.createObjectURL(file);$('#photoList').prepend(box);
+  const codes=await decodeAll(file);
+  let o=null,a='';
+  codes.forEach(c=>{const k=norm(c);const hit=orders.find(x=>norm(x.orderNo)===k);if(hit)o=hit;else if(!a)a=c.replace(/\s+/g,'').toUpperCase()});
+  const bd=box.querySelector('.bd');
+  bd.innerHTML='<label style="margin:0">Order no.</label><input class="on" placeholder="e.g. BNB41A" style="text-transform:uppercase">'+
+    '<div class="hint oi" style="margin:2px 0 0"></div><label style="margin:6px 0 0">Tracking no.</label><input class="aw" style="text-transform:uppercase" placeholder="Number under the courier barcode">'+
+    '<div class="chips cc"></div><button class="btn" type="button">✓ Save</button>';
+  const on=bd.querySelector('.on'),aw=bd.querySelector('.aw'),oi=bd.querySelector('.oi'),cc=bd.querySelector('.cc'),sv=bd.querySelector('button');
+  let cr='';
+  const findO=()=>{const k=norm(on.value);o=k?orders.filter(x=>norm(x.orderNo)===k).sort((p,q)=>String(q.date).localeCompare(String(p.date)))[0]||null:null;
+    oi.innerHTML=o?esc((o.customer||'')+' · '+(o.district||'')+(o.payment==='cod'?' · COD':''))+(o.awb?' <span class="bad">(has '+esc(o.awb)+')</span>':''):(on.value.trim()?'<span class="bad">Not in the Couplo app</span>':'');dc()};
+  const dc=()=>{const cod=o&&o.payment==='cod';if(cod)cr='India Post';chips(cc,(cod?['India Post']:COURIERS).map(c=>[c,c]),cr,v=>{cr=v;dc()});sv.disabled=!(o&&aw.value.trim()&&cr)};
+  if(o)on.value=o.orderNo;if(a){aw.value=a;cr=guessCourier(a)}
+  on.oninput=findO;aw.oninput=()=>{if(!cr)cr=guessCourier(aw.value);dc()};findO();
+  if(!codes.length)oi.innerHTML+='<div class="hint" style="margin:0">No barcode read — type the numbers from the photo.</div>';
+  sv.onclick=async()=>{sv.disabled=true;const awv=aw.value.replace(/\s+/g,'').toUpperCase();
+    try{const j=await call('setTrack',{adminPin:token,id:o.id,courier:cr,awb:awv});Object.assign(o,j.order||{});LS.set('dp_lastCourier',cr);
+      logToday.unshift({o:o.orderNo,a:awv,c:cr,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog();
+      bd.innerHTML='<div class="ok"><b>✓ '+esc(o.orderNo)+'</b><br>'+esc(cr)+' · '+esc(awv)+'</div>'}
+    catch(e){toast(e.message,4000);sv.disabled=false}};
+}
+
+/* ---------- camera ---------- */
+let qr=null,camStep=1,camBusy=false;
+async function openCam(step){
+  camStep=step;$('#camTop').textContent=step===1?'Scan the barcode on the Couplo label':'Scan the courier slip barcode / QR';
+  $('#manual').value='';$('#cam').classList.add('on');camBusy=false;
+  try{
+    if(!qr)qr=new Html5Qrcode('reader',{verbose:false});
+    const w=Math.min(window.innerWidth*0.85,420);
+    await qr.start({facingMode:'environment'},{fps:12,qrbox:{width:w,height:Math.round(w*0.5)},aspectRatio:window.innerHeight/window.innerWidth,
+      experimentalFeatures:{useBarCodeDetectorIfSupported:true}},txt=>{if(camBusy)return;camBusy=true;if(navigator.vibrate)navigator.vibrate(60);closeCam().then(()=>got(txt))},()=>{});
+  }catch(e){toast('Camera not available. Allow camera, or type the number.',4000)}
+}
+async function closeCam(){$('#cam').classList.remove('on');try{if(qr&&qr.isScanning)await qr.stop()}catch(e){}}
+function got(txt){if(camStep===1)pickOrder(txt);else pickAwb(txt)}
+$('#scan1').onclick=()=>openCam(1);$('#scan2').onclick=()=>openCam(2);
+$('#camClose').onclick=()=>closeCam();
+$('#manualOk').onclick=()=>{const v=$('#manual').value.trim();if(!v)return;closeCam().then(()=>got(v))};
+$('#manual').addEventListener('keydown',e=>{if(e.key==='Enter')$('#manualOk').click()});
+</script>
+</body>
+</html>
