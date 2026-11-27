@@ -348,28 +348,41 @@ function guessCourier(a){
   if(/^\d{8}$/.test(a))return'Speed and Safe';
   return LS.get('dp_lastCourier')||'';
 }
+/* Only the owner and Mashida log in here. The order list is kept on the phone and refreshed in the background, so opening is quick. */
+const ALLOWED=/mashida/i;
+const slim=o=>({id:o.id,orderNo:o.orderNo,date:o.date,customer:o.customer,district:o.district,product:o.product,payment:o.payment,courier:o.courier,awb:o.awb,dispatched:o.dispatched});
+function cacheOrders(list){const since=new Date(Date.now()-90*864e5).toISOString().slice(0,10);try{LS.set('dp_orders',JSON.stringify(list.filter(o=>!o.date||String(o.date)>=since).map(slim)))}catch(e){}}
+try{const c=JSON.parse(LS.get('dp_orders')||'null');if(Array.isArray(c))orders=c}catch(e){}
+function fillWho(staff){const s=$('#lgWho');const cur=s.value;
+  s.innerHTML='<option value="">Choose…</option><option value="__admin">Owner (admin PIN)</option>'+staff.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('');if(cur)s.value=cur}
 async function scanInit(){
   if(inited)return;inited=true;
-  if(token){$('#scanBody').hidden=false;showWho();loadOrders();return}
+  if(token){$('#scanBody').hidden=false;showWho();loadOrders(true);return}
   $('#loginCard').hidden=false;
-  try{const j=await call('portalStaff');const s=$('#lgWho');
-    s.innerHTML='<option value="">Choose…</option><option value="__admin">Owner (admin PIN)</option>'+j.staff.filter(x=>x.hasPin).sort((a,b)=>(a.order||0)-(b.order||0)).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')}
-  catch(e){toast(e.message)}
+  let cached=[];try{cached=JSON.parse(LS.get('dp_staff')||'[]')}catch(e){}
+  fillWho(cached);
+  try{const j=await call('portalStaff');const st=j.staff.filter(x=>x.hasPin&&ALLOWED.test(x.name)).map(x=>({id:x.id,name:x.name}));LS.set('dp_staff',JSON.stringify(st));fillWho(st)}
+  catch(e){if(!cached.length)toast(e.message)}
 }
 $('#lgBtn').onclick=async()=>{
   const w=$('#lgWho').value,p=$('#lgPin').value.trim();if(!w||!p)return toast('Choose your name and type the PIN.');
-  const t=w==='__admin'?p:'m:'+w+':'+p;$('#lgBtn').disabled=true;
-  try{const j=await call('allOrders',{adminPin:t});token=t;whoName=w==='__admin'?'Owner':$('#lgWho').selectedOptions[0].text;
-    LS.set('dp_token',t);LS.set('dp_who',whoName);orders=j.orders||[];$('#loginCard').hidden=true;$('#scanBody').hidden=false;showWho();toast('Logged in · '+orders.length+' orders')}
+  const t=w==='__admin'?p:'m:'+w+':'+p;$('#lgBtn').disabled=true;$('#lgBtn').textContent='Checking…';
+  try{
+    if(w==='__admin'){const j=await call('adminCheck',{adminPin:p});if(!j.valid)throw new Error('Wrong PIN')}
+    else{try{await call('setTrack',{adminPin:t,id:'__login_check__'})}catch(e){if(!/not found/i.test(e.message))throw e}} // passes the PIN check, changes nothing
+    token=t;whoName=w==='__admin'?'Owner':$('#lgWho').selectedOptions[0].text;
+    LS.set('dp_token',t);LS.set('dp_who',whoName);$('#loginCard').hidden=true;$('#scanBody').hidden=false;showWho();toast('Logged in');loadOrders(true)}
   catch(e){toast(/No access/i.test(e.message)?'No Orders access. Ask Murshid to tick "Orders" for you.':/PIN/i.test(e.message)?'Wrong PIN.':e.message,4000)}
-  finally{$('#lgBtn').disabled=false}
+  finally{$('#lgBtn').disabled=false;$('#lgBtn').textContent='Log in'}
 };
 function showWho(){const b=$('#who');b.hidden=false;b.textContent=whoName+' · Log out';b.onclick=()=>{if(!confirm('Log out?'))return;['dp_token','dp_who'].forEach(LS.del);location.reload()}}
-async function loadOrders(){
-  try{const j=await call('allOrders',{adminPin:token});orders=j.orders||[];toast(orders.length+' orders loaded')}
-  catch(e){if(/PIN|access/i.test(e.message)){LS.del('dp_token');toast('Please log in again.');setTimeout(()=>location.reload(),1500)}else toast(e.message,4000)}
+async function loadOrders(quiet){
+  const btn=$('#reload');btn.disabled=true;btn.textContent='↻ Updating orders…';
+  try{const j=await call('allOrders',{adminPin:token});orders=j.orders||[];cacheOrders(orders);if(!quiet)toast(orders.length+' orders loaded')}
+  catch(e){if(/PIN|access/i.test(e.message)){LS.del('dp_token');toast('Please log in again.');setTimeout(()=>location.reload(),1500)}else if(!quiet||!orders)toast(e.message,4000)}
+  finally{btn.disabled=false;btn.textContent='↻ Reload orders'}
 }
-$('#reload').onclick=loadOrders;
+$('#reload').onclick=()=>loadOrders(false);
 const norm=s=>String(s||'').replace(/[^A-Z0-9]/gi,'').toUpperCase();
 /* all items of one customer: label VNB02 → orders VNB02, VNB02A, VNB02B…; label VNB02A → just VNB02A (plus its brothers if it is the shared label) */
 function findGroup(code){
