@@ -1077,6 +1077,7 @@ function rpRange(st){st=st||rp;const td=todayStr;
   if(st.preset==='today')return[td,td];
   if(st.preset==='yesterday'){const y=addDays(td,-1);return[y,y]}
   if(st.preset==='week')return[addDays(td,-6),td];
+  if(st.preset==='w8')return[addDays(td,-55),td];
   if(st.preset==='month')return[td.slice(0,7)+'-01',td];
   if(st.preset==='lastmonth'){const d=new Date(td.slice(0,7)+'-01T12:00:00');d.setMonth(d.getMonth()-1);const m=ymOf(d);return[m+'-01',ymd(monthDates(m).slice(-1)[0])]}
   if(st.preset==='year')return[td.slice(0,4)+'-01-01',td];
@@ -1379,14 +1380,14 @@ function trackCell(o,onSent){
     catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message)}sv.disabled=false}});
   return el('div',{style:'display:flex;gap:6px;align-items:center'},cr,aw,scb,sv)}
 /* COD — only cash-on-delivery orders: courier, tracking no., shipped → delivered → cash received (or returned) */
-let codF={preset:'month',from:'',to:'',show:'open',q:''};
+let codF={preset:'w8',from:'',to:'',show:'open',q:''};
 const COD_ST=[['','Not shipped'],['shipped','Shipped'],['delivered','Delivered (cash pending)'],['paid','Cash received'],['returned','Returned (RTO)']];
 const codSt=o=>o.codStatus||(String(o.dispatched).toUpperCase()==='TRUE'?'shipped':'');
 function viewCod(){
   const R0=rpData(codF);
-  const presets=[['week','Last 7 days'],['month','This month'],['lastmonth','Last month'],['year','This year'],['custom','Pick dates']];
+  const presets=[['week','Last 7 days'],['w8','Last 8 weeks'],['month','This month'],['lastmonth','Last month'],['year','This year'],['custom','Pick dates']];
   const ps=el('select',{id:'cod-p','aria-label':'Period',onchange:e=>{codF.preset=e.target.value;if(codF.preset==='custom'&&!codF.from){codF.from=R0.f;codF.to=R0.t}renderAdmin()}},...presets.map(([v,t])=>el('option',{value:v,text:t,selected:codF.preset===v})));
-  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders · '+rpLabel(R0.f,R0.t)}),el('div',{class:'row'},ps,
+  const head=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD dashboard · '+rpLabel(R0.f,R0.t)}),el('div',{class:'row'},ps,
       el('button',{class:'btn',type:'button',text:'Reload',onclick:()=>{rpMonths(R0.f,R0.t).forEach(m=>delete rpCache[m]);renderAdmin()}}))),
     codF.preset==='custom'?el('div',{class:'form2'},
       el('label',{class:'f',for:'cod-f'},'From',el('input',{id:'cod-f',type:'date',value:codF.from,max:todayStr,onchange:e=>{codF.from=e.target.value;renderAdmin()}})),
@@ -1397,21 +1398,36 @@ function viewCod(){
   const by=st=>all.filter(o=>codSt(o)===st);
   const nm=id=>(staff.find(s=>s.id===id)||{name:id||'—'}).name;
   const stat=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
-  const pendCash=all.filter(o=>['shipped','delivered'].includes(codSt(o)));
-  const kpis=el('div',{class:'panel'},el('div',{class:'kpis'},
-    stat(all.length,'COD orders',rs(sum(all))),
-    stat(by('').length,'Not shipped',rs(sum(by(''))),by('').length?'warnk':''),
-    stat(by('shipped').length,'On the way',rs(sum(by('shipped')))),
-    stat(by('delivered').length,'Delivered, cash pending',rs(sum(by('delivered'))),by('delivered').length?'warnk':''),
-    stat(by('paid').length,'Cash received',rs(sum(by('paid')))),
-    stat(by('returned').length,'Returned (RTO)',rs(sum(by('returned'))),by('returned').length?'warnk':''),
-    stat(rs(sum(pendCash)),'Cash still to come',pendCash.length+' orders')),
+  const pendCash=all.filter(o=>['','shipped','delivered'].includes(codSt(o)));
+  /* money flow: total COD − cash received − returned = still to come (with courier + at post office) */
+  const T=sum(all),P=sum(by('paid')),Rt=sum(by('returned')),toDeliver=by('').concat(by('shipped')),atPO=by('delivered');
+  const line=(l,v,n,cls)=>el('div',{class:'codline'+(cls?' '+cls:'')},el('span',{text:l}),el('small',{text:n}),el('b',{class:'mono',text:v}));
+  const flow=el('div',{class:'panel'},el('h3',{text:'COD money'}),
+    line('Total COD orders',rs(T),all.length+' orders'),
+    line('− Cash received (ticket 2 ✓)','− '+rs(P),by('paid').length+' orders','minus'),
+    line('− Returned (RTO)','− '+rs(Rt),by('returned').length+' orders','minus'),
+    line('= Still to come',rs(T-P-Rt),pendCash.length+' orders','total'),
+    el('div',{class:'kpis',style:'margin-top:12px'},
+      stat(toDeliver.length,'📦 To be delivered',rs(sum(toDeliver))+' · '+by('').length+' not shipped'),
+      stat(atPO.length,'🏤 Collect from post office',rs(sum(atPO))+' · delivered, cash not with us',atPO.length?'warnk':''),
+      stat(by('paid').length,'✅ Cash with us',rs(P))),
     !all.length?el('p',{class:'hint',text:'Orders show here once staff pick "COD" in the order form.'}):null);
-  /* courier-wise money still to come */
-  const cg={};pendCash.forEach(o=>{const k=courOf(o);cg[k]=cg[k]||{n:0,a:0};cg[k].n++;cg[k].a+=amt(o)});
-  const courP=Object.keys(cg).length?el('div',{class:'panel'},el('h3',{text:'Cash to collect, by courier'}),el('div',{class:'scroll'},el('table',{},
-    el('thead',{},el('tr',{},...['Courier','Orders','Amount'].map(t=>el('th',{text:t})))),
-    el('tbody',{},...Object.entries(cg).sort((a,b)=>b[1].a-a[1].a).map(([k,v])=>el('tr',{},el('td',{text:k}),el('td',{class:'mono',text:String(v.n)}),el('td',{class:'mono',text:rs(v.a)}))))))):null;
+  /* COD share of sales + week by week */
+  const os=R0.orders||[],sumA=a=>a.reduce((t,o)=>t+amt(o),0),pct=(x,y)=>y?Math.round(x*100/y)+'%':'—';
+  const share=el('div',{class:'panel'},el('h3',{text:'How much of our sales is COD'}),el('div',{class:'kpis'},
+    stat(pct(all.length,os.length),'COD share (orders)',all.length+' of '+os.length+' orders'),
+    stat(pct(T,sumA(os)),'COD share (amount)',rs(T)+' of '+rs(sumA(os))),
+    stat(pct(by('returned').length,all.length),'COD return rate',by('returned').length+' returned',by('returned').length?'warnk':''),
+    stat(all.length?rs(T/all.length):'—','Average COD order')));
+  const wkOf=d=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));return ymd(x)};
+  const wk={};os.forEach(o=>{const k=wkOf(o.date);const w=wk[k]=wk[k]||{n:0,c:0,ca:0,dl:0,pd:0,rt:0};w.n++;if(o.payment==='cod'){w.c++;w.ca+=amt(o);const st=codSt(o);if(st==='delivered'||st==='paid')w.dl++;if(st==='paid')w.pd++;if(st==='returned')w.rt++}});
+  const wks=Object.keys(wk).sort().reverse(),maxP=Math.max(1,...wks.map(k=>wk[k].n?wk[k].c/wk[k].n:0));
+  const weekly=wks.length?el('div',{class:'panel'},el('h3',{text:'COD orders week by week'}),el('p',{class:'hint',text:'Week starts Monday. Delivered and Cash received count the COD orders placed that week.'}),el('div',{class:'scroll'},el('table',{},
+    el('thead',{},el('tr',{},...['Week','All orders','COD','COD %','','COD amount','Delivered','Cash received','Returned'].map(t=>el('th',{text:t})))),
+    el('tbody',{},...wks.map(k=>{const w=wk[k],p=w.n?w.c/w.n:0;return el('tr',{},el('td',{class:'mono',text:dm(k)+' – '+dm(addDays(k,6))}),el('td',{class:'mono',text:String(w.n)}),el('td',{class:'mono',style:'font-weight:700',text:String(w.c)}),
+      el('td',{class:'mono',text:pct(w.c,w.n)}),el('td',{style:'min-width:90px'},el('div',{class:'codbar'},el('i',{style:'width:'+Math.round(p*100/maxP)+'%'}))),el('td',{class:'mono',text:rs(w.ca)}),
+      el('td',{class:'mono',text:String(w.dl)}),el('td',{class:'mono',text:String(w.pd)}),el('td',{class:'mono',text:String(w.rt)}))}))))):null;
+  const kpis=el('div',{},flow,share,weekly);const courP=null;
   /* list */
   const box=el('div');
   const draw=()=>{
@@ -1420,31 +1436,37 @@ function viewCod(){
     const groups={open:o=>['','shipped','delivered'].includes(codSt(o)),'':o=>codSt(o)==='',shipped:o=>codSt(o)==='shipped',delivered:o=>codSt(o)==='delivered',paid:o=>codSt(o)==='paid',returned:o=>codSt(o)==='returned',all:()=>true};
     const rows=base.filter(groups[codF.show]).sort((a,b)=>a.date.localeCompare(b.date));
     const chip=(k,t)=>el('button',{type:'button',class:'fchip'+(codF.show===k?' on':''),text:t+' ('+base.filter(groups[k]).length+')',onclick:()=>{codF.show=k;draw()}});
-    const chips=el('div',{class:'fchips'},chip('open','All open'),chip('','Not shipped'),chip('shipped','On the way'),chip('delivered','Cash pending'),chip('paid','Cash received'),chip('returned','Returned'),chip('all','All'));
+    const chips=el('div',{class:'fchips'},chip('open','All open'),chip('','Not shipped'),chip('shipped','On the way'),chip('delivered','At post office'),chip('paid','Cash received'),chip('returned','Returned'),chip('all','All'));
     const qI=el('input',{id:'cod-q',type:'search',placeholder:'Search order no, customer, phone, tracking…',value:codF.q,oninput:e=>{codF.q=e.target.value;clearTimeout(draw._t);draw._t=setTimeout(()=>{draw();const i=$('#cod-q');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}},250)}});
     const xl=el('button',{class:'btn',type:'button',text:'Download Excel ('+rows.length+')',disabled:!rows.length,onclick:()=>{
       const aoa=[['DATE','ORDER NO','CUSTOMER','PHONE','DISTRICT','PINCODE','PRODUCT','QTY','COD AMOUNT','STAFF','COURIER','TRACKING NO','STATUS']].concat(rows.map(o=>[o.date,o.orderNo||'',o.customer||'',o.phone||'',o.district||'',o.pincode||'',o.product||'',+o.qty||1,amt(o),nm(o.staffId),COD_COURIER,o.awb||'',(COD_ST.find(x=>x[0]===codSt(o))||['',''])[1]]));
       const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=aoa[0].map(()=>({wch:16}));XLSX.utils.book_append_sheet(wb,ws,'COD');
       saveFile('COUPLO_COD_'+R0.f+'_to_'+R0.t+'.xlsx',XLSX.write(wb,{bookType:'xlsx',type:'array'}),XLSXT)}});
     const tbl=rows.length?el('div',{class:'scroll'},el('table',{class:'disptbl'},
-      el('thead',{},el('tr',{},...['Date','No.','Customer','Phone','Place','Staff','Amount','Courier','Tracking no.','Status',''].map(t=>el('th',{text:t})))),
+      el('thead',{},el('tr',{},...['Date','No.','Customer','Phone','Place','Staff','Amount','Courier','Tracking no.','① Delivered','② Cash received',''].map(t=>el('th',{text:t})))),
       el('tbody',{},...rows.slice(0,400).map(o=>{
         const cr=el('input',{type:'text',value:COD_COURIER,readonly:true,title:'COD orders always go by India Post','aria-label':'Courier '+(o.orderNo||''),style:'min-width:110px;background:#f3f0f7'});
         const aw=el('input',{type:'text',value:o.awb||'',placeholder:'Tracking no.','aria-label':'Tracking '+(o.orderNo||''),style:'min-width:120px;text-transform:uppercase'});
         pasteScan(aw);
         const scb=el('button',{class:'btn',type:'button',text:'📷','aria-label':'Scan tracking '+(o.orderNo||''),onclick:()=>scanCode(t=>{aw.value=t;toast('Scanned: '+t)})});
-        const st=el('select',{'aria-label':'Status '+(o.orderNo||'')},...COD_ST.map(([v,t])=>el('option',{value:v,text:t,selected:codSt(o)===v})));
-        const sv=el('button',{class:'btn primary',type:'button',text:'Save',onclick:async()=>{
-          if(st.value&&st.value!=='returned'&&!cr.value.trim()){toast('Type the courier name.');cr.focus();return}
-          sv.disabled=true;try{const j=await call('setCod',{adminPin,id:o.id,codStatus:st.value,courier:COD_COURIER,awb:aw.value});Object.assign(o,j.order||{codStatus:st.value,courier:COD_COURIER,awb:aw.value.trim().toUpperCase()});toast((o.orderNo||'Order')+' saved');draw()}
+        const put=async(cs,btns)=>{btns.forEach(x=>x.disabled=true);try{const j=await call('setCod',{adminPin,id:o.id,codStatus:cs,courier:COD_COURIER,awb:aw.value});Object.assign(o,j.order||{codStatus:cs,courier:COD_COURIER,awb:aw.value.trim().toUpperCase()});toast((o.orderNo||'Order')+' · '+(COD_ST.find(x=>x[0]===cs)||['',''])[1]);renderAdmin()}
+          catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);btns.forEach(x=>x.disabled=false)}};
+        const cs0=codSt(o),dOn=cs0==='delivered'||cs0==='paid',pOn=cs0==='paid',rt=cs0==='returned';
+        const tick=(on,t,fn)=>el('button',{type:'button',class:'codtick'+(on?' on':''),role:'checkbox','aria-checked':String(on),text:(on?'✓ ':'')+t,disabled:rt,onclick:fn});
+        let t1,t2,rb;
+        t1=tick(dOn,'Delivered',()=>put(dOn?(o.awb||aw.value.trim()?'shipped':''):'delivered',[t1,t2,rb]));
+        t2=tick(pOn,'Cash received',()=>put(pOn?'delivered':'paid',[t1,t2,rb]));
+        rb=el('button',{type:'button',class:'btn',style:'font-size:12px;padding:6px 8px;min-height:32px',text:rt?'Undo RTO':'↩ RTO',title:'Parcel came back (returned)',onclick:()=>put(rt?(o.awb||aw.value.trim()?'shipped':''):'returned',[t1,t2,rb])});
+        const sv=el('button',{class:'btn primary',type:'button',text:'Save',title:'Save tracking no.',onclick:async()=>{
+          sv.disabled=true;try{const cs=aw.value.trim()&&!codSt(o)?'shipped':(o.codStatus||'');const j=await call('setCod',{adminPin,id:o.id,codStatus:cs,courier:COD_COURIER,awb:aw.value});Object.assign(o,j.order||{codStatus:cs,courier:COD_COURIER,awb:aw.value.trim().toUpperCase()});toast((o.orderNo||'Order')+' saved');draw()}
           catch(e){toast(/Unknown action|No access/i.test(e.message)?'Update the sheet script (Code.gs) first.':'Could not save: '+e.message);sv.disabled=false}}});
         return el('tr',{class:codSt(o)==='paid'?'sent':''},el('td',{class:'mono',text:dm(o.date)}),el('td',{class:'mono',text:o.orderNo||''}),el('td',{text:o.customer||'—'}),el('td',{class:'mono',text:o.phone||''}),
           el('td',{text:[o.district,o.pincode].filter(Boolean).join(' ')}),el('td',{text:nm(o.staffId)}),el('td',{class:'mono',style:'font-weight:700',text:amt(o)?rs(amt(o)):'—'}),
-          el('td',{},cr),el('td',{style:'white-space:nowrap'},aw,scb),el('td',{},st),el('td',{},sv,trackBtns(o)))})))):el('div',{class:'empty',text:'No COD orders here.'});
+          el('td',{},cr),el('td',{style:'white-space:nowrap'},aw,scb,sv),el('td',{},t1),el('td',{},t2),el('td',{style:'white-space:nowrap'},rb,trackBtns(o)))})))):el('div',{class:'empty',text:'No COD orders here.'});
     const cours=[...new Set(COURIERS.concat(all.map(o=>o.courier).filter(Boolean)))];
     box.replaceChildren(...[el('datalist',{id:'dl-cour'},...cours.map(c=>el('option',{value:c}))),chips,el('div',{class:'row'},qI,xl),tbl,rows.length>400?el('p',{class:'hint',text:'Showing first 400. Search to narrow.'}):null].filter(Boolean))};
   draw();
-  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders'}),el('button',{class:'btn primary',type:'button',text:'📄 Read slip photos',onclick:slipReader})),el('p',{class:'hint',text:'All COD orders go by India Post (set automatically). Type or scan the tracking no., pick the status and Save. Shipped → Delivered → Cash received. Picking a status also marks the order dispatched.'}),box);
+  const list=el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'COD orders'}),el('button',{class:'btn primary',type:'button',text:'📄 Read slip photos',onclick:slipReader})),el('p',{class:'hint',text:'All COD orders go by India Post. Scan or type the tracking no. and Save. Then tick ① Delivered when the customer gets the parcel (cash is now with the post office), and ② Cash received when the post office pays the money to us.'}),box);
   return[head,kpis,courP,list].filter(Boolean);
 }
 /* Daily sold — which products were sold on a day and by whom (for Mashida's daily count; admin sees it too) */
