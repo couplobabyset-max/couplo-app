@@ -343,12 +343,12 @@ let logToday=[];try{const l=JSON.parse(LS.get('dp_log')||'{}');logToday=l.d===ne
 
 /* courier known for sure from the number itself (or COD) → save straight away, no tap needed */
 function sureCourier(a,g){a=String(a||'').toUpperCase();if(g&&grpCod(g))return'India Post';
-  if(/^[A-Z]{2}\d{9}IN$/.test(a))return'India Post';if(/^[DZXIVNP]\d{8}$/.test(a))return'DTDC';if(/^\d{8}$/.test(a))return'Speed and Safe';
+  if(/^[A-Z]{2}\d{9}IN$/.test(a))return'India Post';if(/^[DZXIVNP]\d{8}$/.test(a)||/^[A-Z]\d{10}$/.test(a))return'DTDC';if(/^\d{8}$/.test(a))return'Speed and Safe';
   if(/^\d{12}$/.test(a))return'ST Courier';if(/^[A-Z]{3}\d{8}$/.test(a))return'Professional Couriers';return''}
 function guessCourier(a){
   a=a.toUpperCase();
   if(/^[A-Z]{2}\d{9}IN$/.test(a))return'India Post';
-  if(/^[DZXIVNP]\d{8}$/.test(a)||/^7X\d+/.test(a))return'DTDC';
+  if(/^[DZXIVNP]\d{8}$/.test(a)||/^[A-Z]\d{10}$/.test(a)||/^7X\d+/.test(a))return'DTDC'; // e.g. R1001528271
   if(/^\d{8}$/.test(a))return'Speed and Safe';
   if(/^\d{12}$/.test(a))return'ST Courier';           // e.g. 644661328861
   if(/^[A-Z]{3}\d{8}$/.test(a))return'Professional Couriers'; // e.g. VGA65118497
