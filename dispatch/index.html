@@ -77,20 +77,22 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 .red .txt,.red .brand{color:#C8323C}
 /* ---------- COD / India Post slip: A6 landscape (148 x 105 mm) — order no, CID, COD amount on top; From | To below;
    the empty space under From is where the courier tracking sticker goes ---------- */
-.sheet.cod,.sheet.a5.cod{width:148mm;height:105mm;flex-direction:column;padding:6mm 8mm;color:#111;position:relative;text-transform:uppercase}
+.sheet.cod,.sheet.a5.cod{--u:1mm;width:calc(148*var(--u));height:calc(105*var(--u));flex-direction:column;justify-content:safe center;padding:calc(6*var(--u)) calc(8*var(--u));color:#111;position:relative;text-transform:uppercase}
 .cod .head{text-align:center}
-.cod .odn{position:absolute;top:6mm;right:8mm;font-size:4.2mm;font-weight:700;letter-spacing:.3mm}
-.cod .cid{font-weight:700;font-size:5.6mm;letter-spacing:.2mm;white-space:nowrap}
-.cod .amt{display:inline-block;margin-top:2mm;border:.45mm solid #111;padding:1mm 3.5mm;font-weight:700;font-size:4.5mm;white-space:nowrap}
-.cod .line{border-top:.35mm solid #999;margin:3mm 0 3mm}
-.cod .mid{display:flex;gap:6mm;flex:1;min-height:0;overflow:hidden}
-.cod .from{flex:0 0 50mm;font-size:3.4mm;font-weight:700;line-height:1.32}
+.cod .odn{position:absolute;top:calc(6*var(--u));right:calc(8*var(--u));font-size:calc(4.8*var(--u));font-weight:700;letter-spacing:.3mm}
+.cod .cid{font-weight:700;font-size:calc(6.6*var(--u));letter-spacing:.2mm;white-space:nowrap}
+.cod .amt{display:inline-block;margin-top:calc(2*var(--u));border:.45mm solid #111;padding:calc(1*var(--u)) calc(3.5*var(--u));font-weight:700;font-size:calc(5.3*var(--u));white-space:nowrap}
+.cod .line{border-top:.35mm solid #999;margin:calc(3*var(--u)) 0 calc(3*var(--u))}
+.cod .mid{display:flex;gap:calc(6*var(--u));min-height:0;overflow:hidden}
+.cod .from{flex:0 0 calc(52*var(--u));font-size:calc(3.8*var(--u));font-weight:700;line-height:1.32}
 .cod .to{flex:1;min-width:0}
-.cod .hd{font-weight:700;font-size:4.1mm;margin-bottom:1mm}
-.cod .to .txt,.sheet.a5.cod .to .txt{font-size:3.9mm;line-height:1.22;padding-left:3mm}
+.cod .hd{font-weight:700;font-size:calc(4.7*var(--u));margin-bottom:calc(1*var(--u))}
+.cod .to .txt,.sheet.a5.cod .to .txt{font-size:calc(4.4*var(--u));line-height:1.2;padding-left:calc(3*var(--u))}
+/* print: the slip fills whatever paper is chosen in the print window (A6, A5…) and sits in the middle */
+@media print{.sheet.cod,.sheet.a5.cod{--u:min(calc(100vw / 150),calc(100vh / 107));margin:calc((100vh - 105*var(--u)) / 2) auto 0}}
 #printArea{display:none}
 @media print{
-  @page{size:A5 landscape;margin:0}
+  @page{margin:0}
   body{background:#fff}
   header,nav,main,#toast,#cam{display:none!important}
   #printArea{display:block}
@@ -137,7 +139,7 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
     <button class="btn" id="printCod" type="button" hidden>Print COD / India Post slips</button>
   </div>
 
-  <p class="hint" style="text-align:center">Paper: A5 (COD / India Post slips: A6). In the print window choose that size, Landscape, margins None, scale 100%.</p>
+  <p class="hint" style="text-align:center">Paper: A5. COD / India Post slips: choose A6 (or the paper in the printer), Landscape, margins None, scale 100% — the slip fills the page.</p>
 
 </section>
 
@@ -248,7 +250,8 @@ try{queue=JSON.parse(LS.get('dp_queue')||'[]')}catch(e){queue=[]}
 function chips(box,list,cur,on){box.innerHTML='';list.forEach(([v,t])=>{const b=document.createElement('button');b.type='button';b.className='chip'+(v===cur?' on':'');b.textContent=t;b.onclick=()=>on(v);box.appendChild(b)})}
 function drawBrand(){chips($('#brandChips'),BRANDS,brand,v=>{brand=v;if(v!=='cod')LS.set('dp_brand',v);drawBrand();preview()});
   $('#codWrap').hidden=brand!=='cod';$('#dets').hidden=$('#addDet').hidden=brand==='cod'}
-function drawPaper(a6){$('#pageSize').textContent='@media print{@page{size:'+(a6?'A6':'A5')+' landscape;margin:0}}'}
+/* COD slips: no fixed page size, so the paper picked in the print window is used and the slip is scaled to fill it */
+function drawPaper(a6){$('#pageSize').textContent=a6?'@media print{@page{margin:0}}':'@media print{@page{size:A5 landscape;margin:0}}'}
 const amtOf=v=>String(v||'').replace(/[^\d]/g,'');
 /* COD amount from the pasted text: "COD 1500" / "COD amount: 1,500", else the total of the Balance lines */
 function codFrom(text){const t=clean(text);if(!/\bcod\b/i.test(t))return null;
