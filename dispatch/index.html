@@ -173,8 +173,9 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 
     <div class="card">
       <h2>Courier sent photos on WhatsApp?</h2>
-      <p class="hint" style="margin-top:0">Save the photos from WhatsApp, then pick them here. The app reads the barcodes in each photo. Pick many at once.</p>
+      <p class="hint" style="margin-top:0">Paste or pick the photos. The app reads our label barcode; type the courier number if it is not read.</p>
       <input type="file" id="photos" accept="image/*" multiple hidden>
+      <div id="dropZone" tabindex="0" style="border:2px dashed var(--p);border-radius:12px;padding:18px;text-align:center;color:var(--p);font-weight:600;margin-top:8px;outline:none">📋 Copy a photo in WhatsApp and press <b>Ctrl+V</b> here<br><span class="hint">or drag photos into this box · on phone: long-press here → Paste</span></div>
       <button class="btn big alt" id="photoBtn" type="button">🖼 Pick parcel photos</button>
       <div id="photoList"></div>
     </div>
@@ -461,6 +462,20 @@ $('#bulkRead').onclick=()=>{
 /* ---------- photos sent by the courier office on WhatsApp ---------- */
 $('#photoBtn').onclick=()=>{if(!orders)return toast('Orders still loading…');$('#photos').click()};
 $('#photos').onchange=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await photoCard(f)};
+/* paste (Ctrl+V) or drag photos from WhatsApp Web / Desktop */
+async function takeImages(files){files=files.filter(f=>f&&/^image\//.test(f.type));if(!files.length)return false;
+  if(!orders){toast('Orders still loading…');return true}
+  if($('#t-scan').hidden)document.querySelector('nav button[data-t=scan]').click();
+  for(const f of files)await photoCard(f);return true}
+document.addEventListener('paste',e=>{
+  const fs=[...(e.clipboardData&&e.clipboardData.items||[])].filter(i=>i.kind==='file').map(i=>i.getAsFile());
+  if(fs.some(f=>f&&/^image\//.test(f.type))){e.preventDefault();if(!token){toast('Log in first (Scan & Track tab).');return}takeImages(fs)}
+});
+const dz=$('#dropZone');
+['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.style.background='#E6F2EF'}));
+['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,()=>dz.style.background=''));
+dz.addEventListener('drop',e=>{e.preventDefault();takeImages([...(e.dataTransfer&&e.dataTransfer.files||[])])});
+dz.setAttribute('contenteditable','true');dz.addEventListener('beforeinput',e=>e.preventDefault());dz.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey))e.preventDefault()});
 let fq=null;
 async function decodeAll(file){
   const found=new Set();
