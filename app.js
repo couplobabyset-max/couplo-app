@@ -366,7 +366,7 @@ function viewAds(){
   const kpi=(v,l,sub,cls)=>el('div',{class:'kpi'+(cls?' '+cls:'')},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
   const cpl7=last7.L?last7.Sp/last7.L:0, cplP=prev7.L?prev7.Sp/prev7.L:0;
   const month=el('div',{class:'panel'},el('h3',{text:'This month · '+monFull(m)}),el('div',{class:'kpis'},
-    kpi(rs(T.Sp),'Ad spend',m===td.slice(0,7)?'till yesterday':''),kpi(T.L,'Leads'),kpi(per(T.Sp,T.L),'Cost / lead'),kpi(T.O,'Orders',T.L?Math.round(T.O/T.L*100)+'% of leads':''),
+    kpi(rs(T.Sp),'Ad spend',m===td.slice(0,7)?'till yesterday':''),kpi(rs(T.Sp*(1+GST_RATE)),'Ad spend + GST','18% GST: '+rs(T.Sp*GST_RATE)),kpi(T.L,'Leads'),kpi(per(T.Sp,T.L),'Cost / lead'),kpi(T.O,'Orders',T.L?Math.round(T.O/T.L*100)+'% of leads':''),
     kpi(per(T.Sp,T.O),'Cost / order'),kpi(rs(T.Am),'Sales'),kpi(roas(T.Am,T.Sp),'ROAS','sales ÷ ad spend')));
   const week=el('div',{class:'panel'},el('h3',{text:'Last 7 days'+(m===td.slice(0,7)?' (till yesterday)':' of the month')}),el('div',{class:'kpis'},
     kpi(rs(last7.Sp),'Ad spend',chg(last7.Sp,prev7.Sp,0)),kpi(last7.L,'Leads',chg(last7.L,prev7.L,1)),kpi(cpl7?rs(cpl7):'—','Cost / lead',chg(cpl7,cplP,-1)),
@@ -619,6 +619,121 @@ function viewCrm(){
   }
   return[el('div',{class:'panel'},el('div',{class:'toolbar'},el('h3',{text:'📊 CRM Center'}),el('button',{class:'btn',type:'button',text:'Reload CRM',onclick:()=>{crmData=null;crmErr='';renderAdmin()}})),sync),...parts];
 }
+/* 📅 Weekly report (Leads tab): pick a week (Mon–Sun) — target progress, leads, orders, conversion, ad spend with / without GST,
+   per sales person, compared with the week before. Data: Leads tab + orders in the app + Meta spend; targets from Arena settings. */
+const GST_RATE=0.18;
+let wkPick='';
+function weeklyReport(list,owner){
+  const box=el('div',{class:'panel',style:'border:2px solid var(--accent)'},el('h3',{text:'📅 Weekly report'}),el('div',{class:'hint',text:'Loading the week…'}));
+  const addD=(ds,n)=>{const d=new Date(ds+'T12:00:00');d.setDate(d.getDate()+n);return ymd(d)};
+  const monday=ds=>addD(ds,-((new Date(ds+'T12:00:00').getDay()+6)%7));
+  const m=adminMonth, td=todayStr, lastDay=ymd(monthDates(m).slice(-1)[0]);
+  const weeks=[];for(let w=monday(m+'-01');w<=lastDay&&w<=td;w=addD(w,7))weeks.push(w);
+  if(!weeks.length){box.replaceChildren(el('h3',{text:'📅 Weekly report'}),el('div',{class:'empty',text:'No week of this month has started yet.'}));return box}
+  if(!weeks.includes(wkPick))wkPick=weeks.includes(monday(td))?monday(td):weeks[weeks.length-1];
+  (async()=>{try{
+    /* the months these weeks (and the week before the first one) touch */
+    const from=addD(weeks[0],-7), to=addD(weeks[weeks.length-1],6);
+    const months=[...new Set([from,m+'-01',to].map(d=>d.slice(0,7)))].filter(x=>x<=td.slice(0,7));
+    const js=await Promise.all(months.map(async x=>rpCache[x]||(rpCache[x]=await call('month',{adminPin,month:x}))));
+    const S={},AD={},ids=new Set(list.map(s=>s.id));
+    const sx=k=>S[k]=S[k]||{L:0,O:0,Am:0};
+    js.forEach(j=>{(j.sales||[]).forEach(r=>{if(ids.has(r.staffId))sx(r.date+'__'+r.staffId).L=+r.leads||0});
+      (j.adspend||[]).forEach(r=>AD[r.date]=+r.amount||0);
+      (j.orders||[]).forEach(o=>{if(!ids.has(o.staffId))return;const x=sx(o.date+'__'+o.staffId);x.O++;x.Am+=(+o.amount||0)})});
+    /* one week: totals and per person; ad spend split by each person's share of that day's leads */
+    const wk=w=>{const days=[...Array(7)].map((_,i)=>addD(w,i)).filter(d=>d<=td);
+      const per={};list.forEach(s=>per[s.id]={L:0,O:0,Am:0,Sp:0});const day=[];
+      days.forEach(d=>{const L=list.reduce((t,s)=>t+((S[d+'__'+s.id]||{}).L||0),0),sp=AD[d]||0;let O=0;
+        list.forEach(s=>{const x=S[d+'__'+s.id];if(!x)return;const p=per[s.id];p.L+=x.L;p.O+=x.O;p.Am+=x.Am;O+=x.O;if(sp&&L)p.Sp+=sp*x.L/L});
+        day.push({d,L,O,Sp:sp})});
+      const T=Object.values(per).reduce((a,p)=>({L:a.L+p.L,O:a.O+p.O,Am:a.Am+p.Am}),{L:0,O:0,Am:0});T.Sp=day.reduce((t,r)=>t+r.Sp,0);
+      return{w,days,day,per,T}};
+    const cur=wk(wkPick), prev=wk(addD(wkPick,-7));
+    /* targets from Arena (owner, or staff with the Arena tab) */
+    let A=null;try{A=await call('arenaAdmin',{adminPin,day:wkPick<td?(addD(wkPick,6)<td?addD(wkPick,6):td):td,period:'week'})}catch(e){}
+    const nSales=A?Math.max(1,A.board.filter(r=>r.section==='Sales').length):list.length;
+    const wTgt=A?A.team.weekTarget:0, perW=wTgt?Math.round(wTgt/nSales):0;
+    /* helpers */
+    const f1=x=>Math.round(x*10)/10, pc=(a,b)=>b?Math.round(a/b*100)+'%':'—', per=(a,b)=>a&&b?rs(a/b):'—', gst=x=>x*(1+GST_RATE);
+    const chg=(a,b,good)=>{if(!b)return a?'new this week':'';const p=Math.round((a-b)/b*100);if(!p)return'same as last week';return(p>0?'▲ ':'▼ ')+Math.abs(p)+'% vs last week'+(good&&(p>0)===(good>0)?' 👍':'')};
+    const kpi=(v,l,sub)=>el('div',{class:'kpi'},el('span',{text:l}),el('b',{class:'mono',text:String(v)}),sub?el('small',{text:sub}):null);
+    const dlabel=w=>{const a=new Date(w+'T12:00:00'),b=new Date(addD(w,6)+'T12:00:00'),mn=d=>d.toLocaleString('en-IN',{month:'short'});return a.getDate()+(a.getMonth()===b.getMonth()?'':' '+mn(a))+'–'+b.getDate()+' '+mn(b)};
+    const prog=(lbl,v,tgt,expect)=>{const p=tgt?Math.min(100,v/tgt*100):0,e=tgt&&expect!=null?Math.min(100,expect/tgt*100):null,ok=expect==null||v>=expect;
+      return el('div',{style:'margin:10px 0'},el('div',{style:'display:flex;justify-content:space-between;gap:8px;font-size:14px'},el('b',{text:lbl}),el('span',{class:'mono',text:v+' / '+tgt+' · '+pc(v,tgt)})),
+        el('div',{style:'position:relative;height:16px;background:var(--sunk);border-radius:8px;overflow:hidden'},
+          el('div',{style:`height:100%;width:${Math.max(v?2:0,p)}%;background:var(${v>=tgt?'--ok':ok?'--accent':'--warn'});border-radius:8px`}),
+          e!=null?el('div',{title:'Where you should be by today',style:`position:absolute;top:0;bottom:0;left:${e}%;width:2px;background:var(--ink,#000)`}):null),
+        expect!=null&&v<tgt?el('div',{class:'hint',style:'margin:2px 0 0',text:(ok?'✅ Ahead of pace':'⚠️ Behind pace')+' — should be at '+Math.round(expect)+' by today (black line).'}):null)};
+    /* working days (Mon–Sat) passed in the picked week */
+    const wd=[...Array(6)].map((_,i)=>addD(wkPick,i)), wdDone=wd.filter(d=>d<td).length+(wd.includes(td)?0.5:0), wdLeft=wd.filter(d=>d>=td).length;
+    const parts=[];
+    /* ---- week picker ---- */
+    parts.push(el('div',{style:'display:flex;gap:6px;overflow-x:auto;padding-bottom:4px'},...weeks.map(w=>el('button',{class:'btn'+(w===wkPick?' primary':''),type:'button',style:'white-space:nowrap',text:dlabel(w),onclick:()=>{wkPick=w;renderAdmin()}}))));
+    /* ---- 1. target ---- */
+    if(A){
+      const tparts=[el('h3',{style:'margin-top:8px',text:'🎯 Target'})];
+      tparts.push(prog('Team this week',cur.T.O,wTgt,wkPick===monday(td)?wTgt*wdDone/6:null));
+      if(wkPick===monday(td)&&cur.T.O<wTgt&&wdLeft)tparts.push(el('p',{class:'hint',style:'margin:0',text:'Need '+(wTgt-cur.T.O)+' more orders in '+wdLeft+' working day'+(wdLeft>1?'s':'')+' → '+f1((wTgt-cur.T.O)/wdLeft)+' a day.'}));
+      if(m===td.slice(0,7)){const mWd=monthDates(m).filter(d=>d.getDay()!==0).map(ymd),mDone=mWd.filter(d=>d<td).length+(mWd.includes(td)?0.5:0);
+        tparts.push(prog('Team this month',A.team.month,A.team.monthTarget,A.team.monthTarget*mDone/mWd.length));}
+      if(perW){tparts.push(el('h3',{style:'margin-top:10px',text:'Each person this week (target '+perW+')'}));
+        list.forEach(s=>tparts.push(prog(s.name,cur.per[s.id].O,perW,wkPick===monday(td)?perW*wdDone/6:null)))}
+      parts.push(el('div',{},...tparts));
+    }else parts.push(el('p',{class:'hint',text:'Targets show for people who can open the Arena tab.'}));
+    /* ---- 2. numbers vs last week ---- */
+    const c=cur.T,p=prev.T;
+    parts.push(el('h3',{style:'margin-top:10px',text:'📊 This week vs last week'}),el('div',{class:'kpis'},
+      kpi(c.L,'Leads',chg(c.L,p.L,1)),kpi(c.O,'Orders',chg(c.O,p.O,1)),kpi(pc(c.O,c.L),'Conversion',p.L?'last week '+pc(p.O,p.L):''),kpi(rs(c.Am),'Sales',chg(c.Am,p.Am,1)),
+      ...(owner?[kpi(rs(c.Sp),'Ad spend (no GST)',chg(c.Sp,p.Sp,0)),kpi(rs(gst(c.Sp)),'Ad spend + GST',rs(c.Sp*GST_RATE)+' GST (18%)'),
+        kpi(per(gst(c.Sp),c.L),'Cost / lead (+GST)',p.L&&p.Sp?'last week '+per(gst(p.Sp),p.L):''),kpi(per(gst(c.Sp),c.O),'Cost / order (+GST)',p.O&&p.Sp?'last week '+per(gst(p.Sp),p.O):''),
+        kpi(c.Sp?(c.Am/gst(c.Sp)).toFixed(1)+'x':'—','ROAS (+GST)','sales ÷ spend with GST')]:[])));
+    /* ---- 3. per person ---- */
+    const head=['Name','Leads','Orders','Last week','Conversion','Sales'].concat(perW?['Target']:[]).concat(owner?['Ad spend','+ GST','Cost / lead','Cost / order']:[]);
+    parts.push(el('h3',{style:'margin-top:12px',text:'👥 Each sales person'}),el('div',{class:'scroll'},el('table',{},
+      el('thead',{},el('tr',{},...head.map(t=>el('th',{text:t})))),
+      el('tbody',{},...list.map(s=>{const x=cur.per[s.id],y=prev.per[s.id],d=x.O-y.O;
+        return el('tr',{},el('th',{text:s.name}),el('td',{class:'mono',text:String(x.L)}),el('td',{class:'mono',text:String(x.O)}),
+          el('td',{class:'mono',style:d>0?'color:var(--ok)':d<0?'color:var(--warn)':'',text:y.O+(d?' ('+(d>0?'+':'')+d+')':'')}),
+          el('td',{class:'mono',text:pc(x.O,x.L)}),el('td',{class:'mono',text:rs(x.Am)}),
+          ...(perW?[el('td',{class:'mono',text:pc(x.O,perW)})]:[]),
+          ...(owner?[el('td',{class:'mono',text:x.Sp?rs(x.Sp):'—'}),el('td',{class:'mono',text:x.Sp?rs(gst(x.Sp)):'—'}),el('td',{class:'mono',text:per(gst(x.Sp),x.L)}),el('td',{class:'mono',text:per(gst(x.Sp),x.O)})]:[]))})),
+      el('tfoot',{},el('tr',{},el('th',{text:'Total'}),el('td',{class:'mono',text:String(c.L)}),el('td',{class:'mono',text:String(c.O)}),el('td',{class:'mono',text:String(p.O)}),
+        el('td',{class:'mono',text:pc(c.O,c.L)}),el('td',{class:'mono',text:rs(c.Am)}),...(perW?[el('td',{class:'mono',text:pc(c.O,wTgt)})]:[]),
+        ...(owner?[el('td',{class:'mono',text:rs(c.Sp)}),el('td',{class:'mono',text:rs(gst(c.Sp))}),el('td',{class:'mono',text:per(gst(c.Sp),c.L)}),el('td',{class:'mono',text:per(gst(c.Sp),c.O)})]:[]))))));
+    /* ---- 4. charts ---- */
+    const D3=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    parts.push(el('h3',{style:'margin-top:12px',text:'📈 Day by day · leads and orders'}),legend('Leads','Orders'),
+      el('div',{class:'scroll chartscroll'},pairChart([...Array(7)].map((_,i)=>{const d=addD(wkPick,i),r=cur.day.find(x=>x.d===d)||{L:0,O:0};
+        return{label:D3[i],a:r.L,b:r.O,sun:i===6,tip:d+': '+r.L+' leads, '+r.O+' orders'}}))));
+    const wkRows=weeks.map(w=>({w,O:wk(w).T.O}));
+    parts.push(el('h3',{style:'margin-top:12px',text:'📆 Orders week by week'+(wTgt?' · target '+wTgt:'')}),
+      el('div',{class:'scroll chartscroll'},targetChart(wkRows.map(r=>({label:dlabel(r.w),v:r.O,on:r.w===wkPick,tip:dlabel(r.w)+': '+r.O+' orders'})),wTgt)));
+    if(owner)parts.push(el('p',{class:'hint',text:'Ad spend from Meta is without GST; "+ GST" adds 18% — the amount actually paid. Cost / lead, cost / order and ROAS here use the amount with GST. Each person\'s spend = each day\'s spend split by their share of that day\'s leads.'}));
+    box.replaceChildren(el('h3',{text:'📅 Weekly report · '+dlabel(wkPick)}),...parts);
+  }catch(e){box.replaceChildren(el('h3',{text:'📅 Weekly report'}),el('div',{class:'hint',text:'Could not load: '+e.message}))}})();
+  return box;
+}
+/* two bars per column (a = first colour, b = second), for leads vs orders */
+function pairChart(cols){
+  const n=cols.length,cw=44,L=30,T=14,ch=150,W=L+n*cw+6,H=T+ch+26,mx=niceMax(Math.max(1,...cols.map(c=>Math.max(c.a,c.b))));
+  let s='';for(let i=0;i<=4;i++){const y=T+ch-ch*i/4;s+=`<line x1="${L}" x2="${W-4}" y1="${y}" y2="${y}" class="gl"/><text x="${L-5}" y="${y+3.5}" text-anchor="end" class="ax">${Math.round(mx*i/4)}</text>`}
+  cols.forEach((c,i)=>{const x=L+i*cw+5,w=(cw-12)/2,ha=ch*c.a/mx,hb=ch*c.b/mx;
+    s+=`<g><title>${esc(c.tip)}</title><rect x="${x}" y="${T+ch-ha}" width="${w}" height="${ha}" class="c-prem" rx="2"/><rect x="${x+w+2}" y="${T+ch-hb}" width="${w}" height="${hb}" class="c-aff" rx="2"/>`;
+    if(c.a)s+=`<text x="${x+w/2}" y="${T+ch-ha-3}" text-anchor="middle" class="vl">${c.a}</text>`;
+    if(c.b)s+=`<text x="${x+w*1.5+2}" y="${T+ch-hb-3}" text-anchor="middle" class="vl">${c.b}</text>`;
+    s+=`<text x="${x+w+1}" y="${T+ch+14}" text-anchor="middle" class="ax${c.sun?' sun':''}">${esc(c.label)}</text></g>`});
+  return svgBox(`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${s}</svg>`,'Leads and orders per day')}
+/* columns with a dashed target line */
+function targetChart(cols,tgt){
+  const n=cols.length,cw=70,L=30,T=16,ch=150,W=L+n*cw+6,H=T+ch+26,mx=niceMax(Math.max(1,tgt||0,...cols.map(c=>c.v)));
+  let s='';for(let i=0;i<=4;i++){const y=T+ch-ch*i/4;s+=`<line x1="${L}" x2="${W-4}" y1="${y}" y2="${y}" class="gl"/><text x="${L-5}" y="${y+3.5}" text-anchor="end" class="ax">${Math.round(mx*i/4)}</text>`}
+  cols.forEach((c,i)=>{const x=L+i*cw+10,w=cw-20,h=ch*c.v/mx;
+    s+=`<g><title>${esc(c.tip)}</title><rect x="${x}" y="${T+ch-h}" width="${w}" height="${h}" class="c-one" rx="3" style="opacity:${c.on?1:.55}"/>`;
+    if(c.v)s+=`<text x="${x+w/2}" y="${T+ch-h-3}" text-anchor="middle" class="vl">${c.v}</text>`;
+    s+=`<text x="${x+w/2}" y="${T+ch+14}" text-anchor="middle" class="ax" style="font-weight:${c.on?700:400}">${esc(c.label)}</text></g>`});
+  if(tgt){const y=T+ch-ch*tgt/mx;s+=`<line x1="${L}" x2="${W-4}" y1="${y}" y2="${y}" stroke="var(--warn)" stroke-width="2" stroke-dasharray="5 4"/><text x="${W-6}" y="${y-4}" text-anchor="end" class="vl" style="fill:var(--warn)">target ${tgt}</text>`}
+  return svgBox(`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${s}</svg>`,'Orders per week against target')}
 function viewSales(){
   const list=salesStaff(), m=adminMonth;
   if(!list.length)return[el('div',{class:'empty',text:'No sales staff yet. In the Staff tab, edit a person and set "Sales staff" to Yes.'})];
@@ -654,7 +769,7 @@ function viewSales(){
   const stat2=(v,t)=>el('div',{},el('b',{class:'mono',text:v}),el('span',{text:t}));
   const report=el('div',{class:'panel'},el('h3',{text:'This month'}),
     el('div',{class:'stats'},stat2(String(all.L),'Leads'),stat2(String(all.O),'Orders'),stat2(pct(all.O,all.L),'Conversion'),stat2(rs(all.Am),'Sales'),
-      ...(owner?[stat2(rs(spMonth),'Ad spend'),stat2(per(spMonth,all.O),'Cost / order'),stat2(roas(all.Am,spMonth),'ROAS')]:[])),
+      ...(owner?[stat2(rs(spMonth),'Ad spend (no GST)'),stat2(rs(spMonth*(1+GST_RATE)),'Ad spend + GST'),stat2(per(spMonth,all.O),'Cost / order'),stat2(roas(all.Am,spMonth),'ROAS')]:[])),
     owner?el('p',{class:'hint',text:'Ad spend per person = each day\'s Meta spend split by their share of that day\'s leads. Orders often come from leads of earlier days, so read cost and ROAS over the month, not one day.'}):null,
     el('div',{class:'scroll'},el('table',{},el('thead',{},el('tr',{},...['Name','Leads','Premium','Affordable','Orders','Conversion','Sales'].concat(owner?['Ad spend','Cost / lead','Cost / order','ROAS']:[]).map(t=>el('th',{text:t})))),
       el('tbody',{},...tot.map(t=>el('tr',{},el('th',{text:t.s.name}),...[t.L,t.P,t.Af,t.O].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',text:pct(t.O,t.L)}),el('td',{class:'mono',text:rs(t.Am)}),
@@ -675,7 +790,7 @@ function viewSales(){
       el('tbody',{},...dayRows.map(r=>el('tr',{},el('th',{},el('span',{class:'mono',text:pad2(r.d.getDate())}),' '+DAYS[r.d.getDay()].slice(0,3)),
         ...[r.L,r.C,r.A].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',style:r.M?'color:#c0392b':'',text:String(r.M)}),el('td',{class:'mono',text:String(r.K)}),el('td',{class:'mono',text:String(r.O)}),el('td',{class:'mono',text:pct(r.O,r.L)})))),
       el('tfoot',{},el('tr',{},el('th',{text:'Total'}),...[T.L,T.C,T.A,T.M,T.K,T.O].map(v=>el('td',{class:'mono',text:String(v)})),el('td',{class:'mono',text:pct(T.O,T.L)}))))):el('div',{class:'empty',text:'No leads entered this month yet.'}));
-  return[entry,report,lc,daily];
+  return[weeklyReport(list,owner),entry,report,lc,daily];
 }
 function viewSalary(){
   const m=adminMonth, list=payStaff();const[y,mo]=m.split('-').map(Number);
