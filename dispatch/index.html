@@ -75,20 +75,19 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 .bc svg{max-width:100%;height:28mm}
 .sheet.a5 .bc svg{height:20mm}
 .red .txt,.red .brand{color:#C8323C}
-/* ---------- COD / India Post slip: A6 landscape (148 x 105 mm), slip only — From on top, then To ---------- */
-.sheet.cod,.sheet.a5.cod{width:148mm;height:105mm;flex-direction:column;padding:6mm 8mm;color:#111}
-.cod .top{display:flex;gap:5mm;align-items:flex-start}
-.cod .from{flex:1;font-size:3.5mm;font-weight:700;line-height:1.32}
-.cod .rt{text-align:right}
-.cod .odn{font-size:4mm;font-weight:700;letter-spacing:.3mm}
-.cod .cid{font-weight:700;font-size:5.2mm;margin-top:1.5mm;letter-spacing:.2mm;white-space:nowrap}
-.cod .amt{display:inline-block;margin-top:2mm;border:.45mm solid #111;padding:1mm 3mm;font-weight:700;font-size:4.3mm;white-space:nowrap}
-.cod .hd{font-weight:700;font-size:4.1mm;margin-bottom:1mm}
-.cod .line{border-top:.35mm solid #999;margin:3mm 0 2.5mm}
-.cod .mid{display:flex;gap:5mm;flex:1;min-height:0;overflow:hidden}
+/* ---------- COD / India Post slip: A6 landscape (148 x 105 mm) — order no, CID, COD amount on top; From | To below;
+   the empty space under From is where the courier tracking sticker goes ---------- */
+.sheet.cod,.sheet.a5.cod{width:148mm;height:105mm;flex-direction:column;padding:6mm 8mm;color:#111;position:relative}
+.cod .head{text-align:center}
+.cod .odn{position:absolute;top:6mm;right:8mm;font-size:4.2mm;font-weight:700;letter-spacing:.3mm}
+.cod .cid{font-weight:700;font-size:5.6mm;letter-spacing:.2mm;white-space:nowrap}
+.cod .amt{display:inline-block;margin-top:2mm;border:.45mm solid #111;padding:1mm 3.5mm;font-weight:700;font-size:4.5mm;white-space:nowrap}
+.cod .line{border-top:.35mm solid #999;margin:3mm 0 3mm}
+.cod .mid{display:flex;gap:6mm;flex:1;min-height:0;overflow:hidden}
+.cod .from{flex:0 0 50mm;font-size:3.4mm;font-weight:700;line-height:1.32}
 .cod .to{flex:1;min-width:0}
-.cod .to .txt,.sheet.a5.cod .to .txt{font-size:3.8mm;line-height:1.22;padding-left:4mm}
-.cod .stk{flex:0 0 46mm;height:17mm;border:.3mm dotted #bbb;border-radius:1mm}
+.cod .hd{font-weight:700;font-size:4.1mm;margin-bottom:1mm}
+.cod .to .txt,.sheet.a5.cod .to .txt{font-size:3.9mm;line-height:1.22;padding-left:3mm}
 #printArea{display:none}
 @media print{
   @page{size:A5 landscape;margin:0}
@@ -296,9 +295,10 @@ function halvesOf(L){
 const pagesOf=L=>L.brand==='cod'?1:Math.ceil(halvesOf(L).length/2);
 function codHTML(L,only){
   const a=amtOf(L.cod),to=L.addr.split('\n').filter(x=>!/^\s*od\s*no\b/i.test(x)).join('\n').trim();
-  return'<div class="sheet a5 cod"><div class="top"><div class="from"><div class="hd">From,</div>'+IP_FROM.map(esc).join('<br>')+'</div>'+
-    '<div class="rt">'+(L.odno?'<div class="odn">'+esc(L.odno)+'</div>':'')+'<div class="cid">CID : '+IP_CID+'</div>'+(a?'<div class="amt">COD AMOUNT : '+esc(a)+'/-</div>':'')+'</div></div>'+
-    '<div class="line"></div><div class="mid"><div class="to"><div class="hd">To,</div><div class="txt">'+esc(to)+'</div></div><div class="stk"></div></div></div>';
+  return'<div class="sheet a5 cod">'+(L.odno?'<div class="odn">'+esc(L.odno)+'</div>':'')+
+    '<div class="head"><div class="cid">CID : '+IP_CID+'</div>'+(a?'<div class="amt">COD AMOUNT : '+esc(a)+'/-</div>':'')+'</div>'+
+    '<div class="line"></div><div class="mid"><div class="from"><div class="hd">From,</div>'+IP_FROM.map(esc).join('<br>')+'</div>'+
+    '<div class="to"><div class="hd">To,</div><div class="txt">'+esc(to)+'</div></div></div></div>';
 }
 function sheetsHTML(L,only){
   if(L.brand==='cod')return codHTML(L,only);
