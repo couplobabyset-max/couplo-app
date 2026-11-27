@@ -141,7 +141,7 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
     <div class="card">
       <h2>Type or paste</h2>
       <div class="row"><div><label style="margin-top:0">Order no.</label><input id="qOrd" placeholder="VNB02" autocomplete="off" style="text-transform:uppercase"></div>
-        <div><label style="margin-top:0">Tracking no.</label><input id="qAwb" placeholder="24867219" autocomplete="off" style="text-transform:uppercase"></div></div>
+        <div><label style="margin-top:0">Tracking no.</label><div style="display:flex;gap:6px"><input id="qAwb" placeholder="24867219" autocomplete="off" style="text-transform:uppercase"><button type="button" id="qCam" class="btn" style="margin:0;width:auto;padding:0 14px" aria-label="Scan tracking">📷</button></div></div></div>
       <div class="hint" id="qInfo"></div>
       <div class="chips" id="qCour"></div>
       <button class="btn" id="qSave" type="button" disabled>✓ Save tracking</button>
@@ -545,7 +545,7 @@ async function photoCard(file){
 /* ---------- camera ---------- */
 let qr=null,camStep=1,camBusy=false;
 async function openCam(step){
-  camStep=step;$('#camTop').textContent=step===1?'Scan the barcode on the Couplo label':'Scan the courier slip barcode / QR';
+  camStep=step;$('#camTop').textContent=step===1?'Scan the barcode on the Couplo label':step===3?'Scan the courier barcode for '+grpText(qG):'Scan the courier slip barcode / QR';
   $('#manual').value='';$('#cam').classList.add('on');camBusy=false;
   try{
     if(!qr)qr=new Html5Qrcode('reader',{verbose:false});
@@ -555,8 +555,11 @@ async function openCam(step){
   }catch(e){toast('Camera not available. Allow camera, or type the number.',4000)}
 }
 async function closeCam(){$('#cam').classList.remove('on');try{if(qr&&qr.isScanning)await qr.stop()}catch(e){}}
-function got(txt){if(camStep===1)pickOrder(txt);else pickAwb(txt)}
-$('#scan1').onclick=()=>openCam(1);$('#scan2').onclick=()=>openCam(2);
+function got(txt){if(camStep===1)pickOrder(txt);else if(camStep===3)qGot(txt);else pickAwb(txt)}
+/* order no. typed (e.g. handwritten on an India Post label) + courier barcode scanned → saves itself when the courier is known */
+function qGot(txt){const a=String(txt||'').replace(/\s+/g,'').toUpperCase();$('#qAwb').value=a;if(!grpCod(qG))qCr=guessCourier(a)||qCr;qDraw();
+  if(qG.length&&sureCourier(a,qG)&&!qG.some(o=>o.awb)&&!$('#qSave').disabled)$('#qSave').click()}
+$('#scan1').onclick=()=>openCam(1);$('#qCam').onclick=()=>{if(!qG.length){toast('Type the order no. first (e.g. BNB37).');$('#qOrd').focus();return}openCam(3)};$('#scan2').onclick=()=>openCam(2);
 $('#camClose').onclick=()=>closeCam();
 $('#manualOk').onclick=()=>{const v=$('#manual').value.trim();if(!v)return;closeCam().then(()=>got(v))};
 $('#manual').addEventListener('keydown',e=>{if(e.key==='Enter')$('#manualOk').click()});
