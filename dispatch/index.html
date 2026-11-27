@@ -306,7 +306,7 @@ function codHTML(L,only){
   const a=amtOf(L.cod),z=codZones(L);
   const slip='<div class="slip">'+(L.odno?'<div class="odn">'+esc(L.odno)+'</div>':'')+
     '<div class="cid">CID : '+IP_CID+'</div>'+(a?'<div class="amt">COD AMOUNT : '+esc(a)+'/-</div>':'')+
-    '<div class="mid"><div class="to"><div class="hd">To,</div><div class="txt">'+esc(L.addr)+'</div></div><div class="stk"></div></div>'+
+    '<div class="mid"><div class="to"><div class="hd">To,</div><div class="txt">'+esc(L.addr.split('\n').filter(x=>!/^\s*od\s*no\b/i.test(x)).join('\n').trim())+'</div></div><div class="stk"></div></div>'+
     '<div class="from"><div class="hd">From,</div>'+IP_FROM.map(esc).join('<br>')+'</div></div>';
   const out=['<div class="sheet cod">'+slip+zoneHTML(z[0])+'</div>'];
   for(let i=1;i<z.length;i+=2)out.push('<div class="sheet cod">'+zoneHTML(z[i],' top')+zoneHTML(z[i+1])+'</div>');
