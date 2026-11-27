@@ -139,6 +139,21 @@ textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 
   <div id="scanBody" hidden>
     <div class="card">
+      <h2>Type or paste</h2>
+      <div class="row"><div><label style="margin-top:0">Order no.</label><input id="qOrd" placeholder="VNB02" autocomplete="off" style="text-transform:uppercase"></div>
+        <div><label style="margin-top:0">Tracking no.</label><input id="qAwb" placeholder="24867219" autocomplete="off" style="text-transform:uppercase"></div></div>
+      <div class="hint" id="qInfo"></div>
+      <div class="chips" id="qCour"></div>
+      <button class="btn" id="qSave" type="button" disabled>✓ Save tracking</button>
+      <details style="margin-top:12px"><summary style="font-weight:600;cursor:pointer">Paste many at once</summary>
+        <textarea id="bulk" placeholder="One parcel per line: order no. and tracking no.&#10;VNB02 24867219&#10;BNB41A 24867220&#10;FNB22 EK123456789IN"></textarea>
+        <button class="btn alt" id="bulkRead" type="button">Check list</button>
+        <div id="bulkList"></div>
+      </details>
+      <p class="hint">A USB barcode scanner also works here: click the box and scan.</p>
+    </div>
+
+    <div class="card">
       <div class="step"><div class="num now" id="n1">1</div><div style="flex:1">
         <b>Scan the Couplo label</b>
         <div id="ordBox" class="hint">Barcode at the bottom of the address side.</div>
@@ -406,6 +421,42 @@ function reset(){ord=null;ordGroup=[];awb='';courier='';$('#n1').className='num 
   $('#awbBox').textContent='Barcode / QR on the courier\'s slip.';$('#scan2').disabled=true;$('#saveBtn').disabled=true;$('#saveBtn').textContent='✓ Save tracking';$('#courWrap').hidden=true}
 function drawLog(){$('#logN').textContent=logToday.length;$('#log').innerHTML=logToday.map(x=>'<div><b>'+esc(x.o)+'</b><span>'+esc(x.c)+' · '+esc(x.a)+'</span><span class="hint" style="margin:0">'+x.t+'</span></div>').join('')}
 drawLog();
+
+/* ---------- type / paste (computer, USB scanner) ---------- */
+let qG=[],qCr='';
+function qDraw(){
+  const a=$('#qAwb').value.replace(/\s+/g,'').toUpperCase(),cod=grpCod(qG);if(cod)qCr='India Post';
+  chips($('#qCour'),(cod?['India Post']:COURIERS).map(c=>[c,c]),qCr,v=>{qCr=v;qDraw()});
+  $('#qSave').disabled=!(qG.length&&a&&qCr);
+}
+$('#qOrd').oninput=()=>{qG=findGroup($('#qOrd').value);const o=qG[0];
+  $('#qInfo').innerHTML=o?esc(grpText(qG))+' · '+esc(o.customer||'')+' · '+esc(o.district||'')+(grpCod(qG)?' · <b>COD</b>':'')+(o.awb?' <span class="bad">(has '+esc(o.awb)+')</span>':''):($('#qOrd').value.trim()?(orders?'<span class="bad">Not in the Couplo app</span>':'Orders loading…'):'');qDraw()};
+$('#qAwb').oninput=()=>{const a=$('#qAwb').value.trim();if(a&&!grpCod(qG))qCr=guessCourier(a)||qCr;qDraw()};
+$('#qOrd').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#qAwb').focus()}});
+$('#qAwb').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(!$('#qSave').disabled)$('#qSave').click()}});
+async function saveGroup(g,cr,awb){for(const o of g){const j=await call('setTrack',{adminPin:token,id:o.id,courier:cr,awb});Object.assign(o,j.order||{})}
+  LS.set('dp_lastCourier',cr);logToday.unshift({o:grpText(g),a:awb,c:cr,t:new Date().toTimeString().slice(0,5)});LS.set('dp_log',JSON.stringify({d:new Date().toDateString(),items:logToday}));drawLog()}
+$('#qSave').onclick=async()=>{const awb=$('#qAwb').value.replace(/\s+/g,'').toUpperCase();$('#qSave').disabled=true;
+  try{await saveGroup(qG,qCr,awb);toast('✓ '+grpText(qG)+' saved');$('#qOrd').value='';$('#qAwb').value='';qG=[];$('#qInfo').textContent='';qDraw();$('#qOrd').focus()}
+  catch(e){toast(e.message,4000);$('#qSave').disabled=false}};
+$('#bulkRead').onclick=()=>{
+  if(!orders)return toast('Orders still loading…');
+  const rows=$('#bulk').value.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const tk=l.toUpperCase().split(/[\s,;:|\-\t]+/).filter(Boolean);let g=[],lbl='',awb='';
+    for(let i=0;i<tk.length;i++){if(!g.length){for(const t of [tk[i]+(tk[i+1]||'')+(tk[i+2]||''),tk[i]+(tk[i+1]||''),tk[i]]){const h=findGroup(t);if(h.length&&!/^\d{6,}$/.test(t)){g=h;lbl=t;break}}if(g.length)continue}
+      if(!awb&&/^[A-Z0-9]{6,}$/.test(tk[i])&&/\d{5}/.test(tk[i])&&!findGroup(tk[i]).length)awb=tk[i]}
+    const cr=grpCod(g)?'India Post':guessCourier(awb)||LS.get('dp_lastCourier')||'';return{l,g,lbl,awb,cr}});
+  const box=$('#bulkList');box.innerHTML='';
+  rows.forEach(r=>{const d=document.createElement('div');d.className='q';d.style.flexWrap='wrap';
+    const ok=r.g.length&&r.awb;
+    d.innerHTML='<b>'+(r.g.length?esc(grpText(r.g)):'<span class="bad">'+esc(r.l.slice(0,24))+' — order not found</span>')+'</b><span>'+esc(r.awb||'no tracking no.')+'</span>';
+    if(ok){const sel=document.createElement('select');sel.style.width='auto';sel.innerHTML=(grpCod(r.g)?['India Post']:COURIERS).map(c=>'<option'+(c===r.cr?' selected':'')+'>'+esc(c)+'</option>').join('');sel.onchange=()=>r.cr=sel.value;if(!r.cr)r.cr=sel.value;d.appendChild(sel)}
+    box.appendChild(d)});
+  const good=rows.filter(r=>r.g.length&&r.awb);
+  if(good.length){const b=document.createElement('button');b.type='button';b.className='btn';b.textContent='✓ Save '+good.length+' parcel'+(good.length>1?'s':'');
+    b.onclick=async()=>{b.disabled=true;let n=0;for(const r of good){try{await saveGroup(r.g,r.cr,r.awb);n++;b.textContent='Saving… '+n+'/'+good.length}catch(e){toast(grpText(r.g)+': '+e.message,4000)}}
+      toast('✓ '+n+' saved');b.textContent='✓ '+n+' saved';if(n===good.length)$('#bulk').value=''};box.appendChild(b)}
+};
 
 /* ---------- photos sent by the courier office on WhatsApp ---------- */
 $('#photoBtn').onclick=()=>{if(!orders)return toast('Orders still loading…');$('#photos').click()};
