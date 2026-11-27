@@ -341,6 +341,9 @@ const COURIERS=['Speed and Safe','India Post','ST Courier','DTDC','Professional 
 let token=LS.get('dp_token')||'', whoName=LS.get('dp_who')||'', orders=null, ord=null, awb='', courier='', inited=false;
 let logToday=[];try{const l=JSON.parse(LS.get('dp_log')||'{}');logToday=l.d===new Date().toDateString()?l.items:[]}catch(e){}
 
+/* courier known for sure from the number itself (or COD) → save straight away, no tap needed */
+function sureCourier(a,g){a=String(a||'').toUpperCase();if(g&&grpCod(g))return'India Post';
+  if(/^[A-Z]{2}\d{9}IN$/.test(a))return'India Post';if(/^[DZXIVNP]\d{8}$/.test(a))return'DTDC';if(/^\d{8}$/.test(a))return'Speed and Safe';return''}
 function guessCourier(a){
   a=a.toUpperCase();
   if(/^[A-Z]{2}\d{9}IN$/.test(a))return'India Post';
@@ -416,6 +419,7 @@ function pickAwb(code){
   $('#n2').className='num done';
   $('#awbBox').innerHTML='<div class="val">'+esc(awb)+'</div>';
   $('#courWrap').hidden=false;drawCour();
+  if(sureCourier(awb,ordGroup)&&!ordGroup.some(o=>o.awb)){$('#saveBtn').textContent='Saving '+courier+'…';$('#saveBtn').click()} // known courier: no tap
 }
 function drawCour(){
   const cod=ord&&grpCod(ordGroup);
@@ -445,7 +449,8 @@ function qDraw(){
 }
 $('#qOrd').oninput=()=>{qG=findGroup($('#qOrd').value);const o=qG[0];
   $('#qInfo').innerHTML=o?esc(grpText(qG))+' · '+esc(o.customer||'')+' · '+esc(o.district||'')+(grpCod(qG)?' · <b>COD</b>':'')+(o.awb?' <span class="bad">(has '+esc(o.awb)+(o.trackBy?' · by '+esc(o.trackBy):'')+')</span>':''):($('#qOrd').value.trim()?(orders?'<span class="bad">Not in the Couplo app</span>':'Orders loading…'):'');qDraw()};
-$('#qAwb').oninput=()=>{const a=$('#qAwb').value.trim();if(a&&!grpCod(qG))qCr=guessCourier(a)||qCr;qDraw()};
+$('#qAwb').oninput=e=>{const a=$('#qAwb').value.trim();if(a&&!grpCod(qG))qCr=guessCourier(a)||qCr;qDraw();
+  if(e&&e.inputType==='insertFromPaste'&&qG.length&&sureCourier(a,qG)&&!$('#qSave').disabled)$('#qSave').click()}; // pasted known number: saves itself
 $('#qOrd').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#qAwb').focus()}});
 $('#qAwb').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(!$('#qSave').disabled)$('#qSave').click()}});
 async function saveGroup(g,cr,awb){for(const o of g){const j=await call('setTrack',{adminPin:token,id:o.id,courier:cr,awb});Object.assign(o,j.order||{})}
@@ -525,6 +530,7 @@ async function photoCard(file){
   const dc=()=>{const cod=grpCod(g);if(cod)cr='India Post';chips(cc,(cod?['India Post']:COURIERS).map(c=>[c,c]),cr,v=>{cr=v;dc()});sv.disabled=!(g.length&&aw.value.trim()&&cr)};
   if(g.length)on.value=lbl;if(a){aw.value=a;cr=guessCourier(a)}
   on.oninput=findO;aw.oninput=()=>{if(!cr)cr=guessCourier(aw.value);dc()};findO();
+  if(g.length&&a&&sureCourier(a,g)&&!g[0].awb){cr=sureCourier(a,g);dc();sv.click()} // both read and courier known: saved without a tap
   if(!codes.length)oi.innerHTML+='<div class="hint" style="margin:0">No barcode read — type the numbers from the photo.</div>';
   sv.onclick=async()=>{sv.disabled=true;const awv=aw.value.replace(/\s+/g,'').toUpperCase();
     try{for(const o of g){const j=await call('setTrack',{adminPin:token,id:o.id,courier:cr,awb:awv});Object.assign(o,j.order||{})}LS.set('dp_lastCourier',cr);
